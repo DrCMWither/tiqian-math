@@ -22,11 +22,20 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.use
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.EncodedImageFormat
+import org.jetbrains.skia.Font
+import org.jetbrains.skia.Paint
+import org.jetbrains.skia.Rect
+import org.jetbrains.skia.Surface as SkiaSurface
+import org.jetbrains.skia.Color as SkiaColor
 import org.tiqian.math.compose.TiqianMath
+import org.tiqian.math.core.MathConstructionPaintKind
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.font.opentype.LeteSansMath
+import org.tiqian.math.font.skia.MathConstructionOutlineResult
 import org.tiqian.math.font.skia.SkiaMathFontFace
+import org.tiqian.math.font.skia.radicalSeamGeometry
 import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
@@ -186,6 +195,7 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("preview=${output.absolutePath} bytes=${output.length()}")
     }
+    renderRadicalSeamReport()
 }
 
 private fun auditRadicalPreviewTiers() {
@@ -209,28 +219,173 @@ private fun auditRadicalPreviewTiers() {
                 val construction = result.decisions.first {
                     it.name == "OpenTypeRadicalConstruction" && it.range.start == 0
                 }
-                val geometry = result.decisions.first {
-                    it.name == "OpenTypeMathRadical" && it.range.start == 0
+                val group = result.box.constructionPaintGroups.first {
+                    it.kind == MathConstructionPaintKind.Radical && it.sourceRange.start == 0
                 }
                 check(actual == expected) {
                     "$label preview tier expected $expected but selected $actual for $source"
                 }
-                val ruleTop = geometry.details.getValue("ruleTop").toFloat()
-                val radicalInkTop = geometry.details.getValue("radicalInkTopPx").toFloat()
-                val topError = radicalInkTop - ruleTop
-                check(kotlin.math.abs(topError) <= 0.001f) {
-                    "$label/$expected radical top $radicalInkTop does not meet rule top $ruleTop"
+                val seam = face.radicalSeamGeometry(result.box, group)
+                check(seam.edgesAndThicknessMatch) {
+                    "$label/$expected outline seam mismatch: $seam"
                 }
                 println(
                     "preview-radical=$label/$expected " +
-                        "ruleTop=$ruleTop radicalInkTop=$radicalInkTop error=$topError " +
-                        "boxAscent=${geometry.details["radicalGlyphAscentPx"]} " +
+                        "top=${seam.topEdgeErrorPx} bottom=${seam.bottomEdgeErrorPx} " +
+                        "center=${seam.centerlineErrorPx} thickness=${seam.thicknessErrorPx} " +
+                        "overlap=${seam.horizontalOverlapPx} " +
+                        "coordinateTolerance=${seam.coordinateAlignmentTolerancePx} " +
+                        "thicknessTolerance=${seam.strokeThicknessTolerancePx} " +
                         "achievedAdvance=${construction.details["achievedAdvancePx"]} source=$source",
                 )
             }
         }
     }
 }
+
+/** One-device-pixel Skia union crops, enlarged with nearest-neighbor rectangles for review. */
+private fun renderRadicalSeamReport() {
+    val report = SkiaSurface.makeRasterN32Premul(1380, 790)
+    val text = Paint().apply { color = SkiaColor.makeRGB(28, 28, 28) }
+    val guide = Paint().apply { color = SkiaColor.makeRGB(205, 45, 45) }
+    try {
+        report.canvas.clear(SkiaColor.makeRGB(248, 247, 244))
+        val fonts = listOf(
+            "Lete Sans Math" to LeteSansMath.load(),
+            "STIX Two Math" to StixTwoMath.load(),
+        )
+        val cases = listOf(
+            "base" to RADICAL_BASE_SOURCE,
+            "variant" to RADICAL_VARIANT_SOURCE,
+            "assembly" to RADICAL_ASSEMBLY_SOURCE,
+        )
+        fonts.flatMap { (fontLabel, font) ->
+            cases.map { (kind, source) -> Triple("$fontLabel · $kind", font, source) }
+        }.forEachIndexed { index, (label, font, source) ->
+            SkiaMathFontFace(font).use { face ->
+                val titleFont = face.font(17f)
+                val detailFont = face.font(12f)
+                try {
+                    val result = MathLayoutEngine(face).layout(
+                        source,
+                        MathLayoutOptions(MathMode.Display, 32f),
+                    )
+                    val group = result.box.constructionPaintGroups.first {
+                        it.kind == MathConstructionPaintKind.Radical && it.sourceRange.start == 0
+                    }
+                    val seam = face.radicalSeamGeometry(result.box, group)
+                    val outline = (face.constructionOutline(
+                        result.box,
+                        group,
+                    ) as MathConstructionOutlineResult.Available).path
+                    val crop = rasterizeSeamCrop(
+                        outline,
+                        seam.overbarLeftPx,
+                        minOf(seam.glyphStroke.topPx, seam.overbar.topPx),
+                    )
+                    crop.use { bitmap ->
+                        val column = index % 2
+                        val row = index / 2
+                        val panelX = 22f + column * 680f
+                        val panelY = 24f + row * 250f
+                        report.canvas.drawString(label, panelX, panelY + 18f, titleFont, text)
+                        report.canvas.drawString(
+                            "top=${seam.topEdgeErrorPx.fmt()} bottom=${seam.bottomEdgeErrorPx.fmt()} " +
+                                "center=${seam.centerlineErrorPx.fmt()} thickness=${seam.thicknessErrorPx.fmt()}",
+                            panelX,
+                            panelY + 38f,
+                            detailFont,
+                            text,
+                        )
+                        report.canvas.drawString(
+                            "overlap=${seam.horizontalOverlapPx.fmt()} " +
+                                "coordTol=${seam.coordinateAlignmentTolerancePx.fmt()} " +
+                                "strokeTol=${seam.strokeThicknessTolerancePx.fmt()} · 1px raster ×12",
+                            panelX,
+                            panelY + 54f,
+                            detailFont,
+                            text,
+                        )
+                        val imageX = panelX
+                        val imageY = panelY + 68f
+                        drawNearestNeighbor(report, bitmap, imageX, imageY, 12f)
+                        val seamPixelX = (SEAM_CROP_LEFT_OF_SEAM_PX * 12f)
+                        report.canvas.drawRect(
+                            Rect.makeLTRB(imageX + seamPixelX, imageY - 7f, imageX + seamPixelX + 2f, imageY),
+                            guide,
+                        )
+                    }
+                } finally {
+                    detailFont.close()
+                    titleFont.close()
+                }
+            }
+        }
+        val output = File("build/reports/math-radical-seams.png")
+        output.parentFile.mkdirs()
+        report.makeImageSnapshot().use { image ->
+            val data = checkNotNull(image.encodeToData(EncodedImageFormat.PNG))
+            output.writeBytes(data.bytes)
+            data.close()
+        }
+        println("preview-seams=${output.absolutePath} bytes=${output.length()}")
+    } finally {
+        guide.close()
+        text.close()
+        report.close()
+    }
+}
+
+private fun rasterizeSeamCrop(
+    outline: org.jetbrains.skia.Path,
+    seamX: Float,
+    strokeTop: Float,
+): Bitmap {
+    val cropLeft = kotlin.math.floor(seamX).toInt() - SEAM_CROP_LEFT_OF_SEAM_PX
+    val cropTop = kotlin.math.floor(strokeTop).toInt() - 4
+    val surface = SkiaSurface.makeRasterN32Premul(SEAM_CROP_WIDTH_PX, SEAM_CROP_HEIGHT_PX)
+    val paint = Paint().apply { color = SkiaColor.BLACK }
+    val bitmap = Bitmap().apply { allocN32Pixels(SEAM_CROP_WIDTH_PX, SEAM_CROP_HEIGHT_PX) }
+    try {
+        surface.canvas.clear(SkiaColor.WHITE)
+        val save = surface.canvas.save()
+        surface.canvas.translate(-cropLeft.toFloat(), -cropTop.toFloat())
+        surface.canvas.drawPath(outline, paint)
+        surface.canvas.restoreToCount(save)
+        check(surface.readPixels(bitmap, 0, 0))
+        return bitmap
+    } finally {
+        paint.close()
+        surface.close()
+    }
+}
+
+private fun drawNearestNeighbor(
+    target: SkiaSurface,
+    source: Bitmap,
+    left: Float,
+    top: Float,
+    scale: Float,
+) {
+    val pixel = Paint()
+    try {
+        for (y in 0 until source.height) for (x in 0 until source.width) {
+            pixel.color = source.getColor(x, y)
+            target.canvas.drawRect(
+                Rect.makeXYWH(left + x * scale, top + y * scale, scale, scale),
+                pixel,
+            )
+        }
+    } finally {
+        pixel.close()
+    }
+}
+
+private fun Float.fmt(): String = "%.4f".format(this)
+
+private const val SEAM_CROP_LEFT_OF_SEAM_PX = 12
+private const val SEAM_CROP_WIDTH_PX = 30
+private const val SEAM_CROP_HEIGHT_PX = 12
 
 private const val RADICAL_BASE_SOURCE = "\\sqrt[3]{x}"
 private const val RADICAL_VARIANT_SOURCE = "\\sqrt{\\frac{a}{b}}"

@@ -16,6 +16,7 @@ import org.jetbrains.skia.shaper.TrivialScriptRunIterator
 import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.layout.MathFontFace
+import org.tiqian.math.layout.MathGlyphBoundsSource
 import org.tiqian.math.layout.MathOperatorGlyphRequest
 import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathGlyph
@@ -122,6 +123,29 @@ class SkiaMathFontFace(
         fontSizePx: Float,
         style: MathStyle,
         sourceRange: SourceRange,
+    ): MeasuredMathRun = shapeWithBoundsSource(
+        text,
+        fontSizePx,
+        style,
+        MathGlyphBoundsSource.FontReported,
+    )
+
+    override fun shapeOutlineConstructionBase(
+        text: String,
+        fontSizePx: Float,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = shapeWithBoundsSource(
+        text,
+        fontSizePx,
+        MathStyle.Text,
+        MathGlyphBoundsSource.Outline,
+    )
+
+    private fun shapeWithBoundsSource(
+        text: String,
+        fontSizePx: Float,
+        style: MathStyle,
+        boundsSource: MathGlyphBoundsSource,
     ): MeasuredMathRun {
         if (text.isEmpty()) return MeasuredMathRun(emptyList(), 0f, 0f, 0f, false)
         val font = Font(typeface, fontSizePx)
@@ -148,6 +172,7 @@ class SkiaMathFontFace(
                 collector.xPositions.toFloatArray(),
                 collector.clusters.toIntArray(),
                 collector.advance,
+                boundsSource,
             )
         } finally {
             font.close()
@@ -159,11 +184,39 @@ class SkiaMathFontFace(
         fontSizePx: Float,
         style: MathStyle,
         sourceRange: SourceRange,
+    ): MeasuredMathRun = measureGlyphWithBoundsSource(
+        glyphId,
+        fontSizePx,
+        MathGlyphBoundsSource.FontReported,
+    )
+
+    override fun measureOutlineConstructionGlyph(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = measureGlyphWithBoundsSource(
+        glyphId,
+        fontSizePx,
+        MathGlyphBoundsSource.Outline,
+    )
+
+    private fun measureGlyphWithBoundsSource(
+        glyphId: UShort,
+        fontSizePx: Float,
+        boundsSource: MathGlyphBoundsSource,
     ): MeasuredMathRun {
         val font = Font(typeface, fontSizePx)
         return try {
             val ids = shortArrayOf(glyphId.toShort())
-            measuredRun(font, ids, floatArrayOf(0f), intArrayOf(0), font.getWidths(ids).single())
+            measuredRun(
+                font,
+                ids,
+                floatArrayOf(0f),
+                intArrayOf(0),
+                font.getWidths(ids).single(),
+                boundsSource,
+            )
         } finally {
             font.close()
         }
@@ -184,11 +237,28 @@ class SkiaMathFontFace(
         xPositions: FloatArray,
         clusters: IntArray,
         runAdvance: Float,
+        boundsSource: MathGlyphBoundsSource,
     ): MeasuredMathRun {
         val widths = font.getWidths(glyphIds)
-        val bounds = font.getBounds(glyphIds)
+        val reportedBounds = font.getBounds(glyphIds)
+        var usedReportedBounds = false
         val glyphs = glyphIds.indices.map { glyphIndex ->
-            val bound = bounds[glyphIndex]
+            val bound = if (boundsSource == MathGlyphBoundsSource.Outline) {
+                font.getPath(glyphIds[glyphIndex])?.let { outline ->
+                    try {
+                        if (outline.isEmpty) {
+                            usedReportedBounds = true
+                            reportedBounds[glyphIndex]
+                        } else {
+                            outline.computeTightBounds()
+                        }
+                    } finally {
+                        outline.close()
+                    }
+                } ?: reportedBounds[glyphIndex].also { usedReportedBounds = true }
+            } else {
+                reportedBounds[glyphIndex]
+            }
             MeasuredMathGlyph(
                 glyphId = glyphIds[glyphIndex].toUShort(),
                 x = xPositions.getOrElse(glyphIndex) { widths.take(glyphIndex).sum() },
@@ -199,12 +269,18 @@ class SkiaMathFontFace(
         }
         val ascent = glyphs.maxOfOrNull { (-it.inkBounds.top).coerceAtLeast(0f) } ?: 0f
         val descent = glyphs.maxOfOrNull { it.inkBounds.bottom.coerceAtLeast(0f) } ?: 0f
+        val glyphAdvanceWidth = glyphs.maxOfOrNull { it.x + it.advance } ?: 0f
         return MeasuredMathRun(
             glyphs = glyphs,
-            width = max(runAdvance, glyphs.maxOfOrNull { it.x + it.advance } ?: 0f),
+            width = if (boundsSource == MathGlyphBoundsSource.Outline) {
+                glyphAdvanceWidth
+            } else {
+                max(runAdvance, glyphAdvanceWidth)
+            },
             ascent = ascent,
             descent = descent,
             missingGlyph = glyphIds.any { it.toInt() == 0 },
+            boundsSource = if (usedReportedBounds) MathGlyphBoundsSource.FontReported else boundsSource,
         )
     }
 

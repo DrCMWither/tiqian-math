@@ -697,7 +697,7 @@ private class MathLayoutPass(
         val degreeStyle = MathStyle.ScriptScript
         val degree = node.degree?.let { layoutNode(it, degreeStyle, alphabetOverride).box }
         val size = fontSize(style)
-        val baseRun = glyphSource.shapeConstructionBase(RADICAL_SIGN, size, node.commandRange)
+        val baseRun = glyphSource.shapeOutlineConstructionBase(RADICAL_SIGN, size, node.commandRange)
         val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
         if (baseRun.missingGlyph || baseGlyphId == null) {
             diagnostics += MathDiagnostic(
@@ -725,7 +725,12 @@ private class MathLayoutPass(
         }
         val baseGlyphCoversTarget = construction?.kind == MathConstructionKind.BaseGlyph
         val constructionRuns = construction?.components?.map { component ->
-            component to glyphSource.measureGlyph(component.glyphId, size, style, node.commandRange)
+            component to glyphSource.measureOutlineConstructionGlyph(
+                component.glyphId,
+                size,
+                style,
+                node.commandRange,
+            )
         }
         val placedConstruction = if (construction == null || constructionRuns == null) {
             null
@@ -756,8 +761,9 @@ private class MathLayoutPass(
         }
         val radicalGlyphAscent = when (construction?.kind) {
             // GlyphAssembly advance is the nominal stretch/selection extent. Its actual box
-            // ascent comes from the union of placed part bounds and can protrude beyond that
-            // nominal extent. MathML Core aligns the radical glyph box ascent to the overbar.
+            // ascent comes from the union of the same outlines that the renderer paints and can
+            // protrude beyond that nominal extent. Selection advance and paint bounds stay
+            // separate; the latter anchors the radical's top stroke to the rule top.
             MathConstructionKind.Assembly -> placedConstruction!!.boxAscentPx
             MathConstructionKind.BaseGlyph,
             MathConstructionKind.Variant -> constructionRuns!!.single().second.ascent
@@ -942,6 +948,8 @@ private class MathLayoutPass(
             "radicandInkHeightPx" to radicand.inkBounds.height,
             "radicandLogicalHeightPx" to radicand.height,
             "baseGlyphHeightPx" to baseGlyphHeight,
+            "baseGlyphBoundsSource" to baseRun.boundsSource,
+            "componentBoundsSources" to constructionRuns?.map { it.second.boundsSource }?.distinct(),
             "baseGlyphCoversTarget" to baseGlyphCoversTarget,
             "targetHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
@@ -981,13 +989,14 @@ private class MathLayoutPass(
             "radicalGlyphDescentPx" to radicalGlyphDescent,
             "radicalGlyphBlockSizePx" to radicalGlyphBlockSize,
             "radicalGlyphBoxMetricSource" to if (construction?.kind == MathConstructionKind.Assembly) {
-                "PlacedAssemblyGlyphBounds"
+                "PlacedAssemblyOutlineBounds"
             } else {
-                "ShapedGlyphBoxMetrics"
+                "ShapedConstructionOutlineBounds"
             },
             "radicalBoxAdvancePx" to rawRadical.width,
             "radicalPaintOriginY" to radicalBaselineInB,
-            "overbarAnchorPolicy" to "MathMLCoreRadicalBoxLineOverEdge",
+            "overbarAnchorPolicy" to "ActualConstructionOutlineTopEdgeToRuleTop",
+            "overbarThicknessSource" to "OpenTypeMATH.RadicalRuleThickness",
             "overbarLeftPolicy" to "RadicalBoxAdvance",
             "targetHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,

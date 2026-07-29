@@ -244,7 +244,7 @@ class MathRadicalNoadTest {
                         "NominalAdvanceForSelectionActualPlacedBoundsForBox",
                         construction.details["constructionExtentPolicy"],
                     )
-                    assertEquals("PlacedAssemblyGlyphBounds", geometry.details["radicalGlyphBoxMetricSource"])
+                    assertEquals("PlacedAssemblyOutlineBounds", geometry.details["radicalGlyphBoxMetricSource"])
                     assertNear(
                         construction.float("constructionBoxAscentPx"),
                         geometry.float("radicalGlyphAscentPx"),
@@ -809,7 +809,7 @@ private fun MathLayoutResult.radicalGeometryDecisions(): List<MathLayoutDecision
 private fun MathLayoutDecision.float(name: String): Float =
     checkNotNull(details[name]) { "$name is absent from $this" }.toFloat()
 
-/** Pure MathML Core square-root box equations; no raster evidence participates. */
+/** TeX/OpenType radical box equations; the separate outline oracle audits the painted seam. */
 private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String) {
     val ruleThickness = geometry.float("radicalRuleThicknessPx")
     val gap = geometry.float("radicalVerticalGapPx")
@@ -822,7 +822,7 @@ private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String)
     assertNear(
         -geometry.float("unindexedAscentPx") + geometry.float("radicalExtraAscenderPx"),
         geometry.float("ruleTop"),
-        "$label overbar top is the completed radical box line-over edge",
+        "$label overbar top follows the completed radical box reserve",
     )
     assertNear(
         geometry.float("ruleTop") + ruleThickness,
@@ -832,12 +832,12 @@ private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String)
     assertNear(
         geometry.float("ruleTop") + geometry.float("radicalGlyphAscentPx"),
         geometry.float("radicalPaintOriginY"),
-        "$label glyph box ascent anchors its top to the overbar",
+        "$label replayed outline ascent anchors its top to the overbar",
     )
     assertNear(
         geometry.float("ruleTop"),
         geometry.float("radicalInkTopPx"),
-        "$label placed radical glyph box top meets the overbar line-over edge",
+        "$label placed radical outline top meets the overbar top edge",
     )
     assertNear(
         geometry.float("radicalX") + geometry.float("radicalBoxAdvancePx"),
@@ -849,7 +849,8 @@ private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String)
         geometry.float("ruleRight"),
         "$label overbar spans the radicand logical width",
     )
-    assertEquals("MathMLCoreRadicalBoxLineOverEdge", geometry.details["overbarAnchorPolicy"])
+    assertEquals("ActualConstructionOutlineTopEdgeToRuleTop", geometry.details["overbarAnchorPolicy"])
+    assertEquals("OpenTypeMATH.RadicalRuleThickness", geometry.details["overbarThicknessSource"])
     assertEquals("RadicalBoxAdvance", geometry.details["overbarLeftPolicy"])
 }
 

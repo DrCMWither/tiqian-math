@@ -24,7 +24,13 @@ data class MeasuredMathRun(
     val ascent: Float,
     val descent: Float,
     val missingGlyph: Boolean,
+    val boundsSource: MathGlyphBoundsSource = MathGlyphBoundsSource.FontReported,
 )
+
+enum class MathGlyphBoundsSource {
+    FontReported,
+    Outline,
+}
 
 /** Semantic request. No Unicode Mathematical Alphanumeric glyph scalar is stored in the AST. */
 data class MathSymbolGlyphRequest(
@@ -111,6 +117,18 @@ interface MathFontFace {
     ): MeasuredMathRun
 
     /**
+     * Measures a glyph from the same outline geometry required by semantic construction
+     * painting. Backends without replayable outlines retain [measureGlyph]'s reported bounds;
+     * [MeasuredMathRun.boundsSource] exposes that capability difference.
+     */
+    fun measureOutlineConstructionGlyph(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = measureGlyph(glyphId, fontSizePx, style, sourceRange)
+
+    /**
      * Resolves the Unicode base glyph used as the key in MathVariants coverage.
      * This deliberately bypasses `ssty` while retaining the requested size.
      */
@@ -119,4 +137,11 @@ interface MathFontFace {
         fontSizePx: Float,
         sourceRange: SourceRange,
     ): MeasuredMathRun = shape(text, fontSizePx, MathStyle.Text, sourceRange)
+
+    /** Outline-replay counterpart to [shapeConstructionBase]. */
+    fun shapeOutlineConstructionBase(
+        text: String,
+        fontSizePx: Float,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = shapeConstructionBase(text, fontSizePx, sourceRange)
 }
