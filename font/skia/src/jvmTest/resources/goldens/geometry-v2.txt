@@ -16,6 +16,8 @@ case=operator-inline logical=143.381 visual=0.000..143.381 ink=0.000,-40.560,140
   evidence=op:sum/Text/BaseGlyph/0.000/43.000/axis=-11.200/ic=0.000/MathItalicsCorrectionInfo,policy:sum/Auto->NoLimits/auto-non-display,side:sum/Text,op:integral/Text/BaseGlyph/0.000/48.000/axis=-11.200/ic=8.000/MathItalicsCorrectionInfo,policy:integral/NoLimits->NoLimits/plain-tex-operator-default,side:integral/Text
 case=operator-display logical=136.573 visual=0.000..136.573 ink=0.000,-86.200,136.453,64.800 safe=92.200/64.800 fragments=3 breaks=0 diagnostics=[]
   evidence=op:sum/Display/Variant/56.000/59.720/axis=-11.200/ic=0.000/MathItalicsCorrectionInfo,policy:sum/Auto->Limits/auto-display,limits:6.000/7.000/6.000/28.000,op:integral/Display/Variant/56.000/89.400/axis=-11.200/ic=16.000/MathItalicsCorrectionInfo,policy:integral/Limits->Limits/explicit-postfix-modifier,limits:6.000/7.000/6.000/28.000
+case=operator-limit-skew logical=110.876 visual=-8.000..119.000 ink=-8.000,-92.200,119.000,69.800 safe=98.200/69.800 fragments=1 breaks=0 diagnostics=[]
+  evidence=policy=max-unskewed-operator-and-limits widths=39.120/110.876/110.876 x=35.878/8.000/-8.000 ic=16.000
 case=adjustment logical=200.067 visual=0.000..200.067 ink=0.000,-31.000,198.667,7.000 safe=37.000/10.000 fragments=7 breaks=3 diagnostics=[]
   evidence=0:ic=2.240/None/0.000/0.000/0.000/None,1:ic=0.000/Thin/6.667/6.667/13.333/Punctuation,2:ic=1.680/Thick/11.111/11.111/22.222/Relation,3:ic=0.000/Thick/11.111/11.111/22.222/Relation,4:ic=2.000/Medium/8.889/0.000/13.333/BinaryOperator,5:ic=0.000/Medium/8.889/0.000/13.333/BinaryOperator,6:ic=2.400/None/0.000/0.000/0.000/None
 face=STIX Two Math upm=1000 line=762/-238/250
@@ -35,5 +37,7 @@ case=operator-inline logical=152.097 visual=0.000..152.097 ink=0.000,-42.120,150
   evidence=op:sum/Text/BaseGlyph/0.000/44.000/axis=-10.320/ic=0.000/MathItalicsCorrectionInfo,policy:sum/Auto->NoLimits/auto-non-display,side:sum/Text,op:integral/Text/BaseGlyph/0.000/42.000/axis=-10.320/ic=9.200/MathItalicsCorrectionInfo,policy:integral/NoLimits->NoLimits/plain-tex-operator-default,side:integral/Text
 case=operator-display logical=128.093 visual=-1.000..128.093 ink=-1.000,-90.820,126.813,66.980 safe=96.820/66.980 fragments=3 breaks=0 diagnostics=[MathVariantTooShort]
   evidence=op:sum/Display/Variant/72.000/53.040/axis=-10.320/ic=0.000/MathItalicsCorrectionInfo,policy:sum/Auto->Limits/auto-display,limits:10.000/12.000/5.400/27.400,op:integral/Display/Variant/72.000/93.880/axis=-10.320/ic=21.600/MathItalicsCorrectionInfo,policy:integral/Limits->Limits/explicit-postfix-modifier,limits:11.000/12.000/6.800/26.800
+case=operator-limit-skew logical=131.032 visual=-11.800..142.800 ink=-11.800,-95.220,142.800,74.580 safe=101.220/74.580 fragments=1 breaks=0 diagnostics=[]
+  evidence=policy=max-unskewed-operator-and-limits widths=41.280/131.032/131.032 x=44.876/10.800/-10.800 ic=21.600
 case=adjustment logical=198.107 visual=0.000..198.107 ink=0.000,-30.000,198.067,7.000 safe=40.480/9.520 fragments=7 breaks=3 diagnostics=[]
   evidence=0:ic=0.000/None/0.000/0.000/0.000/None,1:ic=0.000/Thin/6.667/6.667/13.333/Punctuation,2:ic=0.200/Thick/11.111/11.111/22.222/Relation,3:ic=0.000/Thick/11.111/11.111/22.222/Relation,4:ic=0.000/Medium/8.889/0.000/13.333/BinaryOperator,5:ic=0.000/Medium/8.889/0.000/13.333/BinaryOperator,6:ic=0.800/None/0.000/0.000/0.000/None

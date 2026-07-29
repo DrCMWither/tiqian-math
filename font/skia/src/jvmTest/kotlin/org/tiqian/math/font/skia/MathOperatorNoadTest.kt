@@ -195,6 +195,125 @@ class MathOperatorNoadTest {
         }
     }
 
+    @Test
+    fun displayedLimitSkewChangesOnlyVisualExtentsNotLogicalWidth() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            val engine = MathLayoutEngine(face)
+            val narrow = engine.layout(
+                "\\int\\limits_0^1",
+                MathLayoutOptions(MathMode.Display, 48f),
+            )
+            val wide = engine.layout(
+                "\\int\\limits_{abcdefgh}^{abcdefgh}",
+                MathLayoutOptions(MathMode.Display, 48f),
+            )
+
+            listOf("narrow" to narrow, "wide" to wide).forEach { (label, result) ->
+                val limits = result.limitDecision()
+                val expectedLogicalWidth = maxOf(
+                    limits.float("operatorWidthPx"),
+                    limits.float("upperWidthPx"),
+                    limits.float("lowerWidthPx"),
+                )
+                assertTrue(limits.float("operatorItalicCorrectionPx") > 0f, "$label fixture needs non-zero IC")
+                assertNear(expectedLogicalWidth, result.box.width, "$label TeX limit width ignores skew")
+
+                val operatorCenter = limits.float("operatorX") + limits.float("operatorWidthPx") / 2f
+                val upperCenter = limits.float("upperX") + limits.float("upperWidthPx") / 2f
+                val lowerCenter = limits.float("lowerX") + limits.float("lowerWidthPx") / 2f
+                assertNear(
+                    limits.float("operatorItalicCorrectionPx") / 2f,
+                    upperCenter - operatorCenter,
+                    "$label upper limit keeps +IC/2 skew",
+                )
+                assertNear(
+                    -limits.float("operatorItalicCorrectionPx") / 2f,
+                    lowerCenter - operatorCenter,
+                    "$label lower limit keeps -IC/2 skew",
+                )
+                assertTrue(
+                    result.box.inkBounds.left < -EPSILON || result.box.inkBounds.right > result.box.width + EPSILON,
+                    "$label skew remains visible as ink overhang: ${result.debugDump}",
+                )
+                if (label == "wide") {
+                    assertTrue(result.box.inkBounds.left < -EPSILON, result.debugDump)
+                    assertTrue(result.box.inkBounds.right > result.box.width + EPSILON, result.debugDump)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun heterogeneousAssemblyGlyphOriginsFollowAdvanceOffsetsNotInkBottoms() {
+        SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
+            val size = 40f
+            val range = SourceRange(0, 4)
+            val operatorGlyph = assertNotNull(
+                delegate.resolveOperator(
+                    MathOperatorGlyphRequest(MathLargeOperatorIdentity.Sum, MathStyle.Display, range),
+                    size,
+                ).constructionBaseGlyphId,
+            )
+            val parenthesisGlyph = delegate.shapeConstructionBase("(", size, range).glyphs.single().glyphId
+            val operatorMetrics = delegate.measureGlyph(operatorGlyph, size, MathStyle.Display, range).glyphs.single()
+            val parenthesisMetrics = delegate.measureGlyph(parenthesisGlyph, size, MathStyle.Display, range).glyphs.single()
+            assertTrue(operatorGlyph != parenthesisGlyph)
+            assertTrue(
+                abs(operatorMetrics.inkBounds.bottom - parenthesisMetrics.inkBounds.bottom) > EPSILON,
+                "fixture glyph bottoms must differ",
+            )
+            assertTrue(
+                abs(operatorMetrics.inkBounds.height - parenthesisMetrics.inkBounds.height) > EPSILON,
+                "fixture glyph heights must differ",
+            )
+
+            val assembly = MathGlyphAssembly(
+                parts = listOf(
+                    MathGlyphAssemblyPart(operatorGlyph, 0, 300, 1_000, false),
+                    MathGlyphAssemblyPart(parenthesisGlyph, 300, 0, 1_000, false),
+                ),
+                minimumConnectorOverlap = 100,
+                italicCorrection = 0,
+            )
+            val overriddenFont = delegate.mathFont.copy(
+                constants = delegate.mathFont.constants.copy(displayOperatorMinHeight = 1_800),
+                verticalConstructions = delegate.mathFont.verticalConstructions + (
+                    operatorGlyph to MathGlyphConstruction(emptyList(), assembly)
+                ),
+            )
+            val construction = assertNotNull(
+                overriddenFont.verticalConstruction(
+                    operatorGlyph,
+                    overriddenFont.scaleDesignUnits(1_800, size),
+                    size,
+                ),
+            )
+            val result = MathLayoutEngine(OperatorOverrideFace(delegate, overriddenFont)).layout(
+                "\\sum\\limits_a^b",
+                MathLayoutOptions(MathMode.Display, size),
+            )
+            assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+
+            val componentPlacements = result.box.glyphs.filter { it.sourceRange == range }
+            val lowerPlacement = componentPlacements.single { it.glyphId == operatorGlyph }
+            val upperPlacement = componentPlacements.single { it.glyphId == parenthesisGlyph }
+            val expectedOriginDelta = -overriddenFont.scaleDesignUnits(
+                construction.components[1].offset - construction.components[0].offset,
+                size,
+            )
+            assertNear(
+                expectedOriginDelta,
+                upperPlacement.baselineY - lowerPlacement.baselineY,
+                "component origin distance comes only from the assembly advance offset",
+            )
+            assertNear(
+                overriddenFont.scaleDesignUnits(construction.advanceMeasurement, size),
+                result.operatorDecision().float("achievedAdvancePx"),
+                "reported construction advance stays tied to the assembly offsets",
+            )
+        }
+    }
+
     private fun assertPolicy(result: org.tiqian.math.core.MathLayoutResult, policy: String, reason: String, label: String) {
         val decision = result.decisions.first { it.name == "TeXOperatorLimitsPolicy" }
         assertEquals(policy, decision.details["effectivePolicy"], "$label/${result.source}")

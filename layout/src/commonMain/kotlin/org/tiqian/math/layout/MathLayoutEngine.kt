@@ -1,8 +1,9 @@
 package org.tiqian.math.layout
 
 import org.tiqian.math.core.*
-import org.tiqian.math.font.opentype.MathKernCorner
 import org.tiqian.math.font.opentype.MathConstructionKind
+import org.tiqian.math.font.opentype.MathGlyphComponent
+import org.tiqian.math.font.opentype.MathKernCorner
 import org.tiqian.math.font.opentype.MathVerticalConstruction
 import org.tiqian.math.font.opentype.OpenTypeMathConstants
 import org.tiqian.math.parser.MacroExpansionLimits
@@ -544,29 +545,14 @@ private class MathLayoutPass(
         val componentRuns = construction.components.map { component ->
             component to glyphSource.measureGlyph(component.glyphId, size, style, node.commandRange)
         }
-        val width = componentRuns.maxOfOrNull { it.second.width } ?: 0f
-        val placements = if (
-            construction.kind == MathConstructionKind.Variant
-        ) {
-            componentRuns.flatMap { (_, run) -> measuredRunBox(run, node.commandRange, style, size).glyphs }
-        } else {
-            componentRuns.flatMap { (component, run) ->
-                val componentBottomY = -glyphSource.mathFont.scaleDesignUnits(component.offset, size)
-                run.glyphs.map { glyph ->
-                    val baselineY = componentBottomY - glyph.inkBounds.bottom
-                    MathGlyphPlacement(
-                        glyphId = glyph.glyphId,
-                        x = glyph.x,
-                        baselineY = baselineY,
-                        advance = glyph.advance,
-                        inkBounds = glyph.inkBounds.translated(glyph.x, baselineY),
-                        fontSizePx = size,
-                        sourceRange = node.commandRange,
-                        style = style,
-                    )
-                }
-            }
-        }
+        val placed = placeVerticalConstruction(
+            construction = construction,
+            componentRuns = componentRuns,
+            size = size,
+            style = style,
+            sourceRange = node.commandRange,
+            centerComponentsHorizontally = false,
+        )
         decision(
             "OpenTypeOperatorConstruction",
             node.range,
@@ -577,11 +563,48 @@ private class MathLayoutPass(
             "extenderRepetitions" to construction.extenderRepetitions,
             "connectorOverlapsDesignUnits" to construction.connectorOverlaps,
             "assemblyItalicCorrectionDesignUnits" to construction.assemblyItalicCorrection,
+            "componentBaselineOriginsPx" to construction.components.joinToString(",") {
+                (-glyphSource.mathFont.scaleDesignUnits(it.offset, size)).toString()
+            },
             "placementOrigin" to if (
                 construction.kind == MathConstructionKind.Assembly
-            ) "shared-left/component-bottom" else "glyph-baseline",
+            ) "shared-left/advance-offset" else "glyph-baseline",
         )
-        return geometryExtents(width, placements, emptyList(), node.range)
+        return geometryExtents(placed.width, placed.glyphs, emptyList(), node.range)
+    }
+
+    /**
+     * Places vertical MATH construction parts at their advance offsets. The offset is a glyph
+     * origin, so ink bounds can describe any top/bottom overhang without changing connector
+     * distances. Horizontal centering is retained only for the existing delimiter-box policy.
+     */
+    private fun placeVerticalConstruction(
+        construction: MathVerticalConstruction,
+        componentRuns: List<Pair<MathGlyphComponent, MeasuredMathRun>>,
+        size: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+        centerComponentsHorizontally: Boolean,
+    ): PlacedVerticalConstruction {
+        val width = componentRuns.maxOfOrNull { it.second.width } ?: 0f
+        val placements = componentRuns.flatMap { (component, run) ->
+            val componentX = if (centerComponentsHorizontally) (width - run.width) / 2f else 0f
+            val baselineY = -glyphSource.mathFont.scaleDesignUnits(component.offset, size)
+            run.glyphs.map { glyph ->
+                val x = componentX + glyph.x
+                MathGlyphPlacement(
+                    glyphId = glyph.glyphId,
+                    x = x,
+                    baselineY = baselineY,
+                    advance = glyph.advance,
+                    inkBounds = glyph.inkBounds.translated(x, baselineY),
+                    fontSizePx = size,
+                    sourceRange = sourceRange,
+                    style = style,
+                )
+            }
+        }
+        return PlacedVerticalConstruction(width, placements)
     }
 
     private fun layoutOperatorScripts(
@@ -652,17 +675,14 @@ private class MathLayoutPass(
             base.box.descent + max(lowerBaselineDropMin, it.box.ascent + lowerGapMin)
         }
         val halfItalicCorrection = base.italicCorrectionPx / 2f
-        val initialUpperX = upper?.let { (base.box.width - it.box.width) / 2f + halfItalicCorrection }
-        val initialLowerX = lower?.let { (base.box.width - it.box.width) / 2f - halfItalicCorrection }
-        val logicalLeft = minOf(0f, initialUpperX ?: 0f, initialLowerX ?: 0f)
-        val logicalRight = maxOf(
+        val logicalWidth = maxOf(
             base.box.width,
-            upper?.let { initialUpperX!! + it.box.width } ?: base.box.width,
-            lower?.let { initialLowerX!! + it.box.width } ?: base.box.width,
+            upper?.box?.width ?: 0f,
+            lower?.box?.width ?: 0f,
         )
-        val baseX = -logicalLeft
-        val upperX = initialUpperX?.minus(logicalLeft)
-        val lowerX = initialLowerX?.minus(logicalLeft)
+        val baseX = (logicalWidth - base.box.width) / 2f
+        val upperX = upper?.let { (logicalWidth - it.box.width) / 2f + halfItalicCorrection }
+        val lowerX = lower?.let { (logicalWidth - it.box.width) / 2f - halfItalicCorrection }
         val shiftedBase = base.box.translated(baseX, 0f)
         val shiftedUpper = upper?.let { it.box.translated(upperX!!, -upperShift!!) }
         val shiftedLower = lower?.let { it.box.translated(lowerX!!, lowerShift!!) }
@@ -689,6 +709,8 @@ private class MathLayoutPass(
             "operatorItalicCorrectionPx" to base.italicCorrectionPx,
             "upperCenterOffsetPx" to halfItalicCorrection,
             "lowerCenterOffsetPx" to -halfItalicCorrection,
+            "logicalWidthPx" to logicalWidth,
+            "logicalWidthPolicy" to "max-unskewed-operator-and-limits",
             "operatorWidthPx" to base.box.width,
             "upperWidthPx" to upper?.box?.width,
             "lowerWidthPx" to lower?.box?.width,
@@ -699,7 +721,7 @@ private class MathLayoutPass(
         return LaidNode(
             node = node,
             box = geometryExtents(
-                logicalRight - logicalLeft,
+                logicalWidth,
                 shiftedBase.glyphs + shiftedUpper?.glyphs.orEmpty() + shiftedLower?.glyphs.orEmpty(),
                 shiftedBase.rules + shiftedUpper?.rules.orEmpty() + shiftedLower?.rules.orEmpty(),
                 node.range,
@@ -1090,23 +1112,14 @@ private class MathLayoutPass(
                 val componentRuns = construction.components.map { component ->
                     component to glyphSource.measureGlyph(component.glyphId, size, style, node.range)
                 }
-                val width = componentRuns.maxOfOrNull { it.second.width } ?: 0f
-                componentRuns.flatMap { (component, run) ->
-                    val componentX = (width - run.width) / 2f
-                    val componentBaseline = -glyphSource.mathFont.scaleDesignUnits(component.offset, size)
-                    run.glyphs.map { glyph ->
-                        MathGlyphPlacement(
-                            glyphId = glyph.glyphId,
-                            x = componentX + glyph.x,
-                            baselineY = componentBaseline,
-                            advance = glyph.advance,
-                            inkBounds = glyph.inkBounds.translated(componentX + glyph.x, componentBaseline),
-                            fontSizePx = size,
-                            sourceRange = node.range,
-                            style = style,
-                        )
-                    }
-                }
+                placeVerticalConstruction(
+                    construction = construction,
+                    componentRuns = componentRuns,
+                    size = size,
+                    style = style,
+                    sourceRange = node.range,
+                    centerComponentsHorizontally = true,
+                ).glyphs
             }
             val inkTop = rawPlacements.minOfOrNull { it.inkBounds.top } ?: 0f
             val inkBottom = rawPlacements.maxOfOrNull { it.inkBounds.bottom } ?: 0f
@@ -1573,6 +1586,11 @@ private class MathLayoutPass(
         val italicCorrectionPx: Float,
         val style: MathStyle,
         val scriptBaseKind: ScriptBaseKind,
+    )
+
+    private data class PlacedVerticalConstruction(
+        val width: Float,
+        val glyphs: List<MathGlyphPlacement>,
     )
 
     private data class HorizontalItem(

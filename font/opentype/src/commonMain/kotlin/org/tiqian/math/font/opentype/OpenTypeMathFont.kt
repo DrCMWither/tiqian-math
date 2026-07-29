@@ -114,7 +114,7 @@ enum class MathConstructionKind {
 
 data class MathGlyphComponent(
     val glyphId: UShort,
-    /** Design-unit offset from the construction's bottom, positive upward. */
+    /** Design-unit advance offset of this glyph's placement origin from the assembly start. */
     val offset: Float,
 )
 

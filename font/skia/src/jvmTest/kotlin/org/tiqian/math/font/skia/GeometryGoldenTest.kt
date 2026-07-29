@@ -40,6 +40,12 @@ class GeometryGoldenTest {
                 GoldenCase("script-binomial", "\\frac{a}{\\binom{n}{k}}", MathMode.Inline, 40f),
                 GoldenCase("operator-inline", "\\sum_i^n+\\int_0^1", MathMode.Inline, 40f),
                 GoldenCase("operator-display", "\\sum_i^n+\\int\\limits_0^1", MathMode.Display, 40f),
+                GoldenCase(
+                    "operator-limit-skew",
+                    "\\int\\limits_{abcdefgh}^{abcdefgh}",
+                    MathMode.Display,
+                    40f,
+                ),
                 GoldenCase("adjustment", "a,b=c+d", MathMode.Inline, 40f),
             ).forEach { case ->
                 val result = engine.layout(case.source, MathLayoutOptions(case.mode, case.size))
@@ -113,6 +119,19 @@ class GeometryGoldenTest {
                             }
                         },
                     )
+                    "operator-limit-skew" -> {
+                        val limits = result.decisions.first { it.name == "OpenTypeMathOperatorLimits" }
+                        appendLine(
+                            "  evidence=policy=${limits.details["logicalWidthPolicy"]} " +
+                                "widths=${limits.details.getValue("operatorWidthPx").toFloat().fmt()}/" +
+                                "${limits.details.getValue("upperWidthPx").toFloat().fmt()}/" +
+                                "${limits.details.getValue("lowerWidthPx").toFloat().fmt()} " +
+                                "x=${limits.details.getValue("operatorX").toFloat().fmt()}/" +
+                                "${limits.details.getValue("upperX").toFloat().fmt()}/" +
+                                "${limits.details.getValue("lowerX").toFloat().fmt()} " +
+                                "ic=${limits.details.getValue("operatorItalicCorrectionPx").toFloat().fmt()}",
+                        )
+                    }
                     "adjustment" -> appendLine(
                         "  evidence=" + result.fragments.joinToString(",") {
                             "${it.sourceRange.start}:ic=${it.trailingItalicCorrectionPx.fmt()}/" +
