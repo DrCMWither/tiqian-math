@@ -791,6 +791,8 @@ private class MathLayoutPass(
         val achievedAdvance = construction?.let {
             glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
         } ?: baseGlyphHeight
+        val constructionExcess = (achievedAdvance - targetHeight).coerceAtLeast(0f)
+        val actualClearance = gapMin + constructionExcess / 2f
         val rawRadical = if (placedConstruction == null) {
             baseRadical
         } else {
@@ -873,25 +875,27 @@ private class MathLayoutPass(
             )
         }
 
-        // MathML Core 3.3.3.2 first forms the unindexed square-root box B. Its logical
-        // reserve and overbar position use line metrics, while the stretch target above uses
-        // only the radicand ink height. This prevents nested ExtraAscender reserve from
-        // selecting a different radical construction.
-        val unindexedAscent = max(
-            radicand.ascent,
-            -radicand.inkBounds.top + gapMin + ruleThickness + extraAscender,
-        )
-        val unindexedDescent = max(
-            radicand.descent,
-            radicalGlyphBlockSize + extraAscender - unindexedAscent,
-        ).coerceAtLeast(0f)
-        val ruleTopInB = -unindexedAscent + extraAscender
-        val ruleBottomInB = ruleTopInB + ruleThickness
-        val actualGap = radicand.inkBounds.top - ruleBottomInB
+        // TeX's make_radical adds half of a selected delimiter's positive excess to the
+        // minimum clearance. The OpenType construction advance is the stretch extent used
+        // by selection, so its excess is measured against the same ink/gap/rule target.
+        // Logical line reserve and RadicalExtraAscender never feed this calculation.
+        val ruleBottomInB = radicand.inkBounds.top - actualClearance
+        val ruleTopInB = ruleBottomInB - ruleThickness
         val radicalTopStrokeTopPx = topStroke?.topPx ?: -radicalGlyphAscent
         val radicalTopStrokeBottomPx = topStroke?.bottomPx ?: (-radicalGlyphAscent + ruleThickness)
         val radicalTopStrokeRightPx = topStroke?.rightPx ?: rawRadical.width
         val radicalBaselineInB = ruleTopInB - radicalTopStrokeTopPx
+        val radicalInkTopInB = radicalBaselineInB + rawRadical.inkBounds.top
+        val unindexedAscent = maxOf(
+            radicand.ascent,
+            -ruleTopInB + extraAscender,
+            -radicalInkTopInB,
+        )
+        val unindexedDescent = max(
+            radicand.descent,
+            radicalBaselineInB + radicalGlyphDescent,
+        ).coerceAtLeast(0f)
+        val actualGap = radicand.inkBounds.top - ruleBottomInB
         val radicandXInB = rawRadical.width
         val radicalInB = rawRadical.translated(0f, radicalBaselineInB)
         val radicandInB = radicand.translated(radicandXInB, 0f)
@@ -1058,9 +1062,15 @@ private class MathLayoutPass(
             "style" to style,
             "radicandStyle" to radicandStyle,
             "degreeStyle" to if (degree == null) null else degreeStyle,
-            "unindexedBoxPolicy" to "MathMLCore3.3.3.2",
+            "unindexedBoxPolicy" to "TeXMakeRadicalHalfPositiveConstructionExcess",
             "degreePlacementPolicy" to if (degree == null) null else "MathMLCore3.3.3.3",
             "radicalVerticalGapPx" to gapMin,
+            "minimumRadicalGapPx" to gapMin,
+            "constructionExcessPx" to constructionExcess,
+            "constructionExcessMetric" to "SelectedOpenTypeConstructionAdvanceMinusStretchTarget",
+            "clearancePolicy" to "MinimumGapPlusHalfPositiveConstructionExcess",
+            "clearanceSpecificationDivergence" to
+                "TeXMakeRadicalClearanceWithOpenTypeConstructionAdvance;NotMathMLCore3.3.3.2Clearance",
             "actualRadicalGapPx" to actualGap,
             "radicalRuleThicknessPx" to ruleThickness,
             "radicalExtraAscenderPx" to extraAscender,
@@ -1107,6 +1117,8 @@ private class MathLayoutPass(
             },
             "targetHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
+            "radicandAscentPx" to radicand.ascent,
+            "radicandDescentPx" to radicand.descent,
             "unindexedAscentPx" to unindexedBox.ascent,
             "unindexedDescentPx" to unindexedBox.descent,
             "unindexedBlockSizePx" to unindexedBox.height,

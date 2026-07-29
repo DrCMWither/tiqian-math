@@ -43,6 +43,53 @@ import org.tiqian.math.layout.ResolvedMathSymbolRun
 
 class MathRadicalNoadTest {
     @Test
+    fun selectedConstructionExcessIsSplitAcrossTheRadicalClearanceForBothFonts() =
+        withRadicalFaces { label, face ->
+            val size = 48f
+            val cases = listOf(
+                "x" to "\\sqrt{x}",
+                "X" to "\\sqrt{X}",
+                "ascender-descender" to "\\sqrt{x_j^2}",
+                "variant" to "\\sqrt{\\frac{a}{b}}",
+                "assembly" to ("\\sqrt{" +
+                    (1..12).fold("x") { radicand, _ -> "\\frac{$radicand}{y}" } +
+                    "}"),
+            )
+            val selectedKinds = mutableSetOf<String>()
+
+            cases.forEach { (caseLabel, source) ->
+                val result = MathLayoutEngine(face).layout(
+                    source,
+                    MathLayoutOptions(MathMode.Display, size),
+                )
+                val construction = result.radicalConstructionDecision()
+                val geometry = result.radicalGeometryDecision()
+                val target = construction.float("targetHeightPx")
+                val selectedExtent = construction.float("achievedAdvancePx")
+                val expectedExcess = (selectedExtent - target).coerceAtLeast(0f)
+                val minimumGap = geometry.float("radicalVerticalGapPx")
+                val expectedActualGap = minimumGap + expectedExcess / 2f
+
+                selectedKinds += construction.details.getValue("construction")
+                assertNear(
+                    expectedActualGap,
+                    geometry.float("actualRadicalGapPx"),
+                    "$label/$caseLabel actual clearance is the minimum plus half selected-construction excess",
+                )
+                assertNear(
+                    geometry.float("radicandInkTopPx") - expectedActualGap,
+                    geometry.float("ruleBottom"),
+                    "$label/$caseLabel overbar bottom closes against radicand ink",
+                )
+                assertRadicalBoxAlgebra(geometry, "$label/$caseLabel")
+            }
+
+            assertTrue("BaseGlyph" in selectedKinds, "$label must cover the normal radical glyph")
+            assertTrue("Variant" in selectedKinds, "$label must cover a MATH radical variant")
+            assertTrue("Assembly" in selectedKinds, "$label must cover a MATH radical assembly")
+        }
+
+    @Test
     fun crampedRadicandsScriptsRulesAndDegreeGeometryHoldForBothRealFonts() =
         withRadicalFaces { label, face ->
             val size = 48f
@@ -109,7 +156,10 @@ class MathRadicalNoadTest {
             val inlineGeometry = inline.radicalGeometryDecision()
             val displayGeometry = display.radicalGeometryDecision()
             val indexedGeometry = indexed.radicalGeometryDecision()
-            assertEquals("MathMLCore3.3.3.2", indexedGeometry.details["unindexedBoxPolicy"])
+            assertEquals(
+                "TeXMakeRadicalHalfPositiveConstructionExcess",
+                indexedGeometry.details["unindexedBoxPolicy"],
+            )
             assertEquals("MathMLCore3.3.3.3", indexedGeometry.details["degreePlacementPolicy"])
             assertNear(
                 face.mathFont.scaleDesignUnits(face.mathFont.constants.radicalVerticalGap, size),
@@ -839,22 +889,52 @@ private fun MathLayoutDecision.float(name: String): Float =
 /** TeX/OpenType radical box equations; the separate outline oracle audits the painted seam. */
 private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String) {
     val ruleThickness = geometry.float("radicalRuleThicknessPx")
-    val gap = geometry.float("radicalVerticalGapPx")
+    val minimumGap = geometry.float("radicalVerticalGapPx")
     val radicandInkHeight = geometry.float("radicandInkBottomPx") - geometry.float("radicandInkTopPx")
     assertNear(
-        radicandInkHeight + gap + ruleThickness,
+        radicandInkHeight + minimumGap + ruleThickness,
         geometry.float("targetHeightPx"),
         "$label stretch target uses radicand ink only",
     )
+    val expectedExcess = (
+        geometry.float("achievedAdvancePx") - geometry.float("targetHeightPx")
+    ).coerceAtLeast(0f)
     assertNear(
-        -geometry.float("unindexedAscentPx") + geometry.float("radicalExtraAscenderPx"),
-        geometry.float("ruleTop"),
-        "$label overbar top follows the completed radical box reserve",
+        expectedExcess,
+        geometry.float("constructionExcessPx"),
+        "$label construction excess uses the selected stretch extent",
+    )
+    assertNear(
+        minimumGap + expectedExcess / 2f,
+        geometry.float("actualRadicalGapPx"),
+        "$label clearance receives half the positive construction excess",
+    )
+    assertNear(
+        geometry.float("radicandInkTopPx") - geometry.float("actualRadicalGapPx"),
+        geometry.float("ruleBottom"),
+        "$label overbar bottom closes against radicand ink",
     )
     assertNear(
         geometry.float("ruleTop") + ruleThickness,
         geometry.float("ruleBottom"),
         "$label overbar thickness",
+    )
+    assertNear(
+        maxOf(
+            geometry.float("radicandAscentPx"),
+            -geometry.float("ruleTop") + geometry.float("radicalExtraAscenderPx"),
+            -(geometry.float("radicalPaintOriginY") - geometry.float("radicalGlyphAscentPx")),
+        ),
+        geometry.float("unindexedAscentPx"),
+        "$label unindexed ascent reserves radicand, overbar safety, and radical ink independently",
+    )
+    assertNear(
+        maxOf(
+            geometry.float("radicandDescentPx"),
+            geometry.float("radicalPaintOriginY") + geometry.float("radicalGlyphDescentPx"),
+        ).coerceAtLeast(0f),
+        geometry.float("unindexedDescentPx"),
+        "$label unindexed descent encloses radicand and selected radical construction",
     )
     assertNear(
         geometry.float("ruleTop"),
@@ -873,6 +953,14 @@ private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String)
         "$label overbar reaches the radicand logical right edge without changing radical advance",
     )
     assertEquals("Available(GlyphOutlineCrossSection)", geometry.details["radicalTopStrokeEvidence"])
+    assertEquals(
+        "SelectedOpenTypeConstructionAdvanceMinusStretchTarget",
+        geometry.details["constructionExcessMetric"],
+    )
+    assertEquals(
+        "MinimumGapPlusHalfPositiveConstructionExcess",
+        geometry.details["clearancePolicy"],
+    )
     assertEquals("FontAdapterTopStrokeTopAndRight", geometry.details["overbarAnchorPolicy"])
     assertEquals("OpenTypeMATH.RadicalRuleThickness", geometry.details["overbarThicknessSource"])
     assertEquals("FontAdapterTopStrokeRight", geometry.details["overbarLeftPolicy"])

@@ -103,7 +103,11 @@ private fun RadicalSample(label: String, face: SkiaMathFontFace) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            RadicalTier("base · indexed", RADICAL_BASE_SOURCE, face)
+            RadicalTier("base · x", "\\sqrt{x}", face)
+            RadicalTier("base · X", "\\sqrt{X}", face)
+            RadicalTier("ascender / descender", "\\sqrt{x_j^2}", face)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             RadicalTier("variant · fraction", RADICAL_VARIANT_SOURCE, face)
             RadicalTier("nested · linked groups", "\\sqrt{1+\\sqrt{x}}", face)
             RadicalTier("assembly · deep fraction", RADICAL_ASSEMBLY_SOURCE, face)
@@ -245,6 +249,9 @@ private fun auditRadicalPreviewTiers() {
                         "${geometry.details["radicalTopStrokeRightPx"]}->" +
                         "${geometry.details["ruleLeft"]} logicalAdvance=" +
                         "${geometry.details["radicalBoxAdvancePx"]} " +
+                        "clearance=${geometry.details["minimumRadicalGapPx"]}+" +
+                        "${geometry.details["constructionExcessPx"]}/2=" +
+                        "${geometry.details["actualRadicalGapPx"]} " +
                         "bounds=${geometry.details["radicalGlyphBoundsSources"]} " +
                         "advancePolicy=${geometry.details["radicalLogicalAdvancePolicy"]} " +
                         "achievedAdvance=${construction.details["achievedAdvancePx"]} source=$source",

@@ -160,7 +160,9 @@ class GeometryGoldenTest {
                                         "${decision.details["componentGlyphIds"]}/${decision.details["componentOffsetsDesignUnits"]}"
                                 else ->
                                     "geometry:${decision.details.getValue("radicalVerticalGapPx").toFloat().fmt()}/" +
+                                        "excess=${decision.details.getValue("constructionExcessPx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("actualRadicalGapPx").toFloat().fmt()}/" +
+                                        "${decision.details["clearancePolicy"]}/" +
                                         "${decision.details.getValue("radicalRuleThicknessPx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("radicalExtraAscenderPx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("radicalKernBeforeDegreePx").toFloat().fmt()}/" +
