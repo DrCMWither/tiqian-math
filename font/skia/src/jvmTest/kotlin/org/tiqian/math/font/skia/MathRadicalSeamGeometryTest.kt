@@ -30,6 +30,7 @@ import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.MathFontFace
 import org.tiqian.math.layout.MathConstructionOutlineEvidence
+import org.tiqian.math.layout.MathConstructionOutlineUnavailableReason
 import org.tiqian.math.layout.MathGlyphBoundsSource
 import org.tiqian.math.layout.MathOperatorGlyphRequest
 import org.tiqian.math.layout.MathSymbolGlyphRequest
@@ -41,6 +42,61 @@ import org.tiqian.math.layout.ResolvedMathSymbol
 import org.tiqian.math.layout.ResolvedMathSymbolRun
 
 class MathRadicalSeamGeometryTest {
+    @Test
+    fun selectedVariantAndAssemblyNeverBorrowAvailableBaseOutlineEvidence() =
+        withSeamFaces { label, face ->
+            val mixed = MissingSelectedConstructionOutlineFace(face)
+            radicalCases().filter { it.kind != MathConstructionShapeKind.BaseGlyph }.forEach { case ->
+                val result = MathLayoutEngine(mixed).layout(
+                    case.source,
+                    MathLayoutOptions(MathMode.Display, 32f),
+                )
+                val construction = result.decisions.first {
+                    it.name == "OpenTypeRadicalConstruction" && it.range.start == 0
+                }
+                val geometry = result.radicalGeometryDecision()
+                assertEquals(case.kind.toString(), construction.details["construction"])
+                assertEquals(
+                    "Available(GlyphOutlineCrossSection)",
+                    construction.details["baseOutlineEvidence"],
+                )
+                assertTrue(
+                    construction.details.getValue("componentOutlineEvidences")
+                        .contains("Unavailable(GlyphOutlineUnavailable)"),
+                    construction.details.toString(),
+                )
+                assertEquals(
+                    "Unavailable(GlyphOutlineUnavailable)",
+                    geometry.details["radicalTopStrokeEvidence"],
+                )
+                assertEquals(
+                    "GlyphOutlineUnavailable",
+                    geometry.details["radicalTopStrokeEvidenceFailure"],
+                )
+                assertEquals(
+                    "SelectedConstructionOutlineBoundsAndLogicalAdvanceFallback",
+                    geometry.details["overbarAnchorPolicy"],
+                )
+                assertEquals("[Outline]", geometry.details["radicalGlyphBoundsSources"])
+                assertTrue(
+                    result.diagnostics.any {
+                        it.code == DiagnosticCode.MissingConstructionOutlineEvidence && it.range.start == 0
+                    },
+                    "$label/${case.label} must diagnose selected-construction evidence loss:\n${result.debugDump}",
+                )
+                assertNear(
+                    -geometry.float("radicalGlyphAscentPx"),
+                    geometry.float("radicalTopStrokeTopPx"),
+                    "$label/${case.label} fallback top comes from the selected construction box",
+                )
+                assertNear(
+                    geometry.float("radicalBoxAdvancePx"),
+                    geometry.float("radicalTopStrokeRightPx"),
+                    "$label/${case.label} fallback right comes from the selected construction advance",
+                )
+            }
+        }
+
     @Test
     fun legacyFontReportedConstructionBoundsReproduceTheHistoricalSeamFailure() =
         withSeamFaces { label, face ->
@@ -610,6 +666,23 @@ private class TopStrokeOverrideFace(
             is MathConstructionOutlineEvidence.Unavailable -> current
         },
     )
+}
+
+private class MissingSelectedConstructionOutlineFace(
+    private val delegate: SkiaMathFontFace,
+) : MathFontFace by delegate {
+    override fun measureOutlineConstructionGlyph(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredOutlineConstructionRun = delegate
+        .measureOutlineConstructionGlyph(glyphId, fontSizePx, style, sourceRange)
+        .copy(
+            evidence = MathConstructionOutlineEvidence.Unavailable(
+                MathConstructionOutlineUnavailableReason.GlyphOutlineUnavailable,
+            ),
+        )
 }
 
 private fun MathLayoutResult.radicalGeometryDecision(): MathLayoutDecision =

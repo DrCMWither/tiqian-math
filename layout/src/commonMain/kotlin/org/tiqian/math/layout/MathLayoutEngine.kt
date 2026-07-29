@@ -831,15 +831,15 @@ private class MathLayoutPass(
         } else {
             "MeasuredMathRunLogicalWidthIndependentOfBoundsSource"
         }
-        val topStrokeEvidence = placedConstruction?.topStrokeEvidence ?: when (val evidence = baseMeasurement.evidence) {
-            is MathConstructionOutlineEvidence.Available -> evidence
-            is MathConstructionOutlineEvidence.Unavailable -> null
+        val topStrokeEvidence = if (construction == null) {
+            baseMeasurement.evidence as? MathConstructionOutlineEvidence.Available
+        } else {
+            placedConstruction?.topStrokeEvidence
         }
-        val outlineEvidenceFailure = placedConstruction?.outlineEvidenceFailure ?: when (
-            val evidence = baseMeasurement.evidence
-        ) {
-            is MathConstructionOutlineEvidence.Available -> null
-            is MathConstructionOutlineEvidence.Unavailable -> evidence.reason
+        val outlineEvidenceFailure = if (construction == null) {
+            (baseMeasurement.evidence as? MathConstructionOutlineEvidence.Unavailable)?.reason
+        } else {
+            placedConstruction?.outlineEvidenceFailure
         }
         val outlineEvidenceAvailable = topStrokeEvidence != null
         val topStroke = topStrokeEvidence?.topStroke
@@ -1094,6 +1094,8 @@ private class MathLayoutPass(
             "radicalTopStrokeRightPx" to radicalTopStrokeRightPx,
             "overbarAnchorPolicy" to if (outlineEvidenceAvailable) {
                 "FontAdapterTopStrokeTopAndRight"
+            } else if (allRadicalBoundsAreOutline) {
+                "SelectedConstructionOutlineBoundsAndLogicalAdvanceFallback"
             } else {
                 "ReportedBoundsAndLogicalAdvanceFallback"
             },
