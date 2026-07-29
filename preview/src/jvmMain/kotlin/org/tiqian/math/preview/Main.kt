@@ -112,6 +112,15 @@ private fun RadicalSample(label: String, face: SkiaMathFontFace) {
             RadicalTier("nested · linked groups", "\\sqrt{1+\\sqrt{x}}", face)
             RadicalTier("assembly · deep fraction", RADICAL_ASSEMBLY_SOURCE, face)
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            RadicalTier("indexed base · ²√x", "\\sqrt[2]{x}", face)
+            RadicalTier("indexed base · ³√X", "\\sqrt[3]{X}", face)
+            RadicalTier("indexed high / deep", "\\sqrt[g_j]{x_j^2}", face)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            RadicalTier("indexed variant", "\\sqrt[3]{\\frac{a}{b}}", face)
+            RadicalTier("indexed assembly", RADICAL_ASSEMBLY_INDEXED_SOURCE, face)
+        }
     }
 }
 
@@ -192,7 +201,7 @@ private fun FontSample(label: String, face: SkiaMathFontFace, mode: MathMode) {
 @OptIn(ExperimentalComposeUiApi::class)
 private fun renderSnapshot() {
     auditRadicalPreviewTiers()
-    ImageComposeScene(width = 900, height = 2400) { PreviewScreen() }.use { scene ->
+    ImageComposeScene(width = 900, height = 3700) { PreviewScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/math-preview.png")
         output.parentFile.mkdirs()
@@ -255,6 +264,36 @@ private fun auditRadicalPreviewTiers() {
                         "bounds=${geometry.details["radicalGlyphBoundsSources"]} " +
                         "advancePolicy=${geometry.details["radicalLogicalAdvancePolicy"]} " +
                         "achievedAdvance=${construction.details["achievedAdvancePx"]} source=$source",
+                )
+            }
+            listOf(
+                Triple("BaseGlyph", "²√x", "\\sqrt[2]{x}"),
+                Triple("Variant", "³√fraction", "\\sqrt[3]{\\frac{a}{b}}"),
+                Triple("Assembly", "⁵√assembly", RADICAL_ASSEMBLY_INDEXED_SOURCE),
+            ).forEach { (expected, caseLabel, source) ->
+                val result = MathLayoutEngine(face).layout(
+                    source,
+                    MathLayoutOptions(MathMode.Display, 32f),
+                )
+                val construction = result.decisions.first {
+                    it.name == "OpenTypeRadicalConstruction" && it.range.start == 0
+                }
+                val geometry = result.decisions.first {
+                    it.name == "OpenTypeMathRadical" && it.range.start == 0
+                }
+                check(construction.details["construction"] == expected) {
+                    "$label indexed preview expected $expected for $source: $construction"
+                }
+                println(
+                    "preview-degree=$label/$caseLabel construction=$expected " +
+                        "reference=${geometry.details["degreeRaiseReferencePx"]}/" +
+                        "${geometry.details["degreeRaiseReferenceMetric"]} " +
+                        "percent=${geometry.details["radicalDegreeBottomRaisePercent"]} " +
+                        "raise=${geometry.details["degreeRaisePx"]} " +
+                        "B=${geometry.details["unindexedBlockSizePx"]} " +
+                        "logicalBottom=${geometry.details["degreeLogicalBottomY"]} " +
+                        "inkBottom=${geometry.details["degreeInkBottomY"]} " +
+                        "policy=${geometry.details["degreePlacementPolicy"]}",
                 )
             }
         }
@@ -430,6 +469,7 @@ private const val SEAM_CROP_HEIGHT_PX = 12
 
 private const val RADICAL_BASE_SOURCE = "\\sqrt[3]{x}"
 private const val RADICAL_VARIANT_SOURCE = "\\sqrt{\\frac{a}{b}}"
-private val RADICAL_ASSEMBLY_SOURCE = "\\sqrt{" +
-    (1..12).fold("x") { radicand, _ -> "\\frac{$radicand}{y}" } +
-    "}"
+private val RADICAL_ASSEMBLY_RADICAND =
+    (1..12).fold("x") { radicand, _ -> "\\frac{$radicand}{y}" }
+private val RADICAL_ASSEMBLY_SOURCE = "\\sqrt{$RADICAL_ASSEMBLY_RADICAND}"
+private val RADICAL_ASSEMBLY_INDEXED_SOURCE = "\\sqrt[5]{$RADICAL_ASSEMBLY_RADICAND}"

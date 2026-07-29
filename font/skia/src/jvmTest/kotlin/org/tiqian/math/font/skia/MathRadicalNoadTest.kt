@@ -43,6 +43,126 @@ import org.tiqian.math.layout.ResolvedMathSymbolRun
 
 class MathRadicalNoadTest {
     @Test
+    fun degreeRaiseUsesSelectedRadicalAscenderInsteadOfUnindexedBoxReserveForBothFonts() =
+        withRadicalFaces { label, face ->
+            val size = 48f
+            val assemblyRadicand = (1..12).fold("x") { radicand, _ -> "\\frac{$radicand}{y}" }
+            val cases = listOf(
+                Triple("base", "\\sqrt[2]{x}", "BaseGlyph"),
+                Triple("variant", "\\sqrt[3]{\\frac{a}{b}}", "Variant"),
+                Triple("assembly", "\\sqrt[5]{$assemblyRadicand}", "Assembly"),
+            )
+            val selectedAscenders = mutableListOf<Float>()
+            val selectedRaises = mutableListOf<Float>()
+
+            cases.forEach { (caseLabel, source, expectedConstruction) ->
+                val base = MathLayoutEngine(face).layout(
+                    source,
+                    MathLayoutOptions(MathMode.Display, size),
+                )
+                val extraReserveFace = RadicalOverrideFace(
+                    face,
+                    face.mathFont.copy(
+                        constants = face.mathFont.constants.copy(radicalExtraAscender = 3_000),
+                    ),
+                )
+                val withExtraReserve = MathLayoutEngine(extraReserveFace).layout(
+                    source,
+                    MathLayoutOptions(MathMode.Display, size),
+                )
+                val baseConstruction = base.radicalConstructionDecision()
+                val reserveConstruction = withExtraReserve.radicalConstructionDecision()
+                val baseGeometry = base.radicalGeometryDecision()
+                val reserveGeometry = withExtraReserve.radicalGeometryDecision()
+
+                assertEquals(expectedConstruction, baseConstruction.details["construction"], "$label/$caseLabel")
+                assertEquals(
+                    expectedConstruction,
+                    reserveConstruction.details["construction"],
+                    "$label/$caseLabel reserve-only change keeps the selected construction",
+                )
+                assertNear(
+                    baseConstruction.float("achievedAdvancePx"),
+                    reserveConstruction.float("achievedAdvancePx"),
+                    "$label/$caseLabel reserve-only change keeps the construction extent",
+                )
+                assertTrue(
+                    reserveGeometry.float("unindexedBlockSizePx") > baseGeometry.float("unindexedBlockSizePx"),
+                    "$label/$caseLabel RadicalExtraAscender must enlarge B",
+                )
+                assertNear(
+                    baseGeometry.float("degreeRaisePx"),
+                    reserveGeometry.float("degreeRaisePx"),
+                    "$label/$caseLabel B reserve must not change degree raise",
+                )
+                selectedAscenders += baseGeometry.float("radicalGlyphAscentPx")
+                selectedRaises += baseGeometry.float("degreeRaisePx")
+                assertNear(
+                    baseGeometry.float("radicalGlyphAscentPx"),
+                    baseGeometry.float("degreeRaiseReferencePx"),
+                    "$label/$caseLabel degree raise references the selected radical ascender",
+                )
+                assertNear(
+                    baseGeometry.float("degreeRaiseReferencePx") *
+                        baseGeometry.float("radicalDegreeBottomRaisePercent") / 100f,
+                    baseGeometry.float("degreeRaisePx"),
+                    "$label/$caseLabel degree raise applies the MATH percentage",
+                )
+                assertEquals(
+                    "SelectedRadicalConstructionBoxAscent",
+                    baseGeometry.details["degreeRaiseReferenceMetric"],
+                    "$label/$caseLabel reference metric",
+                )
+                assertEquals(
+                    "OpenTypeMATH.RadicalDegreeBottomRaisePercentTimesRadicalSignAscender",
+                    baseGeometry.details["degreeRaiseReferencePolicy"],
+                    "$label/$caseLabel reference policy",
+                )
+                assertEquals(
+                    "OpenTypeRadicalSignAscenderRaiseFromCompletedBLineDescent",
+                    baseGeometry.details["degreePlacementPolicy"],
+                    "$label/$caseLabel placement policy",
+                )
+                assertEquals(
+                    "OpenTypeMATHRadicalSignAscender;NotMathMLCore3.3.3.3UnindexedBlockSize",
+                    baseGeometry.details["degreePlacementSpecificationDivergence"],
+                    "$label/$caseLabel specification mapping",
+                )
+                assertNear(
+                    baseGeometry.float("unindexedDescentPx") - baseGeometry.float("degreeRaisePx"),
+                    baseGeometry.float("degreeLogicalBottomY"),
+                    "$label/$caseLabel degree logical bottom remains relative to completed B",
+                )
+
+                val noad = base.radicalNoadDecision()
+                assertEquals(SourceRange(0, source.length), noad.range, "$label/$caseLabel noad source range")
+                assertEquals(
+                    "SourceRange(start=5, endExclusive=8)",
+                    noad.details["degreeRange"],
+                    "$label/$caseLabel degree source range",
+                )
+                assertEquals("ScriptScript", noad.details["degreeStyle"], "$label/$caseLabel degree style")
+                val degreeGlyphs = base.box.glyphs.filter { it.sourceRange == SourceRange(6, 7) }
+                assertTrue(degreeGlyphs.isNotEmpty(), "$label/$caseLabel degree glyph retains source range")
+                degreeGlyphs.forEach {
+                    assertEquals(MathStyle.ScriptScript, it.style, "$label/$caseLabel degree glyph style")
+                }
+                assertNear(
+                    degreeGlyphs.maxOf { it.inkBounds.bottom },
+                    baseGeometry.float("degreeInkBottomY"),
+                    "$label/$caseLabel degree ink bottom is replayable from source glyphs",
+                )
+            }
+
+            selectedAscenders.zipWithNext().forEach { (smaller, larger) ->
+                assertTrue(larger > smaller, "$label construction growth must increase radical ascender")
+            }
+            selectedRaises.zipWithNext().forEach { (smaller, larger) ->
+                assertTrue(larger > smaller, "$label construction growth must proportionally increase degree raise")
+            }
+        }
+
+    @Test
     fun selectedConstructionExcessIsSplitAcrossTheRadicalClearanceForBothFonts() =
         withRadicalFaces { label, face ->
             val size = 48f
@@ -160,7 +280,10 @@ class MathRadicalNoadTest {
                 "TeXMakeRadicalHalfPositiveConstructionExcess",
                 indexedGeometry.details["unindexedBoxPolicy"],
             )
-            assertEquals("MathMLCore3.3.3.3", indexedGeometry.details["degreePlacementPolicy"])
+            assertEquals(
+                "OpenTypeRadicalSignAscenderRaiseFromCompletedBLineDescent",
+                indexedGeometry.details["degreePlacementPolicy"],
+            )
             assertNear(
                 face.mathFont.scaleDesignUnits(face.mathFont.constants.radicalVerticalGap, size),
                 inlineGeometry.float("radicalVerticalGapPx"),
@@ -720,7 +843,7 @@ class MathRadicalNoadTest {
                 size,
             )
             assertNear(
-                -0.8f * raised.float("unindexedBlockSizePx"),
+                -0.8f * raised.float("degreeRaiseReferencePx"),
                 raised.float("degreeLogicalBottomY") - indexedBase.float("degreeLogicalBottomY"),
                 "RadicalDegreeBottomRaisePercent",
             )
@@ -753,9 +876,15 @@ class MathRadicalNoadTest {
                 indexedWithAscender.float("degreeLogicalBottomY"),
                 "degree uses B line descent after ExtraAscender is applied",
             )
-            assertTrue(
-                indexedWithAscender.float("degreeBaselineY") < indexedRaiseBase.float("degreeBaselineY"),
-                "larger B block size raises the index",
+            assertNear(
+                indexedRaiseBase.float("degreeRaisePx"),
+                indexedWithAscender.float("degreeRaisePx"),
+                "RadicalExtraAscender does not alter the radical-sign ascender reference",
+            )
+            assertNear(
+                indexedRaiseBase.float("degreeBaselineY"),
+                indexedWithAscender.float("degreeBaselineY"),
+                "top-only B reserve does not move the degree from the unchanged line-under edge",
             )
         }
     }

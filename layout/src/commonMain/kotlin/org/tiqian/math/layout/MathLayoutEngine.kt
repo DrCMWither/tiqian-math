@@ -937,7 +937,11 @@ private class MathLayoutPass(
             descent = unindexedDescent,
         )
 
-        // MathML Core 3.3.3.3 lays out B before the index and clamps both signed kerns.
+        // The completed B still supplies the line-under edge for degree placement, and the
+        // signed horizontal kerns retain the MathML clamp. OpenType MATH defines the vertical
+        // raise percentage against the radical sign's ascender, not B's block size. The
+        // selected construction box ascent is already derived from the same base/variant/
+        // assembly metrics replayed by painting and excludes unrelated line reserve.
         val kernBeforeDegree = if (degree == null) 0f else scale(constants.radicalKernBeforeDegree, style)
         val kernAfterDegree = if (degree == null) 0f else scale(constants.radicalKernAfterDegree, style)
         val adjustedKernBeforeDegree = if (degree == null) 0f else max(0f, kernBeforeDegree)
@@ -950,10 +954,11 @@ private class MathLayoutPass(
         }
         val logicalWidth = unindexedX + unindexedBox.width
         val degreeRaisePercent = constants.radicalDegreeBottomRaisePercent
+        val degreeRaiseReferencePx = if (degree == null) null else radicalGlyphAscent
         val degreeRaisePx = if (degree == null) {
             null
         } else {
-            unindexedBox.height * degreeRaisePercent / 100f
+            degreeRaiseReferencePx!! * degreeRaisePercent / 100f
         }
         val degreeBaselineY = if (degree == null) {
             null
@@ -1063,7 +1068,16 @@ private class MathLayoutPass(
             "radicandStyle" to radicandStyle,
             "degreeStyle" to if (degree == null) null else degreeStyle,
             "unindexedBoxPolicy" to "TeXMakeRadicalHalfPositiveConstructionExcess",
-            "degreePlacementPolicy" to if (degree == null) null else "MathMLCore3.3.3.3",
+            "degreePlacementPolicy" to if (degree == null) {
+                null
+            } else {
+                "OpenTypeRadicalSignAscenderRaiseFromCompletedBLineDescent"
+            },
+            "degreePlacementSpecificationDivergence" to if (degree == null) {
+                null
+            } else {
+                "OpenTypeMATHRadicalSignAscender;NotMathMLCore3.3.3.3UnindexedBlockSize"
+            },
             "radicalVerticalGapPx" to gapMin,
             "minimumRadicalGapPx" to gapMin,
             "constructionExcessPx" to constructionExcess,
@@ -1079,6 +1093,17 @@ private class MathLayoutPass(
             "adjustedRadicalKernBeforeDegreePx" to adjustedKernBeforeDegree,
             "adjustedRadicalKernAfterDegreePx" to adjustedKernAfterDegree,
             "radicalDegreeBottomRaisePercent" to degreeRaisePercent,
+            "degreeRaiseReferencePx" to degreeRaiseReferencePx,
+            "degreeRaiseReferenceMetric" to if (degree == null) {
+                null
+            } else {
+                "SelectedRadicalConstructionBoxAscent"
+            },
+            "degreeRaiseReferencePolicy" to if (degree == null) {
+                null
+            } else {
+                "OpenTypeMATH.RadicalDegreeBottomRaisePercentTimesRadicalSignAscender"
+            },
             "radicalGlyphAscentPx" to radicalGlyphAscent,
             "radicalGlyphDescentPx" to radicalGlyphDescent,
             "radicalGlyphBlockSizePx" to radicalGlyphBlockSize,
