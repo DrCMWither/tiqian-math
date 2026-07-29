@@ -30,6 +30,8 @@ import org.tiqian.math.core.MathLayoutResult
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.skia.SkiaMathFontFace
+import org.tiqian.math.font.skia.MathConstructionOutlineResult
+import org.tiqian.math.font.skia.MathConstructionOutlineUnavailableException
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.breakIntoLines
@@ -45,7 +47,7 @@ fun rememberLeteMathFontFace(): SkiaMathFontFace {
 
 /**
  * Measures and draws one formula using one complete face and one MATH table.
- * The renderer only replays glyph and rule placements returned by layout.
+ * The renderer replays glyph/rule placements and semantic construction groups returned by layout.
  */
 @Composable
 fun TiqianMath(
@@ -192,7 +194,7 @@ private fun drawMathPlan(
     val fonts = mutableMapOf<Float, Font>()
     try {
         plan.boxes.flatMap { positioned ->
-            positioned.box.glyphs.map { glyph ->
+            positioned.box.glyphs.filter { it.constructionGroupId == null }.map { glyph ->
                 Triple(
                     glyph,
                     positioned.x + glyph.x,
@@ -210,7 +212,7 @@ private fun drawMathPlan(
         builder.build()?.use { blob -> canvas.drawTextBlob(blob, 0f, 0f, paint) }
 
         plan.boxes.forEach { positioned ->
-            positioned.box.rules.forEach { rule ->
+            positioned.box.rules.filter { it.constructionGroupId == null }.forEach { rule ->
                 canvas.drawRect(
                     Rect.makeLTRB(
                         positioned.x + rule.left,
@@ -220,6 +222,29 @@ private fun drawMathPlan(
                     ),
                     paint,
                 )
+            }
+            val knownGroupIds = positioned.box.constructionPaintGroups.mapTo(mutableSetOf()) { it.id }
+            val referencedGroupIds = buildSet {
+                positioned.box.glyphs.mapNotNullTo(this) { it.constructionGroupId }
+                positioned.box.rules.mapNotNullTo(this) { it.constructionGroupId }
+            }
+            check(knownGroupIds == referencedGroupIds) {
+                "Construction paint ownership mismatch: known=$knownGroupIds referenced=$referencedGroupIds"
+            }
+            positioned.box.constructionPaintGroups.forEach { group ->
+                when (val outline = face.constructionOutline(positioned.box, group)) {
+                    is MathConstructionOutlineResult.Available -> {
+                        val saveCount = canvas.save()
+                        try {
+                            canvas.translate(positioned.x, positioned.baselineFromTop)
+                            canvas.drawPath(outline.path, paint)
+                        } finally {
+                            canvas.restoreToCount(saveCount)
+                        }
+                    }
+                    is MathConstructionOutlineResult.Unavailable ->
+                        throw MathConstructionOutlineUnavailableException(outline)
+                }
             }
         }
     } finally {

@@ -51,9 +51,11 @@ private class MathLayoutPass(
     private val decisions = mutableListOf<MathLayoutDecision>()
     private var baseFontSizePx: Float = 24f
     private var nullDelimiterSpacePx: Float = 2.88f
+    private var nextConstructionPaintGroupId: Int = 1
 
     fun layout(source: String, options: MathLayoutOptions): MathLayoutResult {
         baseFontSizePx = options.fontSizePx
+        nextConstructionPaintGroupId = 1
         nullDelimiterSpacePx = options.nullDelimiterSpacePx
             ?: options.fontSizePx * DEFAULT_NULL_DELIMITER_SPACE_EM
         val parsed = parser.parse(source)
@@ -802,18 +804,38 @@ private class MathLayoutPass(
         val radicandXInB = rawRadical.width
         val radicalInB = rawRadical.translated(0f, radicalBaselineInB)
         val radicandInB = radicand.translated(radicandXInB, 0f)
+        val constructionPaintGroup = MathConstructionPaintGroup(
+            id = nextConstructionPaintGroupId++,
+            kind = MathConstructionPaintKind.Radical,
+            shapeKind = when (construction?.kind) {
+                MathConstructionKind.Assembly -> MathConstructionShapeKind.Assembly
+                MathConstructionKind.Variant -> MathConstructionShapeKind.Variant
+                MathConstructionKind.BaseGlyph, null -> MathConstructionShapeKind.BaseGlyph
+            },
+            sourceRange = node.commandRange,
+            outlinePolicy = MathConstructionOutlinePolicy.RequireOutlineUnion,
+        )
+        val groupedRadicalInB = radicalInB.copy(
+            glyphs = radicalInB.glyphs.map {
+                it.copy(constructionGroupId = constructionPaintGroup.id)
+            },
+            constructionPaintGroups = radicalInB.constructionPaintGroups + constructionPaintGroup,
+        )
         val ruleInB = MathRulePlacement(
             left = radicandXInB,
             top = ruleTopInB,
             right = radicandXInB + radicand.width,
             bottom = ruleBottomInB,
             sourceRange = node.commandRange,
+            constructionGroupId = constructionPaintGroup.id,
         )
         val unindexedGeometry = geometryExtents(
             width = radicandXInB + radicand.width,
-            glyphs = radicalInB.glyphs + radicandInB.glyphs,
-            rules = radicalInB.rules + radicandInB.rules + ruleInB,
+            glyphs = groupedRadicalInB.glyphs + radicandInB.glyphs,
+            rules = groupedRadicalInB.rules + radicandInB.rules + ruleInB,
             range = node.range,
+            constructionPaintGroups =
+                groupedRadicalInB.constructionPaintGroups + radicandInB.constructionPaintGroups,
         )
         val unindexedBox = unindexedGeometry.copy(
             ascent = unindexedAscent,
@@ -845,7 +867,7 @@ private class MathLayoutPass(
         }
         val shiftedUnindexed = unindexedBox.translated(unindexedX, 0f)
         val shiftedDegree = degree?.translated(degreeX!!, degreeBaselineY!!)
-        val shiftedRadical = radicalInB.translated(unindexedX, 0f)
+        val shiftedRadical = groupedRadicalInB.translated(unindexedX, 0f)
         val shiftedRadicand = radicandInB.translated(unindexedX, 0f)
         val coversRadicandBottom =
             shiftedRadical.inkBounds.bottom + GEOMETRY_EPSILON_PX >= shiftedRadicand.inkBounds.bottom
@@ -1914,6 +1936,7 @@ private class MathLayoutPass(
         glyphs: List<MathGlyphPlacement>,
         rules: List<MathRulePlacement>,
         range: SourceRange,
+        constructionPaintGroups: List<MathConstructionPaintGroup> = emptyList(),
     ): MathBox {
         val left = minOf(glyphs.minOfOrNull { it.inkBounds.left } ?: 0f, rules.minOfOrNull { it.left } ?: 0f)
         val top = minOf(glyphs.minOfOrNull { it.inkBounds.top } ?: 0f, rules.minOfOrNull { it.top } ?: 0f)
@@ -1927,6 +1950,7 @@ private class MathLayoutPass(
             glyphs,
             rules,
             range,
+            constructionPaintGroups.distinctBy { it.id },
         )
     }
 
@@ -1940,8 +1964,11 @@ private class MathLayoutPass(
         rules: List<MathRulePlacement>,
         range: SourceRange,
         children: List<Pair<MathBox, Float>>,
+        constructionPaintGroups: List<MathConstructionPaintGroup> = emptyList(),
     ): MathBox {
-        val inkBox = geometryExtents(width, glyphs, rules, range)
+        val paintGroups = (constructionPaintGroups + children.flatMap { it.first.constructionPaintGroups })
+            .distinctBy { it.id }
+        val inkBox = geometryExtents(width, glyphs, rules, range, paintGroups)
         val logicalAscent = children.maxOfOrNull { (box, baselineY) ->
             (box.ascent - baselineY).coerceAtLeast(0f)
         } ?: 0f
@@ -2004,11 +2031,22 @@ private class MathLayoutPass(
             appendLine(
                 "glyph[$index] id=${glyph.glyphId} range=${glyph.sourceRange.start}..${glyph.sourceRange.endExclusive} " +
                     "style=${glyph.style} size=${glyph.fontSizePx} x=${glyph.x} baseline=${glyph.baselineY} " +
-                    "ink=${glyph.inkBounds.left},${glyph.inkBounds.top},${glyph.inkBounds.right},${glyph.inkBounds.bottom}",
+                    "ink=${glyph.inkBounds.left},${glyph.inkBounds.top},${glyph.inkBounds.right},${glyph.inkBounds.bottom} " +
+                    "constructionGroup=${glyph.constructionGroupId}",
             )
         }
         box.rules.forEachIndexed { index, rule ->
-            appendLine("rule[$index] ${rule.left},${rule.top},${rule.right},${rule.bottom}")
+            appendLine(
+                "rule[$index] ${rule.left},${rule.top},${rule.right},${rule.bottom} " +
+                    "constructionGroup=${rule.constructionGroupId}",
+            )
+        }
+        box.constructionPaintGroups.forEach { group ->
+            appendLine(
+                "constructionPaintGroup[${group.id}] kind=${group.kind} shape=${group.shapeKind} " +
+                    "range=${group.sourceRange.start}..${group.sourceRange.endExclusive} " +
+                    "outlinePolicy=${group.outlinePolicy}",
+            )
         }
         fragments.forEach { fragment ->
             appendLine(

@@ -40,6 +40,45 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalComposeUiApi::class)
 class TiqianMathRenderTest {
     @Test
+    fun actualRendererReplaysEachRadicalAsOneCachedConstructionPath() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var observed: MathLayoutResult? = null
+            ImageComposeScene(width = 420, height = 280, density = Density(1f)) {
+                Box(Modifier.fillMaxSize()) {
+                    TiqianMath(
+                        source = "\\sqrt[3]{\\frac{a+b}{\\sqrt{x}}}",
+                        modifier = Modifier.padding(12.dp),
+                        mode = MathMode.Display,
+                        fontSizePx = 48f,
+                        fontFace = face,
+                        color = Color.Black.copy(alpha = 0.5f),
+                        onMathLayout = { observed = it },
+                    )
+                }
+            }.use { scene ->
+                val firstPixels = scene.render().toComposeImageBitmap().toPixelMap()
+                val layout = assertNotNull(observed)
+                assertEquals(2, layout.box.constructionPaintGroups.size)
+                var maximumAlpha = 0f
+                for (y in 0 until firstPixels.height) for (x in 0 until firstPixels.width) {
+                    maximumAlpha = maxOf(maximumAlpha, firstPixels[x, y].alpha)
+                }
+                assertTrue(maximumAlpha in 0.45f..0.53f, "one translucent paint pass prevents overlap darkening")
+                val afterFirst = face.constructionOutlineCacheStats()
+                assertEquals(2, afterFirst.builds)
+                assertEquals(2, afterFirst.entries)
+
+                layout.box.constructionPaintGroups.forEach { group ->
+                    face.constructionOutline(layout.box, group)
+                }
+                val afterReplay = face.constructionOutlineCacheStats()
+                assertEquals(afterFirst.builds, afterReplay.builds, "replay performs no PathOps rebuild")
+                assertTrue(afterReplay.hits >= afterFirst.hits + 2, "each construction path is replayed from cache")
+            }
+        }
+    }
+
+    @Test
     fun renderPlanMeasuresInkOverhangAndUsesSafeLogicalBaseline() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             val result = MathLayoutEngine(face).layout("x", MathLayoutOptions(MathMode.Inline, 40f))

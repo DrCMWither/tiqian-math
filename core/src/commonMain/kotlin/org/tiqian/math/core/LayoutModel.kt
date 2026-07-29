@@ -27,6 +27,8 @@ data class MathGlyphPlacement(
     val fontSizePx: Float,
     val sourceRange: SourceRange,
     val style: MathStyle,
+    /** Non-null when this glyph participates in one semantic outline construction. */
+    val constructionGroupId: Int? = null,
 )
 
 data class MathRulePlacement(
@@ -35,6 +37,32 @@ data class MathRulePlacement(
     val right: Float,
     val bottom: Float,
     val sourceRange: SourceRange,
+    /** Non-null when this rule must be painted with its attached construction outline. */
+    val constructionGroupId: Int? = null,
+)
+
+enum class MathConstructionPaintKind {
+    Radical,
+}
+
+enum class MathConstructionShapeKind {
+    BaseGlyph,
+    Variant,
+    Assembly,
+}
+
+enum class MathConstructionOutlinePolicy {
+    /** Rendering fails explicitly if any required glyph outline cannot be obtained. */
+    RequireOutlineUnion,
+}
+
+/** Semantic paint ownership retained beyond the otherwise flat glyph/rule replay lists. */
+data class MathConstructionPaintGroup(
+    val id: Int,
+    val kind: MathConstructionPaintKind,
+    val shapeKind: MathConstructionShapeKind,
+    val sourceRange: SourceRange,
+    val outlinePolicy: MathConstructionOutlinePolicy,
 )
 
 data class MathBox(
@@ -47,6 +75,7 @@ data class MathBox(
     val glyphs: List<MathGlyphPlacement>,
     val rules: List<MathRulePlacement>,
     val range: SourceRange,
+    val constructionPaintGroups: List<MathConstructionPaintGroup> = emptyList(),
 ) {
     init {
         require(width >= 0f) { "box width must not be negative" }

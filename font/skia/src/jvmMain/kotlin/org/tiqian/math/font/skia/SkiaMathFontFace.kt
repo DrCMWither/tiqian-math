@@ -34,6 +34,7 @@ class SkiaMathFontFace(
 ) : MathFontFace, AutoCloseable {
     val typeface: Typeface
     private val shaper = Shaper.makeShaperDrivenWrapper()
+    private val constructionOutlineCache = MathConstructionOutlineCache(this)
 
     init {
         val data = Data.makeFromBytes(mathFont.bytes)
@@ -170,6 +171,13 @@ class SkiaMathFontFace(
 
     fun font(fontSizePx: Float): Font = Font(typeface, fontSizePx)
 
+    fun constructionOutline(
+        box: MathBox,
+        group: MathConstructionPaintGroup,
+    ): MathConstructionOutlineResult = constructionOutlineCache.outline(box, group)
+
+    fun constructionOutlineCacheStats(): MathConstructionOutlineCacheStats = constructionOutlineCache.stats()
+
     private fun measuredRun(
         font: Font,
         glyphIds: ShortArray,
@@ -201,6 +209,7 @@ class SkiaMathFontFace(
     }
 
     override fun close() {
+        constructionOutlineCache.close()
         shaper.close()
         typeface.close()
     }
