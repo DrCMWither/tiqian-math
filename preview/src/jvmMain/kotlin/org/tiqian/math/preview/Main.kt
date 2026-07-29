@@ -82,6 +82,8 @@ private fun PreviewScreen() {
                 Text("Indexed, nested, fraction and stretched radicals", fontSize = 13.sp)
                 RadicalSample("Lete Sans Math", lete)
                 RadicalSample("STIX Two Math", stix)
+                Text("Radical degree horizontal placement · TeX source for Tectonic comparison", fontSize = 13.sp)
+                RadicalDegreeHorizontalComparison(lete, stix)
                 Text("Ordinary side scripts · ink-constrained placement", fontSize = 13.sp)
                 SideScriptSample("Lete Sans Math", lete)
                 SideScriptSample("STIX Two Math", stix)
@@ -96,6 +98,28 @@ private fun PreviewScreen() {
                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = 25.sp, lineHeight = 34.sp),
                     softWrap = true,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RadicalDegreeHorizontalComparison(
+    lete: SkiaMathFontFace,
+    stix: SkiaMathFontFace,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+        listOf(
+            "Lete Sans Math" to lete,
+            "STIX Two Math" to stix,
+        ).forEach { (label, face) ->
+            Column(Modifier.width(390.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RadicalTier("\\sqrt{x}", "\\sqrt{x}", face)
+                    RadicalTier("\\sqrt[3]{x}", "\\sqrt[3]{x}", face)
+                    RadicalTier("\\sqrt[g_j+abc]{x}", "\\sqrt[g_j+abc]{x}", face)
+                }
             }
         }
     }
@@ -326,7 +350,13 @@ private fun auditRadicalPreviewTiers() {
                         "B=${geometry.details["unindexedBlockSizePx"]} " +
                         "logicalBottom=${geometry.details["degreeLogicalBottomY"]} " +
                         "inkBottom=${geometry.details["degreeInkBottomY"]} " +
-                        "policy=${geometry.details["degreePlacementPolicy"]}",
+                        "horizontal=${geometry.details["radicalKernBeforeDegreePx"]}/" +
+                        "${geometry.details["radicalKernAfterDegreePx"]} " +
+                        "lower=${geometry.details["radicalDegreeAfterKernClampLowerBoundPx"]} " +
+                        "adjustedAfter=${geometry.details["adjustedRadicalKernAfterDegreePx"]} " +
+                        "x=${geometry.details["degreeX"]}/${geometry.details["radicalX"]} " +
+                        "horizontalPolicy=${geometry.details["degreeHorizontalPlacementPolicy"]} " +
+                        "verticalPolicy=${geometry.details["degreePlacementPolicy"]}",
                 )
             }
         }

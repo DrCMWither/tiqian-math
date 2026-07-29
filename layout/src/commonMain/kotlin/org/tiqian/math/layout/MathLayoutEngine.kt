@@ -937,22 +937,26 @@ private class MathLayoutPass(
             descent = unindexedDescent,
         )
 
-        // The completed B still supplies the line-under edge for degree placement, and the
-        // signed horizontal kerns retain the MathML clamp. OpenType MATH's radical-sign
+        // The completed B still supplies the line-under edge for degree placement. OpenType
+        // supplies signed before/after kerns; TeX make_radical preserves the before kern and
+        // clamps after at -(degree width + before kern), keeping the radical origin non-negative.
+        // OpenType MATH's radical-sign
         // reference maps here to the complete selected construction box: the base/variant/
         // assembly ascent plus descent replayed by painting. This follows LuaTeX/WebKit's
         // stretched-operator height mapping while excluding B's radicand metrics and
         // ExtraAscender reserve.
         val kernBeforeDegree = if (degree == null) 0f else scale(constants.radicalKernBeforeDegree, style)
         val kernAfterDegree = if (degree == null) 0f else scale(constants.radicalKernAfterDegree, style)
-        val adjustedKernBeforeDegree = if (degree == null) 0f else max(0f, kernBeforeDegree)
-        val adjustedKernAfterDegree = if (degree == null) 0f else max(-degree.width, kernAfterDegree)
-        val degreeX = if (degree == null) null else adjustedKernBeforeDegree
-        val unindexedX = if (degree == null) {
-            0f
-        } else {
-            adjustedKernBeforeDegree + degree.width + adjustedKernAfterDegree
+        val degreeHorizontalPlacement = degree?.let {
+            resolveRadicalDegreeHorizontalPlacement(
+                degreeWidthPx = it.width,
+                kernBeforeDegreePx = kernBeforeDegree,
+                kernAfterDegreePx = kernAfterDegree,
+            )
         }
+        val adjustedKernAfterDegree = degreeHorizontalPlacement?.adjustedKernAfterDegreePx ?: 0f
+        val degreeX = degreeHorizontalPlacement?.degreeX
+        val unindexedX = degreeHorizontalPlacement?.radicalX ?: 0f
         val logicalWidth = unindexedX + unindexedBox.width
         val degreeRaisePercent = constants.radicalDegreeBottomRaisePercent
         val degreeRaiseReferencePx = if (degree == null) null else radicalGlyphBlockSize
@@ -1091,8 +1095,15 @@ private class MathLayoutPass(
             "radicalExtraAscenderPx" to extraAscender,
             "radicalKernBeforeDegreePx" to kernBeforeDegree,
             "radicalKernAfterDegreePx" to kernAfterDegree,
-            "adjustedRadicalKernBeforeDegreePx" to adjustedKernBeforeDegree,
+            "usedRadicalKernBeforeDegreePx" to degreeHorizontalPlacement?.rawKernBeforeDegreePx,
+            "radicalDegreeAfterKernClampLowerBoundPx" to
+                degreeHorizontalPlacement?.afterKernClampLowerBoundPx,
             "adjustedRadicalKernAfterDegreePx" to adjustedKernAfterDegree,
+            "degreeHorizontalPlacementPolicy" to if (degree == null) {
+                null
+            } else {
+                "TeXMakeRadicalSignedBeforeAndWidthPlusBeforeAfterClamp"
+            },
             "radicalDegreeBottomRaisePercent" to degreeRaisePercent,
             "degreeRaiseReferencePx" to degreeRaiseReferencePx,
             "degreeRaiseReferenceAscentPx" to if (degree == null) null else radicalGlyphAscent,

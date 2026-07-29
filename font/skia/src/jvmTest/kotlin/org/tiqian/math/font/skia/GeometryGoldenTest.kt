@@ -195,8 +195,11 @@ class GeometryGoldenTest {
                                         "${decision.details.getValue("radicalExtraAscenderPx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("radicalKernBeforeDegreePx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("radicalKernAfterDegreePx").toFloat().fmt()}/" +
-                                        "adjusted=${decision.details.getValue("adjustedRadicalKernBeforeDegreePx").toFloat().fmt()}/" +
-                                        "${decision.details.getValue("adjustedRadicalKernAfterDegreePx").toFloat().fmt()}/" +
+                                        "horizontal=${decision.details["degreeHorizontalPlacementPolicy"]}/" +
+                                        "used=${decision.details["usedRadicalKernBeforeDegreePx"]}/" +
+                                        "lower=${decision.details["radicalDegreeAfterKernClampLowerBoundPx"]}/" +
+                                        "after=${decision.details.getValue("adjustedRadicalKernAfterDegreePx").toFloat().fmt()}/" +
+                                        "x=${decision.details["degreeX"]}/${decision.details["radicalX"]}/" +
                                         "${decision.details["radicalDegreeBottomRaisePercent"]}/" +
                                         "raise=${decision.details["degreeRaiseReferencePx"]}(" +
                                         "${decision.details["degreeRaiseReferenceAscentPx"]}+" +

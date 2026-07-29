@@ -919,7 +919,7 @@ class MathRadicalNoadTest {
     }
 
     @Test
-    fun signedDegreeKernsAreClampedBeforeLogicalWidthAndPlacement() {
+    fun signedDegreeKernsUseTheTeXMakeRadicalAfterClamp() {
         SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
             val size = 50f
             val constants = delegate.mathFont.constants.copy(
@@ -934,19 +934,109 @@ class MathRadicalNoadTest {
             )
             val geometry = result.radicalGeometryDecision()
             assertNear(-60f, geometry.float("radicalKernBeforeDegreePx"), "raw signed before kern remains auditable")
-            assertNear(0f, geometry.float("adjustedRadicalKernBeforeDegreePx"), "before kern clamps to zero")
-            assertNear(0f, geometry.float("degreeX"), "index starts at adjusted before kern")
+            assertNear(-60f, geometry.float("usedRadicalKernBeforeDegreePx"), "TeX preserves signed before kern")
+            assertNear(-60f, geometry.float("degreeX"), "index starts at the signed before kern")
+            val expectedAfterClampLowerBound = -(geometry.float("degreeWidthPx") - 60f)
             assertNear(
-                -geometry.float("degreeWidthPx"),
+                expectedAfterClampLowerBound,
+                geometry.float("radicalDegreeAfterKernClampLowerBoundPx"),
+                "after lower bound includes degree width and signed before kern",
+            )
+            assertNear(
+                expectedAfterClampLowerBound,
                 geometry.float("adjustedRadicalKernAfterDegreePx"),
-                "after kern cannot overlap more than the complete index width",
+                "after kern cannot overlap more than degree width plus signed before kern",
             )
             assertNear(0f, geometry.float("unindexedX"), "fully overlapping index leaves B at logical origin")
             assertTrue(result.box.width >= 0f, result.debugDump)
             assertNear(geometry.float("logicalWidthPx"), result.box.width, "clamped width is the public advance")
+            assertEquals(
+                "TeXMakeRadicalSignedBeforeAndWidthPlusBeforeAfterClamp",
+                geometry.details["degreeHorizontalPlacementPolicy"],
+            )
+            assertTrue(
+                result.debugDump.contains(
+                    "radicalDegreeAfterKernClampLowerBoundPx=$expectedAfterClampLowerBound",
+                ),
+                result.debugDump,
+            )
+            assertTrue(
+                result.debugDump.contains(
+                    "degreeHorizontalPlacementPolicy=TeXMakeRadicalSignedBeforeAndWidthPlusBeforeAfterClamp",
+                ),
+                result.debugDump,
+            )
             assertEquals("0.0", result.radicalNoadDecision().details["italicCorrectionPx"])
         }
     }
+
+    @Test
+    fun realFontDegreeKernsUseTheSameTeXHorizontalRule() =
+        withRadicalFaces { label, face ->
+            val size = 40f
+            val result = MathLayoutEngine(face).layout(
+                "\\sqrt[3]{x^2+1}",
+                MathLayoutOptions(MathMode.Inline, size),
+            )
+            val geometry = result.radicalGeometryDecision()
+            val rawBefore = face.mathFont.scaleDesignUnits(
+                face.mathFont.constants.radicalKernBeforeDegree,
+                size,
+            )
+            val rawAfter = face.mathFont.scaleDesignUnits(
+                face.mathFont.constants.radicalKernAfterDegree,
+                size,
+            )
+            val degreeWidth = geometry.float("degreeWidthPx")
+            val lowerBound = -(degreeWidth + rawBefore)
+
+            assertTrue(rawBefore > 0f, "$label real MATH fixture has a positive before kern")
+            assertTrue(rawAfter < 0f, "$label real MATH fixture has a negative after kern")
+            assertTrue(rawAfter >= lowerBound, "$label real MATH after kern must exercise the no-clamp branch")
+            val previousIncorrectAfter = maxOf(-degreeWidth, rawAfter)
+            assertTrue(
+                previousIncorrectAfter > rawAfter,
+                "$label fixture must distinguish the previous -degreeWidth clamp",
+            )
+            assertNear(rawBefore, geometry.float("radicalKernBeforeDegreePx"), "$label raw before")
+            assertNear(rawAfter, geometry.float("radicalKernAfterDegreePx"), "$label raw after")
+            assertNear(rawBefore, geometry.float("usedRadicalKernBeforeDegreePx"), "$label signed before is used")
+            assertNear(
+                lowerBound,
+                geometry.float("radicalDegreeAfterKernClampLowerBoundPx"),
+                "$label after clamp lower bound",
+            )
+            assertNear(rawAfter, geometry.float("adjustedRadicalKernAfterDegreePx"), "$label after needs no clamp")
+            assertNear(rawBefore, geometry.float("degreeX"), "$label degree x")
+            assertNear(rawBefore + degreeWidth + rawAfter, geometry.float("radicalX"), "$label radical x")
+            assertTrue(
+                geometry.float("radicalX") < rawBefore + degreeWidth + previousIncorrectAfter,
+                "$label TeX clamp must move the radical left of the previous implementation",
+            )
+        }
+
+    @Test
+    fun degreeKernConstantsCannotMoveAnUnindexedRadical() =
+        withRadicalFaces { label, face ->
+            val size = 40f
+            val source = "\\sqrt{x}"
+            val baseline = MathLayoutEngine(face).layout(source, MathLayoutOptions(MathMode.Inline, size))
+            val changedFace = RadicalOverrideFace(
+                face,
+                face.mathFont.copy(
+                    constants = face.mathFont.constants.copy(
+                        radicalKernBeforeDegree = -4_000,
+                        radicalKernAfterDegree = 4_000,
+                    ),
+                ),
+            )
+            val changed = MathLayoutEngine(changedFace).layout(source, MathLayoutOptions(MathMode.Inline, size))
+
+            assertEquals(baseline.box, changed.box, "$label unindexed radical box")
+            assertEquals(baseline.fragments, changed.fragments, "$label unindexed radical fragments")
+            assertEquals(baseline.lineMetrics, changed.lineMetrics, "$label unindexed radical line metrics")
+            assertEquals("null", changed.radicalGeometryDecision().details["degreeHorizontalPlacementPolicy"])
+        }
 
     private fun radicalGeometry(
         delegate: SkiaMathFontFace,
