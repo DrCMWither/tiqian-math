@@ -292,6 +292,11 @@ private class ConstantOverrideFace(
 ) : MathFontFace {
     override val mathFont: OpenTypeMathFont = delegate.mathFont.copy(constants = constants)
 
+    override fun resolveSymbol(
+        request: org.tiqian.math.layout.MathSymbolGlyphRequest,
+        fontSizePx: Float,
+    ): org.tiqian.math.layout.ResolvedMathSymbol = delegate.resolveSymbol(request, fontSizePx)
+
     override fun shape(text: String, fontSizePx: Float, style: MathStyle, sourceRange: SourceRange): MeasuredMathRun =
         delegate.shape(text, fontSizePx, style, sourceRange)
 

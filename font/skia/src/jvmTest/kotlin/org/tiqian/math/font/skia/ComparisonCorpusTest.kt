@@ -31,7 +31,7 @@ class ComparisonCorpusTest {
                 }.toList()
             }
         assertEquals(
-            setOf("group-transparency", "tight-spacing", "cramped-superscript", "script-binomial", "math-kern", "assembly"),
+            setOf("ordinary-sub-mlist", "tight-spacing", "cramped-superscript", "script-binomial", "math-kern", "assembly"),
             corpus.map { it.id }.toSet(),
         )
 
@@ -41,11 +41,15 @@ class ComparisonCorpusTest {
                 corpus.forEach { case ->
                     val result = engine.layout(case.source, MathLayoutOptions(fontSizePx = 44f))
                     when (case.invariant) {
-                        ComparisonInvariant.TransparentOrdinaryGroup -> {
-                            assertEquals(ComparisonOracle.TeXOrdinaryGroupAndKaTeXAtomList, case.oracle)
-                            val plain = engine.layout(case.source.replace("{", "").replace("}", ""), MathLayoutOptions(fontSizePx = 44f))
-                            assertNear(plain.box.width, result.box.width, case)
-                            assertTrue(result.decisions.any { it.name == "TransparentMathGroup" }, case.toString())
+                        ComparisonInvariant.OrdinarySubMlistBoundary -> {
+                            assertEquals(ComparisonOracle.TeXOrdinarySubMlistAndKaTeXOrdGroup, case.oracle)
+                            assertEquals(3, result.fragments.size, case.toString())
+                            assertTrue(result.breakOpportunities.isEmpty(), case.toString())
+                            assertTrue(result.decisions.any { it.name == "TeXOrdSubMlist" }, case.toString())
+                            assertTrue(result.decisions.any {
+                                it.name == "TeXBinaryAtomReclassification" &&
+                                    it.details["from"] == "Binary" && it.details["to"] == "Ordinary"
+                            }, case.toString())
                         }
                         ComparisonInvariant.TightBinaryGlueSuppressed -> {
                             assertEquals(ComparisonOracle.KaTeXTightSpacingTable, case.oracle)
@@ -90,7 +94,7 @@ private data class CorpusCase(
 )
 
 private enum class ComparisonOracle(val corpusText: String) {
-    TeXOrdinaryGroupAndKaTeXAtomList("TeX ordinary group; KaTeX atom list"),
+    TeXOrdinarySubMlistAndKaTeXOrdGroup("TeX ordinary sub-mlist noad; KaTeX ord group"),
     KaTeXTightSpacingTable("KaTeX spacingData tight table"),
     KaTeXSuperscriptStyleTable("KaTeX Style.sup [S,Sc,S,Sc,SS,SSc,SS,SSc]"),
     TeXStylesAndOpenTypeVariants("TeX style transitions; OpenType MATH variants"),
@@ -105,7 +109,7 @@ private enum class ComparisonOracle(val corpusText: String) {
 }
 
 private enum class ComparisonInvariant(val corpusText: String) {
-    TransparentOrdinaryGroup("braces do not create an Inner atom or extra glue"),
+    OrdinarySubMlistBoundary("group is one Ord atom and edge Bin becomes Ord internally"),
     TightBinaryGlueSuppressed("binary glue is suppressed in ScriptCramped"),
     CrampedNestedSuperscript("nested denominator superscripts remain ScriptScriptCramped"),
     ScriptBinomialBaseCoverage("ScriptCramped delimiters use base-glyph construction coverage"),

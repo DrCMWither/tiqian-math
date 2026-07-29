@@ -118,21 +118,22 @@ private class MathLayoutPass(
     private fun layoutNode(
         node: MathNode,
         style: MathStyle,
-        variantOverride: MathVariant? = null,
+        alphabetOverride: MathAlphabetOverride? = null,
     ): LaidNode = when (node) {
-        is MathList -> layoutList(node, style, variantOverride).laid
-        is MathGroup -> {
-            val horizontal = layoutList(node.body, style, variantOverride)
-            horizontal.laid.copy(
-                node = node,
-                atomClass = horizontal.items.singleOrNull()?.atomClass ?: MathAtomClass.Ordinary,
-            )
-        }
-        is MathSymbol -> layoutSymbol(node, style, variantOverride)
-        is MathScripts -> layoutScripts(node, style, variantOverride)
-        is MathFraction -> layoutFraction(node, style, variantOverride)
-        is MathStyleScope -> layoutNode(node.body, styleForLevel(node.requestedLevel), variantOverride).copy(node = node)
-        is MathVariantScope -> layoutNode(node.body, style, node.variant).copy(node = node)
+        is MathList -> layoutList(node, style, alphabetOverride).laid
+        is MathGroup -> layoutGroup(node, style, alphabetOverride)
+        is MathSymbol -> layoutSymbol(node, style, alphabetOverride)
+        is MathScripts -> layoutScripts(node, style, alphabetOverride)
+        is MathFraction -> layoutFraction(node, style, alphabetOverride)
+        is MathStyleDeclaration -> LaidNode(
+            node,
+            emptyBox(node.range),
+            MathAtomClass.Ordinary,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
+        is MathAlphabetScope -> layoutAlphabetScopeNode(node, style)
         is MathErrorNode -> LaidNode(
             node,
             emptyBox(node.range),
@@ -143,26 +144,116 @@ private class MathLayoutPass(
         )
     }
 
-    private fun layoutSymbol(node: MathSymbol, style: MathStyle, variantOverride: MathVariant?): LaidNode {
+    private fun layoutGroup(
+        node: MathGroup,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val horizontal = layoutList(node.body, style, alphabetOverride)
+        decision(
+            "TeXOrdSubMlist",
+            node.range,
+            "outerClass" to MathAtomClass.Ordinary,
+            "innerClasses" to horizontal.items.joinToString(",") { it.atomClass.name },
+            "innerStyles" to horizontal.items.joinToString(",") { it.laid.style.toString() },
+            "innerBreaksExported" to false,
+            "scriptBaseKind" to ScriptBaseKind.CompoundBox,
+        )
+        return horizontal.laid.copy(
+            node = node,
+            box = horizontal.laid.box.copy(range = node.range),
+            atomClass = MathAtomClass.Ordinary,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutAlphabetScopeNode(node: MathAlphabetScope, style: MathStyle): LaidNode {
+        val override = MathAlphabetOverride(node.family, node.alphabet)
+        decision(
+            "TeXMathAlphabetScope",
+            node.range,
+            "family" to node.family,
+            "alphabet" to node.alphabet,
+            "appliesTo" to MathFamilyBinding.Variable,
+        )
+        val horizontal = when (val body = node.body) {
+            is MathGroup -> layoutList(body.body, style, override)
+            is MathList -> layoutList(body, style, override)
+            else -> null
+        }
+        return if (horizontal != null) {
+            horizontal.laid.copy(
+                node = node,
+                box = horizontal.laid.box.copy(range = node.range),
+                atomClass = horizontal.items.singleOrNull()?.atomClass ?: MathAtomClass.Ordinary,
+                scriptBaseKind = horizontal.items.singleOrNull()?.laid?.scriptBaseKind
+                    ?: ScriptBaseKind.CompoundBox,
+            )
+        } else {
+            layoutNode(node.body, style, override).copy(node = node)
+        }
+    }
+
+    private fun layoutSymbol(
+        node: MathSymbol,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
         val size = fontSize(style)
-        val selection = node.selectMathVariant(variantOverride)
-        val run = glyphSource.shape(selection.glyphText, size, style, node.range)
+        val resolvedFamily = if (node.familyBinding == MathFamilyBinding.Variable) {
+            alphabetOverride?.family ?: node.family
+        } else {
+            node.family
+        }
+        val resolvedAlphabet = if (node.familyBinding == MathFamilyBinding.Variable) {
+            alphabetOverride?.alphabet ?: node.alphabet
+        } else {
+            node.alphabet
+        }
+        val resolved = glyphSource.resolveSymbol(
+            MathSymbolGlyphRequest(
+                identity = node.identity,
+                family = resolvedFamily,
+                alphabet = resolvedAlphabet,
+                style = style,
+                sourceRange = node.range,
+            ),
+            size,
+        )
+        val run = resolved.run
+        if (!resolved.supported) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.UnsupportedMathAlphabet,
+                "The selected formula-wide math face cannot resolve ${node.identity.debugName} " +
+                    "in $resolvedFamily/$resolvedAlphabet",
+                node.range,
+            )
+        }
         if (run.missingGlyph) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MissingGlyph,
-                "The selected formula-wide math face has no ${selection.variant} glyph for ${node.displayText}",
+                "The selected formula-wide math face has no $resolvedFamily/$resolvedAlphabet glyph " +
+                    "for ${node.identity.debugName}",
                 node.range,
             )
         }
         val lastGlyph = run.glyphs.lastOrNull()?.glyphId
         val italicCorrection = lastGlyph?.let { glyphSource.mathFont.italicCorrection(it, size) } ?: 0f
         decision(
-            "MathVariantGlyphSelection",
+            "TeXMathSymbolResolution",
             node.range,
-            "semantic" to selection.semanticText,
-            "glyphText" to selection.glyphText,
-            "variant" to selection.variant,
-            "remapped" to selection.remapped,
+            "sourceText" to node.sourceText,
+            "identity" to node.identity.debugName,
+            "baseScalar" to unicodeLabel(node.identity.baseScalar),
+            "atomClass" to node.atomClass,
+            "familyBinding" to node.familyBinding,
+            "declaredFamily" to node.family,
+            "declaredAlphabet" to node.alphabet,
+            "resolvedFamily" to resolvedFamily,
+            "resolvedAlphabet" to resolvedAlphabet,
+            "backendScalar" to unicodeLabel(resolved.backendScalar),
             "glyphIds" to run.glyphs.joinToString(",") { it.glyphId.toString() },
             "italicCorrectionPx" to italicCorrection,
         )
@@ -192,10 +283,10 @@ private class MathLayoutPass(
         )
     }
 
-    private fun layoutScripts(node: MathScripts, style: MathStyle, variantOverride: MathVariant?): LaidNode {
-        val base = layoutNode(node.base, style, variantOverride)
-        val superscript = node.superscript?.let { layoutNode(it, style.superscript(), variantOverride) }
-        val subscript = node.subscript?.let { layoutNode(it, style.subscript(), variantOverride) }
+    private fun layoutScripts(node: MathScripts, style: MathStyle, alphabetOverride: MathAlphabetOverride?): LaidNode {
+        val base = layoutNode(node.base, style, alphabetOverride)
+        val superscript = node.superscript?.let { layoutNode(it, style.superscript(), alphabetOverride) }
+        val subscript = node.subscript?.let { layoutNode(it, style.subscript(), alphabetOverride) }
         var superscriptShift = scale(
             if (style.cramped) constants.superscriptShiftUpCramped else constants.superscriptShiftUp,
             style,
@@ -286,6 +377,10 @@ private class MathLayoutPass(
         shift: Float,
         range: SourceRange,
     ): Float {
+        if (base.scriptBaseKind == ScriptBaseKind.CompoundBox || script.scriptBaseKind == ScriptBaseKind.CompoundBox) {
+            decision("OpenTypeMathKern", range, "kind" to "superscript", "strategy" to "box-zero", "kernPx" to 0f)
+            return 0f
+        }
         val baseGlyph = base.box.singleGlyphOrNull()
         val scriptGlyph = script.box.singleGlyphOrNull()
         if (baseGlyph == null || scriptGlyph == null) {
@@ -333,6 +428,10 @@ private class MathLayoutPass(
         shift: Float,
         range: SourceRange,
     ): Float {
+        if (base.scriptBaseKind == ScriptBaseKind.CompoundBox || script.scriptBaseKind == ScriptBaseKind.CompoundBox) {
+            decision("OpenTypeMathKern", range, "kind" to "subscript", "strategy" to "box-zero", "kernPx" to 0f)
+            return 0f
+        }
         val baseGlyph = base.box.singleGlyphOrNull()
         val scriptGlyph = script.box.singleGlyphOrNull()
         if (baseGlyph == null || scriptGlyph == null) {
@@ -374,9 +473,9 @@ private class MathLayoutPass(
         return kern
     }
 
-    private fun layoutFraction(node: MathFraction, style: MathStyle, variantOverride: MathVariant?): LaidNode {
-        val numerator = layoutNode(node.numerator, style.fractionNumerator(), variantOverride).box
-        val denominator = layoutNode(node.denominator, style.fractionDenominator(), variantOverride).box
+    private fun layoutFraction(node: MathFraction, style: MathStyle, alphabetOverride: MathAlphabetOverride?): LaidNode {
+        val numerator = layoutNode(node.numerator, style.fractionNumerator(), alphabetOverride).box
+        val denominator = layoutNode(node.denominator, style.fractionDenominator(), alphabetOverride).box
         val display = style.level == MathStyleLevel.Display
         val stack = layoutFractionStack(node, style, numerator, denominator, display)
         val withDelimiters = if (node.hasParentheses) addBinomialParentheses(stack, node, style) else stack
@@ -639,9 +738,9 @@ private class MathLayoutPass(
     private fun layoutList(
         list: MathList,
         style: MathStyle,
-        variantOverride: MathVariant? = null,
+        alphabetOverride: MathAlphabetOverride? = null,
     ): HorizontalLayout {
-        val raw = list.children.flatMap { child -> flattenHorizontal(child, style, variantOverride) }
+        val raw = flattenListChildren(list, style, alphabetOverride)
         val classes = raw.map { it.laid.atomClass }.toMutableList()
         for (index in classes.indices) {
             val previous = classes.getOrNull(index - 1)
@@ -655,6 +754,17 @@ private class MathLayoutPass(
             }
         }
         if (classes.lastOrNull() == MathAtomClass.Binary) classes[classes.lastIndex] = MathAtomClass.Ordinary
+        raw.indices.forEach { index ->
+            if (raw[index].laid.atomClass != classes[index]) {
+                decision(
+                    "TeXBinaryAtomReclassification",
+                    raw[index].node.range,
+                    "from" to raw[index].laid.atomClass,
+                    "to" to classes[index],
+                    "listRange" to "${list.range.start}..${list.range.endExclusive}",
+                )
+            }
+        }
 
         val spacedItems = raw.mapIndexed { index, item ->
             val leftClass = classes.getOrNull(index - 1)
@@ -712,33 +822,52 @@ private class MathLayoutPass(
         )
     }
 
+    private fun flattenListChildren(
+        list: MathList,
+        initialStyle: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): List<HorizontalItem> {
+        var currentStyle = initialStyle
+        return buildList {
+            list.children.forEach { child ->
+                if (child is MathStyleDeclaration) {
+                    val nextStyle = styleForLevel(child.requestedLevel)
+                    decision(
+                        "TeXMathStyleDeclaration",
+                        child.range,
+                        "from" to currentStyle,
+                        "to" to nextStyle,
+                        "listRange" to "${list.range.start}..${list.range.endExclusive}",
+                    )
+                    currentStyle = nextStyle
+                } else {
+                    addAll(flattenHorizontal(child, currentStyle, alphabetOverride))
+                }
+            }
+        }
+    }
+
     private fun flattenHorizontal(
         node: MathNode,
         style: MathStyle,
-        variantOverride: MathVariant?,
+        alphabetOverride: MathAlphabetOverride?,
     ): List<HorizontalItem> = when (node) {
-        is MathGroup -> {
-            decision("TransparentMathGroup", node.range, "children" to node.body.children.size)
-            node.body.children.flatMap { flattenHorizontal(it, style, variantOverride) }
-        }
-        is MathStyleScope -> {
-            val scoped = styleForLevel(node.requestedLevel)
-            decision("TransparentStyleScope", node.range, "style" to scoped)
+        is MathAlphabetScope -> {
+            val override = MathAlphabetOverride(node.family, node.alphabet)
+            decision(
+                "TeXMathAlphabetScope",
+                node.range,
+                "family" to node.family,
+                "alphabet" to node.alphabet,
+                "appliesTo" to MathFamilyBinding.Variable,
+            )
             when (val body = node.body) {
-                is MathGroup -> body.body.children.flatMap { flattenHorizontal(it, scoped, variantOverride) }
-                is MathList -> body.children.flatMap { flattenHorizontal(it, scoped, variantOverride) }
-                else -> listOf(HorizontalItem(node, layoutNode(body, scoped, variantOverride).copy(node = node), MathGlueAdjustment.Zero, MathAtomClass.Ordinary))
+                is MathGroup -> flattenListChildren(body.body, style, override)
+                is MathList -> flattenListChildren(body, style, override)
+                else -> listOf(HorizontalItem(body, layoutNode(body, style, override), MathGlueAdjustment.Zero, MathAtomClass.Ordinary))
             }
         }
-        is MathVariantScope -> {
-            decision("TransparentMathVariantScope", node.range, "variant" to node.variant)
-            when (val body = node.body) {
-                is MathGroup -> body.body.children.flatMap { flattenHorizontal(it, style, node.variant) }
-                is MathList -> body.children.flatMap { flattenHorizontal(it, style, node.variant) }
-                else -> listOf(HorizontalItem(node, layoutNode(body, style, node.variant).copy(node = node), MathGlueAdjustment.Zero, MathAtomClass.Ordinary))
-            }
-        }
-        else -> listOf(HorizontalItem(node, layoutNode(node, style, variantOverride), MathGlueAdjustment.Zero, MathAtomClass.Ordinary))
+        else -> listOf(HorizontalItem(node, layoutNode(node, style, alphabetOverride), MathGlueAdjustment.Zero, MathAtomClass.Ordinary))
     }
 
     private fun atomGlue(
@@ -959,6 +1088,11 @@ private class MathLayoutPass(
         val items: List<HorizontalItem>,
     )
 
+    private data class MathAlphabetOverride(
+        val family: MathFamily,
+        val alphabet: MathAlphabet,
+    )
+
     private companion object {
         const val GEOMETRY_EPSILON_PX = 0.02f
 
@@ -986,6 +1120,8 @@ private class MathLayoutPass(
 
     }
 }
+
+private fun unicodeLabel(scalar: Int): String = "U+${scalar.toString(16).uppercase().padStart(4, '0')}"
 
 private enum class ScriptBaseKind {
     Character,

@@ -50,7 +50,7 @@ class NativeMathMlOracleTest {
                 val x = actual.exactGlyphAt(actual.source.indexOf('x'))
                 val plus = actual.exactGlyphAt(actual.source.indexOf('+'))
                 val y = actual.exactGlyphAt(actual.source.indexOf('y'))
-                val italicCorrection = actual.variantDecisionAt(actual.source.indexOf('x'))
+                val italicCorrection = actual.symbolDecisionAt(actual.source.indexOf('x'))
                     .details.getValue("italicCorrectionPx").toFloat()
                 oracle.assertProbe("xRight", x.x + x.advance, 0.1f)
                 assertNearCssPixel(
@@ -86,7 +86,7 @@ class NativeMathMlOracleTest {
                 val sub = actual.glyphAt(actual.source.indexOf('1'))
                 val base = actual.exactGlyphAt(actual.source.indexOf('x'))
                 val scriptDecision = actual.decisions.single { it.name == "OpenTypeMathScriptPlacement" }
-                val italicCorrection = actual.variantDecisionAt(actual.source.indexOf('x'))
+                val italicCorrection = actual.symbolDecisionAt(actual.source.indexOf('x'))
                     .details.getValue("italicCorrectionPx").toFloat()
                 val superscriptKern = scriptDecision.details.getValue("superscriptKernPx").toFloat()
                 val actualGap = sub.inkBounds.top - sup.inkBounds.bottom
@@ -182,9 +182,9 @@ private fun MathLayoutResult.glyphAt(sourceOffset: Int) =
 private fun MathLayoutResult.exactGlyphAt(sourceOffset: Int) =
     box.glyphs.first { it.sourceRange == SourceRange(sourceOffset, sourceOffset + 1) }
 
-private fun MathLayoutResult.variantDecisionAt(sourceOffset: Int) =
+private fun MathLayoutResult.symbolDecisionAt(sourceOffset: Int) =
     decisions.single {
-        it.name == "MathVariantGlyphSelection" &&
+        it.name == "TeXMathSymbolResolution" &&
             it.range == SourceRange(sourceOffset, sourceOffset + 1)
     }
 

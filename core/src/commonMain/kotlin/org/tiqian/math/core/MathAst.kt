@@ -25,26 +25,128 @@ data class MathGroup(
     override val range: SourceRange,
 ) : MathNode
 
+/** TeX math symbol families. These are semantic families, not fallback font names. */
+enum class MathFamily {
+    Operators,
+    Letters,
+    Symbols,
+    LargeSymbols,
+}
+
 /**
- * Semantic math alphabet selection. This is source semantics, not a drawing effect:
- * adapters must resolve it to a real cmap glyph and must never synthesize a shear.
+ * A variable-family mathcode follows the active math alphabet (for example `\mathrm`). A fixed
+ * family symbol keeps its declared family. This is the modern equivalent of TeX's class-7
+ * variable-family distinction.
  */
-enum class MathVariant {
-    /** TeX/MathML variable semantics; the standard mathematical italic scalar is selected. */
-    DefaultVariableItalic,
+enum class MathFamilyBinding {
+    Variable,
+    Fixed,
+}
 
-    /** Keep the semantic scalar upright (numbers, operators, delimiters, and explicit roman text). */
-    Upright,
+/** Math alphabet selection is orthogonal to atom class, symbol identity, and math style. */
+enum class MathAlphabet {
+    MathNormal,
+    Roman,
+    Italic,
+    Bold,
+    BoldItalic,
+    SansSerif,
+}
 
-    /** The source already contains a Mathematical Alphanumeric Symbol; never remap it. */
-    ExplicitUnicode,
+enum class MathNamedSymbol(val debugName: String, val baseScalar: Int) {
+    Minus("minus", 0x2212),
+    AsteriskOperator("asterisk-operator", 0x2217),
+    Plus("plus", 0x002B),
+    Slash("solidus", 0x002F),
+    Colon("colon", 0x003A),
+    ExclamationMark("exclamation-mark", 0x0021),
+    QuestionMark("question-mark", 0x003F),
+    LeftParenthesis("left-parenthesis", 0x0028),
+    RightParenthesis("right-parenthesis", 0x0029),
+    LeftBracket("left-bracket", 0x005B),
+    RightBracket("right-bracket", 0x005D),
+    LeftBrace("left-brace", 0x007B),
+    RightBrace("right-brace", 0x007D),
+    Comma("comma", 0x002C),
+    Semicolon("semicolon", 0x003B),
+    Equals("equals", 0x003D),
+    LessThan("less-than", 0x003C),
+    GreaterThan("greater-than", 0x003E),
+    Alpha("alpha", 0x03B1),
+    Beta("beta", 0x03B2),
+    Gamma("gamma", 0x03B3),
+    Delta("delta", 0x03B4),
+    Epsilon("epsilon", 0x03F5),
+    Varepsilon("varepsilon", 0x03B5),
+    Theta("theta", 0x03B8),
+    Lambda("lambda", 0x03BB),
+    Mu("mu", 0x03BC),
+    Pi("pi", 0x03C0),
+    Sigma("sigma", 0x03C3),
+    Phi("phi", 0x03D5),
+    Varphi("varphi", 0x03C6),
+    Omega("omega", 0x03C9),
+    CapitalGamma("capital-gamma", 0x0393),
+    CapitalDelta("capital-delta", 0x0394),
+    CapitalTheta("capital-theta", 0x0398),
+    CapitalLambda("capital-lambda", 0x039B),
+    CapitalPi("capital-pi", 0x03A0),
+    CapitalSigma("capital-sigma", 0x03A3),
+    CapitalPhi("capital-phi", 0x03A6),
+    CapitalOmega("capital-omega", 0x03A9),
+    Infinity("infinity", 0x221E),
+    PartialDifferential("partial-differential", 0x2202),
+    DotOperator("dot-operator", 0x22C5),
+    MultiplicationSign("multiplication-sign", 0x00D7),
+    PlusMinus("plus-minus", 0x00B1),
+    DivisionSign("division-sign", 0x00F7),
+    LessThanOrEqual("less-than-or-equal", 0x2264),
+    GreaterThanOrEqual("greater-than-or-equal", 0x2265),
+    NotEqual("not-equal", 0x2260),
+    ElementOf("element-of", 0x2208),
+    RightArrow("right-arrow", 0x2192),
+    ApproximatelyEqual("approximately-equal", 0x2248),
+    VerticalBar("vertical-bar", 0x007C),
+}
+
+sealed interface MathSymbolIdentity {
+    val baseScalar: Int
+    val debugName: String
+
+    data class LatinLetter(val letter: Char) : MathSymbolIdentity {
+        init {
+            require(letter in 'A'..'Z' || letter in 'a'..'z')
+        }
+        override val baseScalar: Int = letter.code
+        override val debugName: String = "latin-$letter"
+    }
+
+    data class Digit(val digit: Char) : MathSymbolIdentity {
+        init {
+            require(digit in '0'..'9')
+        }
+        override val baseScalar: Int = digit.code
+        override val debugName: String = "digit-$digit"
+    }
+
+    data class Named(val symbol: MathNamedSymbol) : MathSymbolIdentity {
+        override val baseScalar: Int = symbol.baseScalar
+        override val debugName: String = symbol.debugName
+    }
+
+    /** A literal supported by the tokenizer but not assigned a named TeX symbol identity yet. */
+    data class Literal(override val baseScalar: Int) : MathSymbolIdentity {
+        override val debugName: String = "literal-U+${baseScalar.toString(16).uppercase()}"
+    }
 }
 
 data class MathSymbol(
     val sourceText: String,
-    val displayText: String,
+    val identity: MathSymbolIdentity,
     val atomClass: MathAtomClass,
-    val variant: MathVariant,
+    val family: MathFamily,
+    val familyBinding: MathFamilyBinding,
+    val alphabet: MathAlphabet = MathAlphabet.MathNormal,
     override val range: SourceRange,
 ) : MathNode
 
@@ -68,14 +170,16 @@ data class MathFraction(
     override val range: SourceRange,
 ) : MathNode
 
-data class MathStyleScope(
+/** A TeX style declaration. It changes the remainder of the containing mlist. */
+data class MathStyleDeclaration(
     val requestedLevel: MathStyleLevel,
-    val body: MathNode,
     override val range: SourceRange,
 ) : MathNode
 
-data class MathVariantScope(
-    val variant: MathVariant,
+/** A scoped math alphabet command such as LaTeX's `\mathrm`. */
+data class MathAlphabetScope(
+    val family: MathFamily,
+    val alphabet: MathAlphabet,
     val body: MathNode,
     override val range: SourceRange,
 ) : MathNode

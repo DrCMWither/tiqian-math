@@ -63,7 +63,7 @@ private fun PreviewScreen() {
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
                 Text("Tiqian Math — real OpenType MATH pipeline", fontSize = 20.sp)
-                Text("Variable italic vs explicit upright control", fontSize = 13.sp)
+                Text("Variable-family italic vs \\mathrm Latin control", fontSize = 13.sp)
                 VariantControlSample("Lete Sans Math", lete)
                 VariantControlSample("STIX Two Math", stix)
                 FontSample("Lete Sans Math · display", lete, MathMode.Display)
@@ -100,9 +100,9 @@ private fun VariantControlSample(label: String, face: SkiaMathFontFace) {
                 )
             }
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("\\mathrm upright", fontSize = 11.sp)
+                Text("\\mathrm Latin control", fontSize = 11.sp)
                 TiqianMath(
-                    source = "\\mathrm{x+y+abc+α+β}",
+                    source = "\\mathrm{x+y+abc+2}",
                     modifier = Modifier.background(Color.White).padding(6.dp),
                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = 28.sp, lineHeight = 38.sp),
                     fontFace = face,

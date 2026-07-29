@@ -81,6 +81,7 @@ private class ParserState(
         }
 
         var base = parsePrimary() ?: return null
+        if (base is MathStyleDeclaration) return base
         var superscript: MathNode? = null
         var subscript: MathNode? = null
         var totalRange = base.range
@@ -137,13 +138,7 @@ private class ParserState(
         skipIgnored()
         val token = advance()
         return when (token.kind) {
-            MathTokenKind.Symbol -> MathSymbol(
-                sourceText = token.text,
-                displayText = token.text,
-                atomClass = classifyLiteral(token.text),
-                variant = classifyVariant(token.text),
-                range = token.range,
-            )
+            MathTokenKind.Symbol -> symbolNode(token, TeXMathSymbolTable.literal(token.text))
             MathTokenKind.ControlSymbol -> parseControlSymbol(token)
             MathTokenKind.ControlWord -> parseControlWord(token)
             MathTokenKind.OpenGroup -> parseGroup(token)
@@ -169,12 +164,8 @@ private class ParserState(
     }
 
     private fun parseControlSymbol(token: MathToken): MathNode {
-        val display = when (token.text) {
-            "{", "}", "%", "#", "_", "^", "\\" -> token.text
-            " " -> " "
-            else -> null
-        }
-        if (display == null || display == " ") {
+        val spec = TeXMathSymbolTable.controlSymbol(token.text)
+        if (spec == null) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.UnknownCommand,
                 "Unknown control symbol \\${token.text}",
@@ -182,32 +173,24 @@ private class ParserState(
             )
             return MathErrorNode(sourceSlice(token.range), token.range)
         }
-        return MathSymbol(
-            sourceSlice(token.range),
-            display,
-            classifyLiteral(display),
-            classifyVariant(display),
-            token.range,
-        )
+        return symbolNode(token, spec)
     }
 
     private fun parseControlWord(token: MathToken): MathNode {
-        symbolCommands[token.text]?.let { mapped ->
-            return MathSymbol(
-                sourceSlice(token.range),
-                mapped.display,
-                mapped.atomClass,
-                mapped.variant,
-                token.range,
-            )
+        TeXMathSymbolTable.command(token.text)?.let { spec ->
+            return symbolNode(token, spec)
         }
         styleCommands[token.text]?.let { level ->
-            val argument = parseRequiredArgument(token, "style scope")
-            return MathStyleScope(level, argument, token.range.cover(argument.range))
+            return MathStyleDeclaration(level, token.range)
         }
         if (token.text == "mathrm") {
             val argument = parseRequiredArgument(token, "roman math scope")
-            return MathVariantScope(MathVariant.Upright, argument, token.range.cover(argument.range))
+            return MathAlphabetScope(
+                MathFamily.Operators,
+                MathAlphabet.Roman,
+                argument,
+                token.range.cover(argument.range),
+            )
         }
         if (token.text == "frac" || token.text == "binom") {
             val numerator = parseRequiredArgument(token, "numerator")
@@ -248,6 +231,16 @@ private class ParserState(
         return parsePrimary() ?: MathErrorNode("", next.range)
     }
 
+    private fun symbolNode(token: MathToken, spec: TeXMathSymbolSpec): MathSymbol = MathSymbol(
+        sourceText = sourceSlice(token.range),
+        identity = spec.identity,
+        atomClass = spec.atomClass,
+        family = spec.family,
+        familyBinding = spec.familyBinding,
+        alphabet = spec.alphabet,
+        range = token.range,
+    )
+
     private fun skipIgnored() {
         while (peek().kind == MathTokenKind.Space || peek().kind == MathTokenKind.Comment) index++
     }
@@ -257,12 +250,6 @@ private class ParserState(
     private fun sourceSlice(range: SourceRange): String =
         if (range.endExclusive <= source.length) source.substring(range.start, range.endExclusive) else ""
 
-    private data class MappedSymbol(
-        val display: String,
-        val atomClass: MathAtomClass,
-        val variant: MathVariant,
-    )
-
     private companion object {
         val styleCommands = mapOf(
             "displaystyle" to MathStyleLevel.Display,
@@ -271,72 +258,12 @@ private class ParserState(
             "scriptscriptstyle" to MathStyleLevel.ScriptScript,
         )
 
-        val lowercaseGreekVariables = (0x03B1..0x03C9).toSet()
-        val greekVariantVariables = setOf(0x03F5, 0x03D1, 0x03F0, 0x03D5, 0x03F1, 0x03D6)
-        val uprightTeXControlWords = setOf(
-            "Gamma", "Delta", "Theta", "Lambda", "Pi", "Sigma", "Phi", "Omega", "infty",
-        )
-
-        val symbolCommands = buildMap {
-            listOf(
-                "alpha" to "α", "beta" to "β", "gamma" to "γ", "delta" to "δ",
-                "epsilon" to "ε", "theta" to "θ", "lambda" to "λ", "mu" to "μ",
-                "pi" to "π", "sigma" to "σ", "phi" to "φ", "omega" to "ω",
-                "Gamma" to "Γ", "Delta" to "Δ", "Theta" to "Θ", "Lambda" to "Λ",
-                "Pi" to "Π", "Sigma" to "Σ", "Phi" to "Φ", "Omega" to "Ω",
-                "infty" to "∞", "partial" to "∂",
-            ).forEach { (name, display) ->
-                val variant = if (name in uprightTeXControlWords) {
-                    MathVariant.Upright
-                } else {
-                    classifyVariant(display)
-                }
-                put(name, MappedSymbol(display, MathAtomClass.Ordinary, variant))
-            }
-            listOf(
-                "cdot" to "⋅", "times" to "×", "pm" to "±", "div" to "÷",
-            ).forEach { (name, display) ->
-                put(name, MappedSymbol(display, MathAtomClass.Binary, MathVariant.Upright))
-            }
-            listOf(
-                "le" to "≤", "leq" to "≤", "ge" to "≥", "geq" to "≥",
-                "neq" to "≠", "ne" to "≠", "in" to "∈", "to" to "→", "approx" to "≈",
-            ).forEach { (name, display) ->
-                put(name, MappedSymbol(display, MathAtomClass.Relation, MathVariant.Upright))
-            }
-        }
-
         val explicitlyUnsupportedCommands = setOf(
             "sqrt", "left", "right", "sum", "prod", "int", "oint", "overline", "underline",
             "hat", "bar", "vec", "begin", "end", "text", "operatorname", "limits", "nolimits",
-            "matrix", "cases", "newcommand", "def", "color",
+            "matrix", "cases", "newcommand", "def", "color", "mathnormal", "mathit", "mathbf",
+            "boldsymbol", "mathsf",
         )
 
-        fun classifyLiteral(text: String): MathAtomClass = when (text) {
-            "+", "-", "−", "*", "×", "⋅", "/", "±" -> MathAtomClass.Binary
-            "=", "<", ">", "≤", "≥", "≠", "≈", "∈", "→" -> MathAtomClass.Relation
-            "(", "[" -> MathAtomClass.Opening
-            ")", "]" -> MathAtomClass.Closing
-            ",", ";" -> MathAtomClass.Punctuation
-            else -> MathAtomClass.Ordinary
-        }
-
-        /** MathML literal policy; TeX uppercase-Greek control words are overridden above. */
-        fun classifyVariant(text: String): MathVariant {
-            if (isExplicitMathematicalAlphanumeric(text)) return MathVariant.ExplicitUnicode
-            val scalar = text.singleUnicodeScalarOrNull() ?: return MathVariant.Upright
-            return if (
-                scalar in 'A'.code..'Z'.code ||
-                scalar in 'a'.code..'z'.code ||
-                scalar in 0x0391..0x03A9 || scalar == 0x03F4 || scalar == 0x2207 ||
-                scalar in lowercaseGreekVariables ||
-                scalar in greekVariantVariables ||
-                scalar == 0x2202 || scalar == 0x0131 || scalar == 0x0237
-            ) {
-                MathVariant.DefaultVariableItalic
-            } else {
-                MathVariant.Upright
-            }
-        }
     }
 }

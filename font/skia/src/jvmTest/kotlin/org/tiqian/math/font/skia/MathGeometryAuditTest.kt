@@ -18,7 +18,9 @@ import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathFontFace
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.layout.ResolvedMathSymbol
 import org.tiqian.math.layout.breakIntoLines
 import kotlin.math.abs
 import kotlin.test.Test
@@ -29,7 +31,7 @@ import kotlin.test.assertTrue
 
 class MathGeometryAuditTest {
     @Test
-    fun groupsAreTransparentToAtomSpacingGeometryAndBreaksForBothFonts() = withAuditFaces { label, face ->
+    fun ordinaryGroupsAreIndependentSubMlistsForBothFonts() = withAuditFaces { label, face ->
         val engine = MathLayoutEngine(face)
         val plain = engine.layout("abc", MathLayoutOptions(fontSizePx = 40f))
         val grouped = engine.layout("a{b}c", MathLayoutOptions(fontSizePx = 40f))
@@ -37,23 +39,60 @@ class MathGeometryAuditTest {
         assertNear(plain.box.width, grouped.box.width, "$label group logical width")
         assertEquals(plain.box.glyphs.map { it.glyphId }, grouped.box.glyphs.map { it.glyphId })
         plain.box.glyphs.zip(grouped.box.glyphs).forEachIndexed { index, (expected, actual) ->
-            assertNear(expected.x, actual.x, "$label transparent group glyph x[$index]")
+            assertNear(expected.x, actual.x, "$label sub-mlist glyph x[$index]")
         }
-        assertTrue(grouped.decisions.any { it.name == "TransparentMathGroup" })
+        assertTrue(grouped.decisions.any { it.name == "TeXOrdSubMlist" })
 
         val parenthesized = engine.layout("(\\frac{a}{b})", MathLayoutOptions(fontSizePx = 40f))
         assertEquals(3, parenthesized.fragments.size, "$label opening/fraction/closing atoms")
         assertEquals(MathGlueKind.None, parenthesized.fragments[0].trailingGlue.kind, "$label open-inner has no glue")
         assertEquals(MathGlueKind.None, parenthesized.fragments[1].trailingGlue.kind, "$label inner-close has no glue")
 
+        val edgeBinary = engine.layout("a{+}b", MathLayoutOptions(fontSizePx = 40f))
+        assertEquals(3, edgeBinary.fragments.size, "$label group is one outer atom")
+        assertEquals(SourceRange(1, 4), edgeBinary.fragments[1].sourceRange)
+        assertEquals(SourceRange(1, 4), edgeBinary.fragments[1].box.range)
+        assertTrue(edgeBinary.breakOpportunities.isEmpty(), "$label edge binary is reclassified inside group")
+        assertTrue(edgeBinary.decisions.any {
+            it.name == "TeXBinaryAtomReclassification" &&
+                it.range == SourceRange(2, 3) &&
+                it.details["to"] == "Ordinary"
+        }, "$label a{+}b internal Bin becomes Ord")
+
         val insideGroup = engine.layout("a{b+c}d", MathLayoutOptions(fontSizePx = 40f))
-        val plusIndex = insideGroup.fragments.indexOfFirst { it.sourceRange == SourceRange(3, 4) }
-        assertTrue(plusIndex >= 0, "$label group children remain public fragments")
-        assertEquals(MathBreakKind.BinaryOperatorTrailing, insideGroup.fragments[plusIndex].breakAfter?.kind)
-        val prefixWidth = insideGroup.fragments.take(plusIndex + 1).sumOf { it.box.width.toDouble() }.toFloat() +
-            insideGroup.fragments.take(plusIndex).sumOf { it.trailingGlue.naturalPx.toDouble() }.toFloat()
-        val broken = insideGroup.breakIntoLines(prefixWidth + 2f)
-        assertEquals(plusIndex, broken.lines.first().fragments.last().fragmentIndex, "$label takes group-internal break")
+        assertEquals(listOf(SourceRange(0, 1), SourceRange(1, 6), SourceRange(6, 7)),
+            insideGroup.fragments.map { it.sourceRange }, "$label sub-mlist is indivisible outside")
+        assertTrue(insideGroup.breakOpportunities.isEmpty(), "$label group-internal Bin penalty does not escape")
+        val groupDecision = insideGroup.decisions.single { it.name == "TeXOrdSubMlist" }
+        assertEquals("Ordinary,Binary,Ordinary", groupDecision.details["innerClasses"])
+        assertEquals("false", groupDecision.details["innerBreaksExported"])
+
+        val scriptedGroup = engine.layout("{x}^2", MathLayoutOptions(fontSizePx = 40f))
+        val scriptDecision = scriptedGroup.decisions.single { it.name == "OpenTypeMathScriptPlacement" }
+        assertEquals("CompoundBox", scriptDecision.details["baseKind"], "$label braced base does not use glyph MathKern")
+        assertTrue(scriptedGroup.decisions.any {
+            it.name == "OpenTypeMathKern" && it.details["strategy"] == "box-zero"
+        }, "$label compound base has explicit zero-kern policy")
+    }
+
+    @Test
+    fun styleDeclarationsAffectTheRemainderOfOnlyTheirContainingList() = withAuditFaces { label, face ->
+        val engine = MathLayoutEngine(face)
+        val ungrouped = engine.layout("\\scriptstyle x+y", MathLayoutOptions(fontSizePx = 40f))
+        assertTrue(ungrouped.box.glyphs.all { it.style == MathStyle.Script }, "$label declaration reaches following atoms")
+        assertTrue(ungrouped.decisions.any {
+            it.name == "TeXMathStyleDeclaration" && it.details["to"] == "Script"
+        })
+
+        val source = "{\\scriptstyle x+y}z"
+        val grouped = engine.layout(source, MathLayoutOptions(fontSizePx = 40f))
+        listOf('x', '+', 'y').forEach { character ->
+            assertEquals(MathStyle.Script, grouped.glyphAt(source.lastIndexOf(character)).style, "$label inner $character")
+        }
+        assertEquals(MathStyle.Text, grouped.glyphAt(source.lastIndexOf('z')).style, "$label style resets after group")
+        val trailing = engine.layout("x+\\scriptstyle", MathLayoutOptions(fontSizePx = 40f))
+        assertTrue(trailing.diagnostics.isEmpty(), "$label declaration at list end")
+        assertEquals(2, trailing.fragments.size)
     }
 
     @Test
@@ -296,6 +335,9 @@ private class FontOverrideFace(
     private val delegate: SkiaMathFontFace,
     override val mathFont: OpenTypeMathFont,
 ) : MathFontFace {
+    override fun resolveSymbol(request: MathSymbolGlyphRequest, fontSizePx: Float): ResolvedMathSymbol =
+        delegate.resolveSymbol(request, fontSizePx)
+
     override fun shape(text: String, fontSizePx: Float, style: MathStyle, sourceRange: SourceRange): MeasuredMathRun =
         delegate.shape(text, fontSizePx, style, sourceRange)
 

@@ -137,6 +137,11 @@ private class SecondAuditOverrideFace(
     private val delegate: SkiaMathFontFace,
     override val mathFont: OpenTypeMathFont,
 ) : MathFontFace {
+    override fun resolveSymbol(
+        request: org.tiqian.math.layout.MathSymbolGlyphRequest,
+        fontSizePx: Float,
+    ): org.tiqian.math.layout.ResolvedMathSymbol = delegate.resolveSymbol(request, fontSizePx)
+
     override fun shape(text: String, fontSizePx: Float, style: MathStyle, sourceRange: SourceRange): MeasuredMathRun =
         delegate.shape(text, fontSizePx, style, sourceRange)
 

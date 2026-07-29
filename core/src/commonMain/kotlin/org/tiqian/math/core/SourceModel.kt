@@ -44,6 +44,7 @@ enum class DiagnosticCode {
     MissingCommandArgument,
     UnknownCommand,
     UnsupportedCommand,
+    UnsupportedMathAlphabet,
     MissingGlyph,
     MissingMathTable,
     MalformedFont,

@@ -13,14 +13,13 @@ import org.jetbrains.skia.shaper.TrivialBidiRunIterator
 import org.jetbrains.skia.shaper.TrivialFontRunIterator
 import org.jetbrains.skia.shaper.TrivialLanguageRunIterator
 import org.jetbrains.skia.shaper.TrivialScriptRunIterator
-import org.tiqian.math.core.MathRect
-import org.tiqian.math.core.MathStyle
-import org.tiqian.math.core.MathStyleLevel
-import org.tiqian.math.core.SourceRange
+import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.layout.MathFontFace
+import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathGlyph
 import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.layout.ResolvedMathSymbol
 import kotlin.math.max
 
 /**
@@ -42,6 +41,23 @@ class SkiaMathFontFace(
         } finally {
             data.close()
         }
+    }
+
+    override fun resolveSymbol(
+        request: MathSymbolGlyphRequest,
+        fontSizePx: Float,
+    ): ResolvedMathSymbol {
+        val selection = resolveBackendScalar(request)
+        return ResolvedMathSymbol(
+            run = shape(
+                unicodeScalarString(selection.scalar),
+                fontSizePx,
+                request.style,
+                request.sourceRange,
+            ),
+            backendScalar = selection.scalar,
+            supported = selection.supported,
+        )
     }
 
     override fun shape(
@@ -153,5 +169,25 @@ class SkiaMathFontFace(
         }
 
         override fun commitLine() = Unit
+    }
+
+    private data class BackendScalarSelection(val scalar: Int, val supported: Boolean)
+
+    private fun resolveBackendScalar(request: MathSymbolGlyphRequest): BackendScalarSelection {
+        if (request.alphabet == MathAlphabet.MathNormal) {
+            val scalar = if (request.family == MathFamily.Letters) {
+                encodeMathAlphabetScalar(request.identity.baseScalar, MathAlphabet.Italic)
+                    ?: request.identity.baseScalar
+            } else {
+                request.identity.baseScalar
+            }
+            return BackendScalarSelection(scalar, supported = true)
+        }
+        if (request.alphabet == MathAlphabet.Roman) {
+            return BackendScalarSelection(request.identity.baseScalar, supported = true)
+        }
+        val scalar = encodeMathAlphabetScalar(request.identity.baseScalar, request.alphabet)
+            ?: return BackendScalarSelection(request.identity.baseScalar, supported = false)
+        return BackendScalarSelection(scalar, supported = true)
     }
 }

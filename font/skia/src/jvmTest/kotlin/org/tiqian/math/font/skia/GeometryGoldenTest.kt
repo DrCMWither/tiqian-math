@@ -16,13 +16,13 @@ class GeometryGoldenTest {
     @Test
     fun twoFontGeometryAndDecisionSnapshotMatchesReviewedGolden() {
         val actual = buildString {
-            appendLine("geometry-v1")
+            appendLine("geometry-v2")
             listOf(
                 "Lete Sans Math" to LeteSansMath.load(),
                 "STIX Two Math" to StixTwoMath.load(),
             ).forEach { (label, font) -> appendFace(label, font) }
         }.trimEnd()
-        val expected = checkNotNull(javaClass.getResourceAsStream("/goldens/geometry-v1.txt"))
+        val expected = checkNotNull(javaClass.getResourceAsStream("/goldens/geometry-v2.txt"))
             .bufferedReader().use { it.readText() }.trimEnd()
         assertEquals(expected, actual)
     }
@@ -32,8 +32,9 @@ class GeometryGoldenTest {
         SkiaMathFontFace(font).use { face ->
             val engine = MathLayoutEngine(face)
             listOf(
-                GoldenCase("variants", "x+\\mathrm{x}+\\alpha+2", MathMode.Inline, 40f),
-                GoldenCase("group", "a{b}c", MathMode.Inline, 40f),
+                GoldenCase("symbols", "x+\\mathrm{x}+\\alpha+\\Gamma+2", MathMode.Inline, 40f),
+                GoldenCase("group", "a{+}b", MathMode.Inline, 40f),
+                GoldenCase("style", "{\\scriptstyle x+y}z", MathMode.Inline, 40f),
                 GoldenCase("tight", "x_{k-1}", MathMode.Inline, 40f),
                 GoldenCase("cramped", "\\frac{a}{x^{y^z}}", MathMode.Inline, 40f),
                 GoldenCase("script-binomial", "\\frac{a}{\\binom{n}{k}}", MathMode.Inline, 40f),
@@ -47,13 +48,24 @@ class GeometryGoldenTest {
                         "fragments=${result.fragments.size} breaks=${result.breakOpportunities.size} diagnostics=${result.diagnostics.map { it.code }}",
                 )
                 when (case.id) {
-                    "variants" -> appendLine(
-                        "  evidence=" + result.decisions.filter { it.name == "MathVariantGlyphSelection" }
+                    "symbols" -> appendLine(
+                        "  evidence=" + result.decisions.filter { it.name == "TeXMathSymbolResolution" }
                             .joinToString(",") {
-                                "${it.details["semantic"]}:${it.details["variant"]}/${it.details["glyphIds"]}"
+                                "${it.details["identity"]}:${it.details["declaredFamily"]}/${it.details["familyBinding"]}/" +
+                                    "${it.details["declaredAlphabet"]}->${it.details["resolvedFamily"]}/" +
+                                    "${it.details["resolvedAlphabet"]}/${it.details["backendScalar"]}/${it.details["glyphIds"]}"
                             },
                     )
-                    "group" -> appendLine("  evidence=${result.decisions.filter { it.name == "TransparentMathGroup" }.map { "${it.range.start}..${it.range.endExclusive}" }}")
+                    "group" -> appendLine(
+                        "  evidence=" + result.decisions.filter {
+                            it.name == "TeXOrdSubMlist" || it.name == "TeXBinaryAtomReclassification"
+                        }.joinToString(",") { "${it.name}:${it.range.start}..${it.range.endExclusive}:${it.details}" },
+                    )
+                    "style" -> appendLine(
+                        "  evidence=" + result.decisions.filter {
+                            it.name == "TeXMathStyleDeclaration" || it.name == "TeXOrdSubMlist"
+                        }.joinToString(",") { "${it.name}:${it.range.start}..${it.range.endExclusive}:${it.details}" },
+                    )
                     "tight" -> appendLine(
                         "  evidence=" + result.decisions.filter { it.name == "TeXMathAtomSpacing" }
                             .joinToString(",") { "${it.range.start}..${it.range.endExclusive}:${it.details["table"]}/${it.details["kind"]}" },

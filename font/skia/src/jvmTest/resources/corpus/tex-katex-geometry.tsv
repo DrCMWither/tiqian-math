@@ -1,6 +1,6 @@
 # KaTeX comparison revision and MIT attribution: /THIRD_PARTY_NOTICES.md
 # id	source	oracle	invariant
-group-transparency	a{b}c	TeX ordinary group; KaTeX atom list	braces do not create an Inner atom or extra glue
+ordinary-sub-mlist	a{+}b	TeX ordinary sub-mlist noad; KaTeX ord group	group is one Ord atom and edge Bin becomes Ord internally
 tight-spacing	x_{k-1}	KaTeX spacingData tight table	binary glue is suppressed in ScriptCramped
 cramped-superscript	\frac{a}{x^{y^z}}	KaTeX Style.sup [S,Sc,S,Sc,SS,SSc,SS,SSc]	nested denominator superscripts remain ScriptScriptCramped
 script-binomial	\frac{a}{\binom{n}{k}}	TeX style transitions; OpenType MATH variants	ScriptCramped delimiters use base-glyph construction coverage

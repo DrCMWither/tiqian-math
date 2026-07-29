@@ -7,7 +7,11 @@ import org.jetbrains.skia.Point
 import org.jetbrains.skia.Surface
 import org.jetbrains.skia.TextBlobBuilder
 import org.tiqian.math.core.DiagnosticCode
+import org.tiqian.math.core.MathAlphabet
+import org.tiqian.math.core.MathFamily
+import org.tiqian.math.core.MathNamedSymbol
 import org.tiqian.math.core.MathRect
+import org.tiqian.math.core.MathSymbolIdentity
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
@@ -15,71 +19,152 @@ import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathFontFace
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathGlyph
 import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.layout.ResolvedMathSymbol
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
-class MathVariantGlyphTest {
+class MathSymbolResolutionTest {
     @Test
     fun bothFacesUseRealItalicCmapGlyphsAndPreserveUprightClasses() = withFaces { label, face ->
         val engine = MathLayoutEngine(face)
         val italicX = engine.layout("x", MathLayoutOptions(fontSizePx = 48f))
         val uprightX = engine.layout("\\mathrm{x}", MathLayoutOptions(fontSizePx = 48f))
         val explicitX = engine.layout("𝑥", MathLayoutOptions(fontSizePx = 48f))
+        val romanExplicitX = engine.layout("\\mathrm{𝑥}", MathLayoutOptions(fontSizePx = 48f))
         val italicAlpha = engine.layout("\\alpha", MathLayoutOptions(fontSizePx = 48f))
+        val explicitItalicAlpha = engine.layout("𝛼", MathLayoutOptions(fontSizePx = 48f))
+        val romanScope = engine.layout("\\mathrm{\\alpha x}", MathLayoutOptions(fontSizePx = 48f))
         val uprightAlpha = face.shape("α", 48f, MathStyle.Text, SourceRange(0, 1))
 
         assertTrue(italicX.diagnostics.isEmpty(), "$label: ${italicX.diagnostics}")
         assertNotEquals(uprightX.box.glyphs.single().glyphId, italicX.box.glyphs.single().glyphId, "$label x")
         assertEquals(italicX.box.glyphs.single().glyphId, explicitX.box.glyphs.single().glyphId, "$label explicit x")
+        assertEquals(uprightX.box.glyphs.single().glyphId, romanExplicitX.box.glyphs.single().glyphId, "$label explicit x follows same mathrm pipeline")
         assertNotEquals(uprightAlpha.glyphs.single().glyphId, italicAlpha.box.glyphs.single().glyphId, "$label alpha")
+        assertEquals(italicAlpha.box.glyphs.single().glyphId, explicitItalicAlpha.box.glyphs.single().glyphId, "$label explicit alpha semantic normalization")
+        assertEquals(italicAlpha.box.glyphs.single().glyphId, romanScope.box.glyphs[0].glyphId, "$label fixed alpha ignores mathrm")
+        assertEquals(uprightX.box.glyphs.single().glyphId, romanScope.box.glyphs[1].glyphId, "$label variable x follows mathrm")
 
         val controls = engine.layout("2+()=\\Gamma", MathLayoutOptions(fontSizePx = 48f))
-        listOf("2", "+", "(", ")", "=", "Γ").forEach { text ->
+        listOf("2", "+", "(", ")", "=", "Γ").zip(
+            controls.decisions.filter { it.name == "TeXMathSymbolResolution" },
+        ).forEach { (text, decision) ->
             val expected = face.shape(text, 48f, MathStyle.Text, SourceRange(0, text.length)).glyphs.single().glyphId
-            val actual = controls.box.glyphs.first { glyph ->
-                val selected = controls.decisions.firstOrNull { decision ->
-                    decision.name == "MathVariantGlyphSelection" &&
-                        decision.details["semantic"] == text &&
-                        decision.details["glyphIds"] == glyph.glyphId.toString()
-                }
-                selected != null
-            }.glyphId
+            val actual = decision.details.getValue("glyphIds").toUShort()
             assertEquals(expected, actual, "$label upright $text")
         }
-        assertTrue(italicX.debugDump.contains("variant=DefaultVariableItalic"))
-        assertTrue(uprightX.debugDump.contains("variant=Upright"))
+        val italicDecision = italicX.decisions.single { it.name == "TeXMathSymbolResolution" }
+        assertEquals("latin-x", italicDecision.details["identity"])
+        assertEquals("Letters", italicDecision.details["resolvedFamily"])
+        assertEquals("MathNormal", italicDecision.details["resolvedAlphabet"])
+        assertEquals("U+1D465", italicDecision.details["backendScalar"])
+        val uprightDecision = uprightX.decisions.single { it.name == "TeXMathSymbolResolution" }
+        assertEquals("Operators", uprightDecision.details["resolvedFamily"])
+        assertEquals("Roman", uprightDecision.details["resolvedAlphabet"])
+        assertEquals("U+0078", uprightDecision.details["backendScalar"])
+        val romanExplicitDecision = romanExplicitX.decisions.single { it.name == "TeXMathSymbolResolution" }
+        assertEquals("Italic", romanExplicitDecision.details["declaredAlphabet"])
+        assertEquals("Roman", romanExplicitDecision.details["resolvedAlphabet"])
+    }
+
+    @Test
+    fun correctedTeXSymbolIdentitiesReachTheBackendForBothFaces() = withFaces { label, face ->
+        val source = "-*/:!?\\{\\}\\epsilon\\varepsilon\\phi\\varphi"
+        val result = MathLayoutEngine(face).layout(source, MathLayoutOptions(fontSizePx = 48f))
+        assertTrue(result.diagnostics.isEmpty(), "$label: ${result.diagnostics}")
+        val decisions = result.decisions.filter { it.name == "TeXMathSymbolResolution" }
+        assertEquals(
+            listOf(
+                "U+2212" to "Binary",
+                "U+2217" to "Binary",
+                "U+002F" to "Ordinary",
+                "U+003A" to "Relation",
+                "U+0021" to "Closing",
+                "U+003F" to "Closing",
+                "U+007B" to "Opening",
+                "U+007D" to "Closing",
+                "U+1D716" to "Ordinary",
+                "U+1D700" to "Ordinary",
+                "U+1D719" to "Ordinary",
+                "U+1D711" to "Ordinary",
+            ),
+            decisions.map { it.details.getValue("backendScalar") to it.details.getValue("atomClass") },
+            label,
+        )
     }
 
     @Test
     fun missingItalicGlyphIsDiagnosedWithoutPerGlyphFallback() {
         SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
             val rejecting = object : MathFontFace by delegate {
-                override fun shape(
-                    text: String,
+                override fun resolveSymbol(
+                    request: MathSymbolGlyphRequest,
                     fontSizePx: Float,
-                    style: MathStyle,
-                    sourceRange: SourceRange,
-                ): MeasuredMathRun = if (text == "𝑥") {
-                    MeasuredMathRun(
+                ): ResolvedMathSymbol = if (
+                    request.identity == MathSymbolIdentity.LatinLetter('x') &&
+                    request.family == MathFamily.Letters &&
+                    request.alphabet == MathAlphabet.MathNormal
+                ) {
+                    ResolvedMathSymbol(MeasuredMathRun(
                         glyphs = listOf(MeasuredMathGlyph(0u, 0f, 0f, MathRect(0f, 0f, 0f, 0f))),
                         width = 0f,
                         ascent = 0f,
                         descent = 0f,
                         missingGlyph = true,
-                    )
+                    ), 0x1D465, supported = true)
                 } else {
-                    delegate.shape(text, fontSizePx, style, sourceRange)
+                    delegate.resolveSymbol(request, fontSizePx)
                 }
             }
             val result = MathLayoutEngine(rejecting).layout("x")
             assertEquals(0u, result.box.glyphs.single().glyphId)
             assertTrue(result.diagnostics.any { it.code == DiagnosticCode.MissingGlyph })
-            assertTrue(result.debugDump.contains("glyphText=𝑥"))
+            assertTrue(result.debugDump.contains("backendScalar=U+1D465"))
         }
+    }
+
+    @Test
+    fun recognizedExplicitAlphabetsResolveOnlyAtTheFontBoundary() = withFaces { label, face ->
+        listOf(
+            "𝐱" to "U+1D431",
+            "𝛂" to "U+1D6C2",
+            "𝒙" to "U+1D499",
+            "𝗑" to "U+1D5D1",
+        ).forEach { (source, expectedScalar) ->
+            val result = MathLayoutEngine(face).layout(source, MathLayoutOptions(fontSizePx = 48f))
+            assertTrue(result.diagnostics.isEmpty(), "$label/$source: ${result.diagnostics}")
+            val decision = result.decisions.single { it.name == "TeXMathSymbolResolution" }
+            assertEquals(expectedScalar, decision.details["backendScalar"], "$label/$source")
+            val expectedGlyph = face.shape(
+                source,
+                48f,
+                MathStyle.Text,
+                SourceRange(0, source.length),
+            ).glyphs.single().glyphId
+            assertEquals(expectedGlyph, result.box.glyphs.single().glyphId, "$label/$source glyph")
+        }
+    }
+
+    @Test
+    fun unsupportedAlphabetAndSymbolPairsAreExplicitAtTheFontBoundary() = withFaces { label, face ->
+        val resolved = face.resolveSymbol(
+            MathSymbolGlyphRequest(
+                identity = MathSymbolIdentity.Named(MathNamedSymbol.Plus),
+                family = MathFamily.Operators,
+                alphabet = MathAlphabet.BoldItalic,
+                style = MathStyle.Text,
+                sourceRange = SourceRange(0, 1),
+            ),
+            48f,
+        )
+        assertFalse(resolved.supported, label)
+        assertEquals('+'.code, resolved.backendScalar, label)
     }
 
     @Test
