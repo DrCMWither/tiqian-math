@@ -244,7 +244,7 @@ class MathOperatorNoadTest {
     }
 
     @Test
-    fun heterogeneousAssemblyGlyphOriginsFollowAdvanceOffsetsNotInkBottoms() {
+    fun heterogeneousAssemblyGlyphBottomsFollowAdvanceOffsets() {
         SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
             val size = 40f
             val range = SourceRange(0, 4)
@@ -303,14 +303,25 @@ class MathOperatorNoadTest {
             )
             assertNear(
                 expectedOriginDelta,
+                upperPlacement.inkBounds.bottom - lowerPlacement.inkBounds.bottom,
+                "component bottom distance comes from the assembly advance offset",
+            )
+            val expectedBaselineDelta = expectedOriginDelta -
+                (parenthesisMetrics.inkBounds.bottom - operatorMetrics.inkBounds.bottom)
+            assertNear(
+                expectedBaselineDelta,
                 upperPlacement.baselineY - lowerPlacement.baselineY,
-                "component origin distance comes only from the assembly advance offset",
+                "different glyph bottoms require different baseline conversion",
             )
             assertNear(
                 overriddenFont.scaleDesignUnits(construction.advanceMeasurement, size),
                 result.operatorDecision().float("achievedAdvancePx"),
                 "reported construction advance stays tied to the assembly offsets",
             )
+            val constructionDecision = result.decisions.first { it.name == "OpenTypeOperatorConstruction" }
+            assertEquals("shared-left/bottom", constructionDecision.details["placementOrigin"])
+            assertEquals("MathMLCore5.3.1LeftBottom", constructionDecision.details["placementPolicy"])
+            assertTrue(constructionDecision.details["componentBottomOriginsPx"].orEmpty().contains(','))
         }
     }
 

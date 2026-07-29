@@ -564,20 +564,19 @@ private class MathLayoutPass(
             "extenderRepetitions" to construction.extenderRepetitions,
             "connectorOverlapsDesignUnits" to construction.connectorOverlaps,
             "assemblyItalicCorrectionDesignUnits" to construction.assemblyItalicCorrection,
-            "componentBaselineOriginsPx" to construction.components.joinToString(",") {
-                (-glyphSource.mathFont.scaleDesignUnits(it.offset, size)).toString()
-            },
-            "placementOrigin" to if (
-                construction.kind == MathConstructionKind.Assembly
-            ) "shared-left/advance-offset" else "glyph-baseline",
+            "componentBottomOriginsPx" to placed.componentBottomOriginsPx.joinToString(","),
+            "componentBaselineOriginsPx" to placed.componentBaselineOriginsPx.joinToString(","),
+            "placementOrigin" to placed.placementOrigin,
+            "placementPolicy" to "MathMLCore5.3.1LeftBottom",
         )
         return geometryExtents(placed.width, placed.glyphs, emptyList(), node.range)
     }
 
     /**
-     * Places vertical MATH construction parts at their advance offsets. The offset is a glyph
-     * origin, so ink bounds can describe any top/bottom overhang without changing connector
-     * distances. Horizontal centering is retained only for the existing delimiter-box policy.
+     * MathML Core 5.3.1 places a vertical assembly part by its glyph-bounds (left, bottom),
+     * while a ready-made variant retains normal baseline shaping. OpenType part offsets are
+     * bottom-to-top advance coordinates; converting each bottom to a baseline preserves the
+     * connector distances even when component glyph bottoms differ.
      */
     private fun placeVerticalConstruction(
         construction: MathVerticalConstruction,
@@ -588,24 +587,43 @@ private class MathLayoutPass(
         centerComponentsHorizontally: Boolean,
     ): PlacedVerticalConstruction {
         val width = componentRuns.maxOfOrNull { it.second.width } ?: 0f
+        val assembly = construction.kind == MathConstructionKind.Assembly
+        val bottomOrigins = mutableListOf<Float>()
+        val baselineOrigins = mutableListOf<Float>()
         val placements = componentRuns.flatMap { (component, run) ->
-            val componentX = if (centerComponentsHorizontally) (width - run.width) / 2f else 0f
-            val baselineY = -glyphSource.mathFont.scaleDesignUnits(component.offset, size)
+            val componentBottomY = -glyphSource.mathFont.scaleDesignUnits(component.offset, size)
+            if (assembly) bottomOrigins += componentBottomY
             run.glyphs.map { glyph ->
-                val x = componentX + glyph.x
+                val componentX = when {
+                    assembly -> -glyph.inkBounds.left
+                    centerComponentsHorizontally -> (width - run.width) / 2f + glyph.x
+                    else -> glyph.x
+                }
+                val baselineY = if (assembly) {
+                    componentBottomY - glyph.inkBounds.bottom
+                } else {
+                    0f
+                }
+                baselineOrigins += baselineY
                 MathGlyphPlacement(
                     glyphId = glyph.glyphId,
-                    x = x,
+                    x = componentX,
                     baselineY = baselineY,
                     advance = glyph.advance,
-                    inkBounds = glyph.inkBounds.translated(x, baselineY),
+                    inkBounds = glyph.inkBounds.translated(componentX, baselineY),
                     fontSizePx = size,
                     sourceRange = sourceRange,
                     style = style,
                 )
             }
         }
-        return PlacedVerticalConstruction(width, placements)
+        return PlacedVerticalConstruction(
+            width = width,
+            glyphs = placements,
+            componentBottomOriginsPx = bottomOrigins,
+            componentBaselineOriginsPx = baselineOrigins,
+            placementOrigin = if (assembly) "shared-left/bottom" else "normal-glyph-baseline",
+        )
     }
 
     private fun layoutRadical(
@@ -638,36 +656,64 @@ private class MathLayoutPass(
         )
         val ruleThickness = scale(constants.radicalRuleThickness, style)
         val extraAscender = scale(constants.radicalExtraAscender, style)
-        val targetHeight = radicand.height + gapMin + ruleThickness
-        val construction = baseGlyphId?.let {
-            glyphSource.mathFont.verticalConstruction(it, targetHeight, size)
-        }
-        val rawRadical = if (construction == null) {
-            measuredRunBox(baseRun, node.commandRange, style, size)
+        val targetHeight = radicand.inkBounds.height + gapMin + ruleThickness
+        val baseRadical = measuredRunBox(baseRun, node.commandRange, style, size)
+        val baseGlyphHeight = baseRadical.inkBounds.height
+        val baseGlyphCoversTarget = baseGlyphHeight + GEOMETRY_EPSILON_PX >= targetHeight
+        // MathML Core 5.3.2 requires normal shaping before consulting variants. A font's
+        // MathGlyphVariantRecord list is not required to repeat the base glyph.
+        val construction = if (baseGlyphCoversTarget) {
+            null
         } else {
-            val componentRuns = construction.components.map { component ->
-                component to glyphSource.measureGlyph(component.glyphId, size, style, node.commandRange)
-            }
-            val placed = placeVerticalConstruction(
+            baseGlyphId?.let { glyphSource.mathFont.verticalConstruction(it, targetHeight, size) }
+        }
+        val constructionRuns = construction?.components?.map { component ->
+            component to glyphSource.measureGlyph(component.glyphId, size, style, node.commandRange)
+        }
+        val placedConstruction = if (construction == null || constructionRuns == null) {
+            null
+        } else {
+            placeVerticalConstruction(
                 construction = construction,
-                componentRuns = componentRuns,
+                componentRuns = constructionRuns,
                 size = size,
                 style = style,
                 sourceRange = node.commandRange,
                 centerComponentsHorizontally = false,
             )
-            geometryExtents(placed.width, placed.glyphs, emptyList(), node.commandRange)
         }
         val achievedAdvance = construction?.let {
             glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
-        } ?: rawRadical.height
-        val constructionLabel = when {
-            construction == null -> "BaseGlyph"
-            construction.kind == MathConstructionKind.Variant &&
-                construction.components.singleOrNull()?.glyphId == baseGlyphId -> "BaseGlyph"
-            else -> construction.kind.toString()
+        } ?: baseGlyphHeight
+        val rawRadical = if (placedConstruction == null) {
+            baseRadical
+        } else {
+            geometryExtents(
+                placedConstruction.width,
+                placedConstruction.glyphs,
+                emptyList(),
+                node.commandRange,
+            )
         }
-        if (construction == null && achievedAdvance + GEOMETRY_EPSILON_PX < targetHeight) {
+        val radicalGlyphAscent = when (construction?.kind) {
+            MathConstructionKind.Assembly -> achievedAdvance
+            MathConstructionKind.Variant -> constructionRuns!!.single().second.ascent
+            null -> baseRun.ascent
+        }
+        val radicalGlyphDescent = when (construction?.kind) {
+            MathConstructionKind.Assembly -> 0f
+            MathConstructionKind.Variant -> constructionRuns!!.single().second.descent
+            null -> baseRun.descent
+        }
+        val radicalGlyphBlockSize = radicalGlyphAscent + radicalGlyphDescent
+        val constructionLabel = construction?.kind?.toString() ?: "BaseGlyph"
+        val selectionStep = when {
+            baseGlyphCoversTarget -> "NormalGlyphHeight"
+            construction?.kind == MathConstructionKind.Variant -> "MathGlyphVariantRecord"
+            construction?.kind == MathConstructionKind.Assembly -> "GlyphAssembly"
+            else -> "NoCoveringConstruction"
+        }
+        if (!baseGlyphCoversTarget && construction == null) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MissingMathConstruction,
                 "The radical sign has no MATH construction covering ${targetHeight}px",
@@ -682,31 +728,70 @@ private class MathLayoutPass(
             )
         }
 
-        val excess = (achievedAdvance - targetHeight).coerceAtLeast(0f)
-        val actualGap = gapMin + excess / 2f
-        val ruleBottom = radicand.inkBounds.top - actualGap
-        val ruleTop = ruleBottom - ruleThickness
-        val radicalBaselineShift = ruleTop - rawRadical.inkBounds.top
+        // MathML Core 3.3.3.2 first forms the unindexed square-root box B. Its logical
+        // reserve and overbar position use line metrics, while the stretch target above uses
+        // only the radicand ink height. This prevents nested ExtraAscender reserve from
+        // selecting a different radical construction.
+        val unindexedAscent = max(
+            radicand.ascent,
+            -radicand.inkBounds.top + gapMin + ruleThickness + extraAscender,
+        )
+        val unindexedDescent = max(
+            radicand.descent,
+            radicalGlyphBlockSize + extraAscender - unindexedAscent,
+        ).coerceAtLeast(0f)
+        val ruleTopInB = -unindexedAscent + extraAscender
+        val ruleBottomInB = ruleTopInB + ruleThickness
+        val actualGap = radicand.inkBounds.top - ruleBottomInB
+        val radicalBaselineInB = ruleTopInB + radicalGlyphAscent
+        val radicandXInB = rawRadical.width
+        val radicalInB = rawRadical.translated(0f, radicalBaselineInB)
+        val radicandInB = radicand.translated(radicandXInB, 0f)
+        val ruleInB = MathRulePlacement(
+            left = radicandXInB,
+            top = ruleTopInB,
+            right = radicandXInB + radicand.width,
+            bottom = ruleBottomInB,
+            sourceRange = node.commandRange,
+        )
+        val unindexedGeometry = geometryExtents(
+            width = radicandXInB + radicand.width,
+            glyphs = radicalInB.glyphs + radicandInB.glyphs,
+            rules = radicalInB.rules + radicandInB.rules + ruleInB,
+            range = node.range,
+        )
+        val unindexedBox = unindexedGeometry.copy(
+            ascent = unindexedAscent,
+            descent = unindexedDescent,
+        )
 
+        // MathML Core 3.3.3.3 lays out B before the index and clamps both signed kerns.
         val kernBeforeDegree = if (degree == null) 0f else scale(constants.radicalKernBeforeDegree, style)
         val kernAfterDegree = if (degree == null) 0f else scale(constants.radicalKernAfterDegree, style)
-        val degreeX = if (degree == null) null else kernBeforeDegree
-        val radicalX = if (degree == null) 0f else kernBeforeDegree + degree.width + kernAfterDegree
-        val radicandX = radicalX + rawRadical.width
-        val logicalWidth = radicandX + radicand.width
-
-        val shiftedRadical = rawRadical.translated(radicalX, radicalBaselineShift)
-        val shiftedRadicand = radicand.translated(radicandX, 0f)
+        val adjustedKernBeforeDegree = if (degree == null) 0f else max(0f, kernBeforeDegree)
+        val adjustedKernAfterDegree = if (degree == null) 0f else max(-degree.width, kernAfterDegree)
+        val degreeX = if (degree == null) null else adjustedKernBeforeDegree
+        val unindexedX = if (degree == null) {
+            0f
+        } else {
+            adjustedKernBeforeDegree + degree.width + adjustedKernAfterDegree
+        }
+        val logicalWidth = unindexedX + unindexedBox.width
         val degreeRaisePercent = constants.radicalDegreeBottomRaisePercent
-        val degreeBottomY = if (degree == null) {
+        val degreeRaisePx = if (degree == null) {
             null
         } else {
-            shiftedRadical.inkBounds.bottom - rawRadical.height * degreeRaisePercent / 100f
+            unindexedBox.height * degreeRaisePercent / 100f
         }
-        val shiftedDegree = degree?.translated(
-            degreeX!!,
-            degreeBottomY!! - degree.inkBounds.bottom,
-        )
+        val degreeBaselineY = if (degree == null) {
+            null
+        } else {
+            unindexedBox.descent - degreeRaisePx!! - degree.descent
+        }
+        val shiftedUnindexed = unindexedBox.translated(unindexedX, 0f)
+        val shiftedDegree = degree?.translated(degreeX!!, degreeBaselineY!!)
+        val shiftedRadical = radicalInB.translated(unindexedX, 0f)
+        val shiftedRadicand = radicandInB.translated(unindexedX, 0f)
         val coversRadicandBottom =
             shiftedRadical.inkBounds.bottom + GEOMETRY_EPSILON_PX >= shiftedRadicand.inkBounds.bottom
         if (!coversRadicandBottom) {
@@ -717,27 +802,22 @@ private class MathLayoutPass(
                 DiagnosticSeverity.Warning,
             )
         }
-        val rule = MathRulePlacement(
-            left = radicandX,
-            top = ruleTop,
-            right = radicandX + radicand.width,
-            bottom = ruleBottom,
-            sourceRange = node.commandRange,
-        )
-        val degreeBaselineShift = if (degree == null) null else degreeBottomY!! - degree.inkBounds.bottom
         val inkBox = geometryExtentsPreservingLogicalChildren(
             width = logicalWidth,
-            glyphs = shiftedRadical.glyphs + shiftedRadicand.glyphs + shiftedDegree?.glyphs.orEmpty(),
-            rules = shiftedRadical.rules + shiftedRadicand.rules + shiftedDegree?.rules.orEmpty() + rule,
+            glyphs = shiftedUnindexed.glyphs + shiftedDegree?.glyphs.orEmpty(),
+            rules = shiftedUnindexed.rules + shiftedDegree?.rules.orEmpty(),
             range = node.range,
             children = buildList {
-                add(rawRadical to radicalBaselineShift)
-                add(radicand to 0f)
-                degree?.let { add(it to degreeBaselineShift!!) }
+                add(unindexedBox to 0f)
+                degree?.let { add(it to degreeBaselineY!!) }
             },
         )
-        val reservedTop = ruleTop - extraAscender
-        val box = inkBox.copy(ascent = max(inkBox.ascent, -reservedTop))
+        val box = inkBox
+        val rule = shiftedUnindexed.rules.last()
+        val radicalX = unindexedX
+        val radicandX = unindexedX + radicandXInB
+        val degreeLogicalBottomY = if (degree == null) null else degreeBaselineY!! + degree.descent
+        val degreeInkBottomY = shiftedDegree?.inkBounds?.bottom
 
         decision(
             "TeXRadicalNoad",
@@ -762,10 +842,22 @@ private class MathLayoutPass(
             "componentOffsetsDesignUnits" to construction?.components?.joinToString(",") { it.offset.toString() },
             "connectorOverlapsDesignUnits" to construction?.connectorOverlaps,
             "extenderRepetitions" to construction?.extenderRepetitions,
+            "selectionStep" to selectionStep,
+            "selectionPolicy" to "MathMLCore5.3.2NormalGlyphFirst",
+            "targetMetric" to "RadicandInkHeightPlusGapAndRule",
+            "radicandInkHeightPx" to radicand.inkBounds.height,
+            "radicandLogicalHeightPx" to radicand.height,
+            "baseGlyphHeightPx" to baseGlyphHeight,
+            "baseGlyphCoversTarget" to baseGlyphCoversTarget,
             "targetHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
             "reachesTarget" to (achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight),
-            "placementOrigin" to "shared-left/advance-offset",
+            "componentBottomOriginsPx" to placedConstruction?.componentBottomOriginsPx?.joinToString(","),
+            "componentBaselineOriginsPx" to placedConstruction?.componentBaselineOriginsPx?.joinToString(","),
+            "placementOrigin" to (placedConstruction?.placementOrigin ?: "normal-glyph-baseline"),
+            "placementPolicy" to if (
+                construction?.kind == MathConstructionKind.Assembly
+            ) "MathMLCore5.3.1LeftBottom" else "NormalGlyphShaping",
         )
         decision(
             "OpenTypeMathRadical",
@@ -773,19 +865,33 @@ private class MathLayoutPass(
             "style" to style,
             "radicandStyle" to radicandStyle,
             "degreeStyle" to if (degree == null) null else degreeStyle,
+            "unindexedBoxPolicy" to "MathMLCore3.3.3.2",
+            "degreePlacementPolicy" to if (degree == null) null else "MathMLCore3.3.3.3",
             "radicalVerticalGapPx" to gapMin,
             "actualRadicalGapPx" to actualGap,
             "radicalRuleThicknessPx" to ruleThickness,
             "radicalExtraAscenderPx" to extraAscender,
             "radicalKernBeforeDegreePx" to kernBeforeDegree,
             "radicalKernAfterDegreePx" to kernAfterDegree,
+            "adjustedRadicalKernBeforeDegreePx" to adjustedKernBeforeDegree,
+            "adjustedRadicalKernAfterDegreePx" to adjustedKernAfterDegree,
             "radicalDegreeBottomRaisePercent" to degreeRaisePercent,
-            "radicalHeightPx" to rawRadical.height,
+            "radicalGlyphAscentPx" to radicalGlyphAscent,
+            "radicalGlyphDescentPx" to radicalGlyphDescent,
+            "radicalGlyphBlockSizePx" to radicalGlyphBlockSize,
             "targetHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
+            "unindexedAscentPx" to unindexedBox.ascent,
+            "unindexedDescentPx" to unindexedBox.descent,
+            "unindexedBlockSizePx" to unindexedBox.height,
+            "unindexedX" to unindexedX,
             "degreeWidthPx" to degree?.width,
-            "degreeInkBottomBeforePx" to degree?.inkBounds?.bottom,
-            "degreeBottomY" to degreeBottomY,
+            "degreeAscentPx" to degree?.ascent,
+            "degreeDescentPx" to degree?.descent,
+            "degreeRaisePx" to degreeRaisePx,
+            "degreeBaselineY" to degreeBaselineY,
+            "degreeLogicalBottomY" to degreeLogicalBottomY,
+            "degreeInkBottomY" to degreeInkBottomY,
             "degreeX" to degreeX,
             "radicalX" to radicalX,
             "radicandX" to radicandX,
@@ -802,7 +908,7 @@ private class MathLayoutPass(
             "logicalWidthPx" to logicalWidth,
             "visualLeftPx" to box.visualLeft,
             "visualRightPx" to box.visualRight,
-            "reservedTopPx" to reservedTop,
+            "reservedTopPx" to -unindexedBox.ascent,
         )
         return LaidNode(
             node = node,
@@ -1322,7 +1428,20 @@ private class MathLayoutPass(
             construction: MathVerticalConstruction?,
             baseRun: MeasuredMathRun,
         ): MathBox {
-            val rawPlacements = if (construction == null) {
+            val placedConstruction = construction?.let {
+                val componentRuns = it.components.map { component ->
+                    component to glyphSource.measureGlyph(component.glyphId, size, style, node.range)
+                }
+                placeVerticalConstruction(
+                    construction = it,
+                    componentRuns = componentRuns,
+                    size = size,
+                    style = style,
+                    sourceRange = node.range,
+                    centerComponentsHorizontally = true,
+                )
+            }
+            val rawPlacements = if (placedConstruction == null) {
                 baseRun.glyphs.map { glyph ->
                     MathGlyphPlacement(
                         glyphId = glyph.glyphId,
@@ -1336,17 +1455,7 @@ private class MathLayoutPass(
                     )
                 }
             } else {
-                val componentRuns = construction.components.map { component ->
-                    component to glyphSource.measureGlyph(component.glyphId, size, style, node.range)
-                }
-                placeVerticalConstruction(
-                    construction = construction,
-                    componentRuns = componentRuns,
-                    size = size,
-                    style = style,
-                    sourceRange = node.range,
-                    centerComponentsHorizontally = true,
-                ).glyphs
+                placedConstruction.glyphs
             }
             val inkTop = rawPlacements.minOfOrNull { it.inkBounds.top } ?: 0f
             val inkBottom = rawPlacements.maxOfOrNull { it.inkBounds.bottom } ?: 0f
@@ -1357,7 +1466,7 @@ private class MathLayoutPass(
                     inkBounds = placement.inkBounds.translated(0f, centerShift),
                 )
             }
-            val advance = placements.maxOfOrNull { it.x + it.advance } ?: baseRun.width
+            val advance = placedConstruction?.width ?: baseRun.width
             val box = geometryExtents(advance, placements, emptyList(), node.range)
             val achievedAdvance = construction?.let {
                 glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
@@ -1399,6 +1508,7 @@ private class MathLayoutPass(
                 "coversBottom" to coversBottom,
                 "extenderRepetitions" to construction?.extenderRepetitions,
                 "connectorOverlaps" to construction?.connectorOverlaps,
+                "placementOrigin" to (placedConstruction?.placementOrigin ?: "normal-glyph-baseline"),
             )
             return box
         }
@@ -1853,6 +1963,9 @@ private class MathLayoutPass(
     private data class PlacedVerticalConstruction(
         val width: Float,
         val glyphs: List<MathGlyphPlacement>,
+        val componentBottomOriginsPx: List<Float>,
+        val componentBaselineOriginsPx: List<Float>,
+        val placementOrigin: String,
     )
 
     private data class HorizontalItem(

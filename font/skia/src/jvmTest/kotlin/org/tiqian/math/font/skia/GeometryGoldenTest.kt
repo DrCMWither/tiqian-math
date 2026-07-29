@@ -152,6 +152,9 @@ class GeometryGoldenTest {
                                         "${decision.details["degreeStyle"]}/${decision.details["scriptBaseKind"]}"
                                 "OpenTypeRadicalConstruction" ->
                                     "construction:${decision.details["construction"]}/" +
+                                        "${decision.details["selectionStep"]}/" +
+                                        "${decision.details["targetMetric"]}/" +
+                                        "base=${decision.details["baseGlyphCoversTarget"]}/" +
                                         "${decision.details.getValue("targetHeightPx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("achievedAdvancePx").toFloat().fmt()}/" +
                                         "${decision.details["componentGlyphIds"]}/${decision.details["componentOffsetsDesignUnits"]}"
@@ -162,7 +165,12 @@ class GeometryGoldenTest {
                                         "${decision.details.getValue("radicalExtraAscenderPx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("radicalKernBeforeDegreePx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("radicalKernAfterDegreePx").toFloat().fmt()}/" +
+                                        "adjusted=${decision.details.getValue("adjustedRadicalKernBeforeDegreePx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("adjustedRadicalKernAfterDegreePx").toFloat().fmt()}/" +
                                         "${decision.details["radicalDegreeBottomRaisePercent"]}/" +
+                                        "B=${decision.details.getValue("unindexedAscentPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("unindexedDescentPx").toFloat().fmt()}/" +
+                                        "degreeBaseline=${decision.details["degreeBaselineY"]}/" +
                                         "${decision.details.getValue("logicalWidthPx").toFloat().fmt()}"
                             }
                         },

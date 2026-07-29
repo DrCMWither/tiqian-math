@@ -96,6 +96,8 @@ class MathRadicalNoadTest {
             val inlineGeometry = inline.radicalGeometryDecision()
             val displayGeometry = display.radicalGeometryDecision()
             val indexedGeometry = indexed.radicalGeometryDecision()
+            assertEquals("MathMLCore3.3.3.2", indexedGeometry.details["unindexedBoxPolicy"])
+            assertEquals("MathMLCore3.3.3.3", indexedGeometry.details["degreePlacementPolicy"])
             assertNear(
                 face.mathFont.scaleDesignUnits(face.mathFont.constants.radicalVerticalGap, size),
                 inlineGeometry.float("radicalVerticalGapPx"),
@@ -117,9 +119,14 @@ class MathRadicalNoadTest {
                 "$label degree after kern",
             )
             assertNear(
-                indexedGeometry.float("degreeBottomY"),
+                indexedGeometry.float("degreeInkBottomY"),
                 indexed.box.glyphs.filter { it.sourceRange.start in 6 until 13 }.maxOf { it.inkBounds.bottom },
-                "$label wide descending degree bottom follows named raise percentage",
+                "$label recorded degree ink bottom matches replayed placements",
+            )
+            assertNear(
+                indexedGeometry.float("unindexedDescentPx") - indexedGeometry.float("degreeRaisePx"),
+                indexedGeometry.float("degreeLogicalBottomY"),
+                "$label degree bottom is based on B line descent and block size",
             )
             val scriptSize = size * face.mathFont.constants.scriptPercentScaleDown / 100f
             val constructionBase = face.shapeConstructionBase("√", scriptSize, SourceRange(3, 8)).glyphs.single().glyphId
@@ -132,10 +139,7 @@ class MathRadicalNoadTest {
             assertTrue(inline.box.glyphs.any { it.sourceRange == commandRange }, "$label radical glyph source")
             assertEquals(commandRange, inline.box.rules.single().sourceRange, "$label radical rule source")
             assertEquals(SourceRange(0, 8), inline.radicalNoadDecision().range, "$label radical noad range")
-            assertTrue(
-                inline.box.ascent + EPSILON >= -inlineGeometry.float("reservedTopPx"),
-                "$label RadicalExtraAscender is retained in the recursive box",
-            )
+            assertNear(-inlineGeometry.float("reservedTopPx"), inline.box.ascent, "$label B line ascent")
             assertTrue(fraction.box.rules.size >= 2, "$label root and fraction rules share LayoutResult")
             assertEquals(2, nested.decisions.count { it.name == "TeXRadicalNoad" }, "$label nested radical noads")
         }
@@ -149,7 +153,7 @@ class MathRadicalNoadTest {
             for (depth in 1..8) {
                 source = "\\frac{$source}{y}"
                 val candidate = MathLayoutEngine(face).layout(
-                    "\\sqrt{$source}",
+                    "\\sqrt[3]{$source}",
                     MathLayoutOptions(MathMode.Display, size),
                 )
                 if (candidate.radicalConstructionDecision().details["construction"] == "Assembly") {
@@ -160,7 +164,8 @@ class MathRadicalNoadTest {
             val result = assertNotNull(assemblyResult, "$label reaches its real radical assembly")
             val construction = result.radicalConstructionDecision()
             assertEquals("Assembly", construction.details["construction"])
-            assertEquals("shared-left/advance-offset", construction.details["placementOrigin"])
+            assertEquals("shared-left/bottom", construction.details["placementOrigin"])
+            assertEquals("MathMLCore5.3.1LeftBottom", construction.details["placementPolicy"])
             assertTrue(construction.details["componentGlyphIds"].orEmpty().contains(','), construction.toString())
             assertTrue(construction.details["componentOffsetsDesignUnits"].orEmpty().contains(','), construction.toString())
             assertTrue(construction.float("achievedAdvancePx") + EPSILON >= construction.float("targetHeightPx"))
@@ -173,6 +178,12 @@ class MathRadicalNoadTest {
                     "$label radical has no raster-scale assembly seam: ${upper.inkBounds} then ${lower.inkBounds}",
                 )
             }
+            val geometry = result.radicalGeometryDecision()
+            assertNear(
+                geometry.float("unindexedDescentPx") - geometry.float("degreeRaisePx"),
+                geometry.float("degreeLogicalBottomY"),
+                "$label tall indexed assembly positions the degree from completed box B",
+            )
         }
 
     @Test
@@ -207,7 +218,7 @@ class MathRadicalNoadTest {
             assertTrue(base.diagnostics.none { it.code == DiagnosticCode.MissingMathConstruction }, base.debugDump)
 
             val variantAdvance = 4_000
-            val variantFont = delegate.mathFont.copy(
+            val constructionWhoseVariantsOmitBase = delegate.mathFont.copy(
                 constants = zeroGeometry,
                 verticalConstructions = delegate.mathFont.verticalConstructions + (
                     rootGlyph to MathGlyphConstruction(
@@ -216,8 +227,18 @@ class MathRadicalNoadTest {
                     )
                 ),
             )
+            val normalGlyph = layout(delegate, constructionWhoseVariantsOmitBase, "\\sqrt{x}", size)
+            assertEquals("BaseGlyph", normalGlyph.radicalConstructionDecision().details["construction"])
+            assertEquals("NormalGlyphHeight", normalGlyph.radicalConstructionDecision().details["selectionStep"])
+            assertEquals("true", normalGlyph.radicalConstructionDecision().details["baseGlyphCoversTarget"])
+            assertTrue(normalGlyph.box.glyphs.none { it.glyphId == otherGlyph && it.sourceRange == range })
+
+            val variantFont = constructionWhoseVariantsOmitBase.copy(
+                constants = zeroGeometry.copy(radicalVerticalGap = 2_000),
+            )
             val variant = layout(delegate, variantFont, "\\sqrt{x}", size)
             assertEquals("Variant", variant.radicalConstructionDecision().details["construction"])
+            assertEquals("MathGlyphVariantRecord", variant.radicalConstructionDecision().details["selectionStep"])
             assertTrue(variant.box.glyphs.any { it.glyphId == otherGlyph && it.sourceRange == range })
 
             val assembly = MathGlyphAssembly(
@@ -228,7 +249,7 @@ class MathRadicalNoadTest {
                 minimumConnectorOverlap = 100,
             )
             val assemblyFont = delegate.mathFont.copy(
-                constants = zeroGeometry.copy(radicalVerticalGap = 500),
+                constants = zeroGeometry.copy(radicalVerticalGap = 1_000),
                 verticalConstructions = delegate.mathFont.verticalConstructions + (
                     rootGlyph to MathGlyphConstruction(emptyList(), assembly)
                 ),
@@ -250,10 +271,18 @@ class MathRadicalNoadTest {
             )
             assertNear(
                 expectedOriginDelta,
+                otherPlacement.inkBounds.bottom - rootPlacement.inkBounds.bottom,
+                "heterogeneous radical component bottoms follow MATH advance offsets",
+            )
+            val expectedBaselineDelta = expectedOriginDelta -
+                (otherMetrics.inkBounds.bottom - rootMetrics.inkBounds.bottom)
+            assertNear(
+                expectedBaselineDelta,
                 otherPlacement.baselineY - rootPlacement.baselineY,
-                "heterogeneous radical component origins follow MATH advance offsets",
+                "component bottoms, not baselines, are the assembly placement origins",
             )
             assertTrue(assembled.radicalConstructionDecision().details["connectorOverlapsDesignUnits"].orEmpty() != "[]")
+            assertEquals("shared-left/bottom", assembled.radicalConstructionDecision().details["placementOrigin"])
 
             val insufficientFont = delegate.mathFont.copy(
                 constants = zeroGeometry.copy(radicalVerticalGap = 2_000),
@@ -264,6 +293,53 @@ class MathRadicalNoadTest {
             val insufficient = layout(delegate, insufficientFont, "\\sqrt{x}", size)
             assertTrue(insufficient.diagnostics.any { it.code == DiagnosticCode.MathVariantTooShort })
             assertEquals("false", insufficient.radicalConstructionDecision().details["reachesTarget"])
+        }
+    }
+
+    @Test
+    fun logicalReserveDoesNotLeakIntoTheInkBasedStretchTarget() {
+        SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
+            val size = 72f
+            val source = "\\sqrt{\\sqrt{x}}"
+            val outerCommandRange = SourceRange(0, 5)
+            val zero = delegate.mathFont.constants.copy(
+                radicalVerticalGap = 0,
+                radicalDisplayStyleVerticalGap = 0,
+                radicalRuleThickness = 0,
+                radicalExtraAscender = 0,
+            )
+            val withoutReserve = layout(delegate, delegate.mathFont.copy(constants = zero), source, size)
+            val withReserve = layout(
+                delegate,
+                delegate.mathFont.copy(constants = zero.copy(radicalExtraAscender = 3_000)),
+                source,
+                size,
+            )
+            val baseChoice = withoutReserve.decisions.single {
+                it.name == "OpenTypeRadicalConstruction" && it.range == outerCommandRange
+            }
+            val reservedChoice = withReserve.decisions.single {
+                it.name == "OpenTypeRadicalConstruction" && it.range == outerCommandRange
+            }
+            assertEquals("RadicandInkHeightPlusGapAndRule", baseChoice.details["targetMetric"])
+            assertEquals("MathMLCore5.3.2NormalGlyphFirst", baseChoice.details["selectionPolicy"])
+            assertNear(
+                baseChoice.float("radicandInkHeightPx"),
+                reservedChoice.float("radicandInkHeightPx"),
+                "inner radical keeps identical visible ink",
+            )
+            assertTrue(
+                reservedChoice.float("radicandLogicalHeightPx") >
+                    baseChoice.float("radicandLogicalHeightPx") + 100f,
+                "fixture must alter only the recursive logical reserve",
+            )
+            assertNear(
+                baseChoice.float("targetHeightPx"),
+                reservedChoice.float("targetHeightPx"),
+                "logical reserve does not enter radical stretch target",
+            )
+            assertEquals(baseChoice.details["construction"], reservedChoice.details["construction"])
+            assertEquals(baseChoice.details["componentGlyphIds"], reservedChoice.details["componentGlyphIds"])
         }
     }
 
@@ -369,20 +445,53 @@ class MathRadicalNoadTest {
                 size,
             )
             assertNear(
-                -0.8f * raised.float("radicalHeightPx"),
-                raised.float("degreeBottomY") - indexedBase.float("degreeBottomY"),
+                -0.8f * raised.float("unindexedBlockSizePx"),
+                raised.float("degreeLogicalBottomY") - indexedBase.float("degreeLogicalBottomY"),
                 "RadicalDegreeBottomRaisePercent",
+            )
+
+            val indexedRaiseBase = radicalGeometry(
+                delegate,
+                zero.copy(radicalDegreeBottomRaisePercent = 60),
+                MathMode.Inline,
+                "\\sqrt[3]{x}",
+                size,
+            )
+            val indexedWithAscender = radicalGeometry(
+                delegate,
+                zero.copy(
+                    radicalExtraAscender = 3_000,
+                    radicalDegreeBottomRaisePercent = 60,
+                ),
+                MathMode.Inline,
+                "\\sqrt[3]{x}",
+                size,
+            )
+            assertTrue(
+                indexedWithAscender.float("unindexedBlockSizePx") >
+                    indexedRaiseBase.float("unindexedBlockSizePx"),
+                "RadicalExtraAscender must enlarge the already-built box B",
+            )
+            assertNear(
+                indexedWithAscender.float("unindexedDescentPx") -
+                    indexedWithAscender.float("degreeRaisePx"),
+                indexedWithAscender.float("degreeLogicalBottomY"),
+                "degree uses B line descent after ExtraAscender is applied",
+            )
+            assertTrue(
+                indexedWithAscender.float("degreeBaselineY") < indexedRaiseBase.float("degreeBaselineY"),
+                "larger B block size raises the index",
             )
         }
     }
 
     @Test
-    fun degreeOverhangStaysVisualAndDoesNotBecomeFixedLogicalPadding() {
+    fun signedDegreeKernsAreClampedBeforeLogicalWidthAndPlacement() {
         SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
             val size = 50f
             val constants = delegate.mathFont.constants.copy(
                 radicalKernBeforeDegree = -1_200,
-                radicalKernAfterDegree = 0,
+                radicalKernAfterDegree = -5_000,
             )
             val result = layout(
                 delegate,
@@ -391,9 +500,17 @@ class MathRadicalNoadTest {
                 size,
             )
             val geometry = result.radicalGeometryDecision()
-            assertNear(-60f, geometry.float("degreeX"), "synthetic negative degree kern")
-            assertTrue(result.box.visualLeft < 0f, result.debugDump)
-            assertNear(geometry.float("logicalWidthPx"), result.box.width, "visual overhang does not widen advance")
+            assertNear(-60f, geometry.float("radicalKernBeforeDegreePx"), "raw signed before kern remains auditable")
+            assertNear(0f, geometry.float("adjustedRadicalKernBeforeDegreePx"), "before kern clamps to zero")
+            assertNear(0f, geometry.float("degreeX"), "index starts at adjusted before kern")
+            assertNear(
+                -geometry.float("degreeWidthPx"),
+                geometry.float("adjustedRadicalKernAfterDegreePx"),
+                "after kern cannot overlap more than the complete index width",
+            )
+            assertNear(0f, geometry.float("unindexedX"), "fully overlapping index leaves B at logical origin")
+            assertTrue(result.box.width >= 0f, result.debugDump)
+            assertNear(geometry.float("logicalWidthPx"), result.box.width, "clamped width is the public advance")
             assertEquals("0.0", result.radicalNoadDecision().details["italicCorrectionPx"])
         }
     }
