@@ -38,9 +38,24 @@ class NativeMathMlOracleTest {
     private fun compareFormula(actual: MathLayoutResult, oracle: OracleRow) {
         assertTrue(actual.diagnostics.isEmpty(), "$oracle: ${actual.diagnostics}")
         // Chrome and Skia expose slightly different fractional advances, while both consume
-        // the same font. Keep the reviewed comparison within one eighth em, not an exact clone.
+        // the same font. Native MathML does not expose TeX's terminal italic-correction kern,
+        // so compare the shared nucleus width rather than erasing that named TeX geometry.
         if (oracle.case != "ruleless-stack") {
-            assertNearCssPixel(oracle.width, actual.box.width, 5.0f, "$oracle logical width")
+            val terminalCorrection = actual.fragments.lastOrNull()?.trailingItalicCorrectionPx ?: 0f
+            val adjacencyExtras = if (oracle.case == "fraction-adjacency") {
+                val nullDelimiters = actual.decisions.single { it.name == "TeXFractionNullDelimiters" }
+                actual.fragments.first().trailingItalicCorrectionPx +
+                    nullDelimiters.details.getValue("leftSpacePx").toFloat() +
+                    nullDelimiters.details.getValue("rightSpacePx").toFloat()
+            } else {
+                0f
+            }
+            assertNearCssPixel(
+                oracle.width,
+                actual.box.width - terminalCorrection - adjacencyExtras,
+                5.0f,
+                "$oracle logical nucleus width",
+            )
         }
         // Chrome and Skia choose slightly different absolute script shifts; the reviewed
         // relative gaps and baselines below are correspondingly much tighter.
@@ -114,10 +129,14 @@ class NativeMathMlOracleTest {
                     .all { it.details["kind"] == "None" }, "$oracle fraction noad has no adjacent thin glue")
                 val left = actual.exactGlyphAt(actual.source.indexOf('a'))
                 val right = actual.exactGlyphAt(actual.source.lastIndexOf('d'))
+                val leftCorrection = actual.fragments.first().trailingItalicCorrectionPx
+                val nullDelimiters = actual.decisions.single { it.name == "TeXFractionNullDelimiters" }
+                val nullDelimiterWidth = nullDelimiters.details.getValue("leftSpacePx").toFloat() +
+                    nullDelimiters.details.getValue("rightSpacePx").toFloat()
                 oracle.assertProbe("leftRight", left.x + left.advance, 0.1f)
                 oracle.assertProbe("fracLeft", left.x + left.advance, 0.1f)
-                oracle.assertProbe("fracRight", right.x, 2f)
-                oracle.assertProbe("rightLeft", right.x, 2f)
+                oracle.assertProbe("fracRight", right.x - leftCorrection - nullDelimiterWidth, 2f)
+                oracle.assertProbe("rightLeft", right.x - leftCorrection - nullDelimiterWidth, 2f)
             }
             "ruleless-stack" -> {
                 val delimiters = actual.decisions.filter { it.name == "BinomialDelimiter" }
@@ -138,8 +157,18 @@ class NativeMathMlOracleTest {
     private fun compareItalicUpright(engine: MathLayoutEngine, oracle: OracleRow) {
         val italic = engine.layout("x", MathLayoutOptions(fontSizePx = 40f))
         val upright = engine.layout("\\mathrm{x}", MathLayoutOptions(fontSizePx = 40f))
-        assertNearCssPixel(oracle.probes.getValue("italicWidth"), italic.box.width, 1.0f, "$oracle italic x")
-        assertNearCssPixel(oracle.probes.getValue("uprightWidth"), upright.box.width, 1.0f, "$oracle upright x")
+        assertNearCssPixel(
+            oracle.probes.getValue("italicWidth"),
+            italic.box.width - italic.fragments.single().trailingItalicCorrectionPx,
+            1.0f,
+            "$oracle italic x nucleus",
+        )
+        assertNearCssPixel(
+            oracle.probes.getValue("uprightWidth"),
+            upright.box.width - upright.fragments.single().trailingItalicCorrectionPx,
+            1.0f,
+            "$oracle upright x nucleus",
+        )
         assertFalse(italic.box.glyphs.single().glyphId == upright.box.glyphs.single().glyphId, oracle.toString())
     }
 

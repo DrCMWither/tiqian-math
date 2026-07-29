@@ -21,6 +21,7 @@ import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathRun
 import org.tiqian.math.layout.ResolvedMathSymbol
+import org.tiqian.math.layout.ResolvedMathSymbolRun
 import org.tiqian.math.layout.breakIntoLines
 import kotlin.math.abs
 import kotlin.test.Test
@@ -36,11 +37,13 @@ class MathGeometryAuditTest {
         val plain = engine.layout("abc", MathLayoutOptions(fontSizePx = 40f))
         val grouped = engine.layout("a{b}c", MathLayoutOptions(fontSizePx = 40f))
 
-        assertNear(plain.box.width, grouped.box.width, "$label group logical width")
         assertEquals(plain.box.glyphs.map { it.glyphId }, grouped.box.glyphs.map { it.glyphId })
-        plain.box.glyphs.zip(grouped.box.glyphs).forEachIndexed { index, (expected, actual) ->
-            assertNear(expected.x, actual.x, "$label sub-mlist glyph x[$index]")
-        }
+        assertEquals(1, plain.fragments.size, "$label plain compatible Ord sequence is one shaped run")
+        assertEquals(3, grouped.fragments.size, "$label braces interrupt the outer shaping run")
+        assertTrue(plain.decisions.any {
+            it.name == "TeXCompatibleOrdRunShaping" && it.range == SourceRange(0, 3)
+        })
+        assertTrue(grouped.decisions.none { it.name == "TeXCompatibleOrdRunShaping" })
         assertTrue(grouped.decisions.any { it.name == "TeXOrdSubMlist" })
 
         val parenthesized = engine.layout("(\\frac{a}{b})", MathLayoutOptions(fontSizePx = 40f))
@@ -337,6 +340,11 @@ private class FontOverrideFace(
 ) : MathFontFace {
     override fun resolveSymbol(request: MathSymbolGlyphRequest, fontSizePx: Float): ResolvedMathSymbol =
         delegate.resolveSymbol(request, fontSizePx)
+
+    override fun resolveSymbols(
+        requests: List<MathSymbolGlyphRequest>,
+        fontSizePx: Float,
+    ): ResolvedMathSymbolRun = delegate.resolveSymbols(requests, fontSizePx)
 
     override fun shape(text: String, fontSizePx: Float, style: MathStyle, sourceRange: SourceRange): MeasuredMathRun =
         delegate.shape(text, fontSizePx, style, sourceRange)

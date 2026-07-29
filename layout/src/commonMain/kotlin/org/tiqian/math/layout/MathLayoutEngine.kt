@@ -14,9 +14,17 @@ data class MathLayoutOptions(
     val fontSizePx: Float = 24f,
     /** Primarily for embedding in an existing TeX-style context; null derives from [mode]. */
     val initialStyle: MathStyle? = null,
+    /**
+     * Formula-scoped equivalent of TeX's `\nulldelimiterspace`; fixed across math styles.
+     * Null keeps the plain-TeX 1.2pt-to-10pt proportion at the formula's text size.
+     */
+    val nullDelimiterSpacePx: Float? = null,
 ) {
     init {
         require(fontSizePx > 0f) { "math font size must be positive" }
+        require(nullDelimiterSpacePx == null || nullDelimiterSpacePx >= 0f) {
+            "null delimiter space must not be negative"
+        }
     }
 }
 
@@ -39,9 +47,12 @@ private class MathLayoutPass(
     private val diagnostics = mutableListOf<MathDiagnostic>()
     private val decisions = mutableListOf<MathLayoutDecision>()
     private var baseFontSizePx: Float = 24f
+    private var nullDelimiterSpacePx: Float = 2.88f
 
     fun layout(source: String, options: MathLayoutOptions): MathLayoutResult {
         baseFontSizePx = options.fontSizePx
+        nullDelimiterSpacePx = options.nullDelimiterSpacePx
+            ?: options.fontSizePx * DEFAULT_NULL_DELIMITER_SPACE_EM
         val parsed = parser.parse(source)
         diagnostics += parsed.diagnostics
         val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
@@ -184,12 +195,16 @@ private class MathLayoutPass(
             else -> null
         }
         return if (horizontal != null) {
-            horizontal.laid.copy(
+            val single = horizontal.items.singleOrNull()
+            if (single?.node is MathSymbol) single.laid.copy(
+                node = node,
+                box = single.laid.box.copy(range = node.range),
+            ) else horizontal.laid.copy(
                 node = node,
                 box = horizontal.laid.box.copy(range = node.range),
-                atomClass = horizontal.items.singleOrNull()?.atomClass ?: MathAtomClass.Ordinary,
-                scriptBaseKind = horizontal.items.singleOrNull()?.laid?.scriptBaseKind
-                    ?: ScriptBaseKind.CompoundBox,
+                atomClass = single?.atomClass ?: MathAtomClass.Ordinary,
+                italicCorrectionPx = 0f,
+                scriptBaseKind = single?.laid?.scriptBaseKind ?: ScriptBaseKind.CompoundBox,
             )
         } else {
             layoutNode(node.body, style, override).copy(node = node)
@@ -202,39 +217,21 @@ private class MathLayoutPass(
         alphabetOverride: MathAlphabetOverride?,
     ): LaidNode {
         val size = fontSize(style)
-        val resolvedFamily = if (node.familyBinding == MathFamilyBinding.Variable) {
-            alphabetOverride?.family ?: node.family
-        } else {
-            node.family
-        }
-        val resolvedAlphabet = if (node.familyBinding == MathFamilyBinding.Variable) {
-            alphabetOverride?.alphabet ?: node.alphabet
-        } else {
-            node.alphabet
-        }
-        val resolved = glyphSource.resolveSymbol(
-            MathSymbolGlyphRequest(
-                identity = node.identity,
-                family = resolvedFamily,
-                alphabet = resolvedAlphabet,
-                style = style,
-                sourceRange = node.range,
-            ),
-            size,
-        )
+        val request = symbolRequest(node, style, alphabetOverride)
+        val resolved = glyphSource.resolveSymbol(request, size)
         val run = resolved.run
         if (!resolved.supported) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.UnsupportedMathAlphabet,
                 "The selected formula-wide math face cannot resolve ${node.identity.debugName} " +
-                    "in $resolvedFamily/$resolvedAlphabet",
+                    "in ${request.family}/${request.alphabet}",
                 node.range,
             )
         }
         if (run.missingGlyph) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MissingGlyph,
-                "The selected formula-wide math face has no $resolvedFamily/$resolvedAlphabet glyph " +
+                "The selected formula-wide math face has no ${request.family}/${request.alphabet} glyph " +
                     "for ${node.identity.debugName}",
                 node.range,
             )
@@ -251,11 +248,12 @@ private class MathLayoutPass(
             "familyBinding" to node.familyBinding,
             "declaredFamily" to node.family,
             "declaredAlphabet" to node.alphabet,
-            "resolvedFamily" to resolvedFamily,
-            "resolvedAlphabet" to resolvedAlphabet,
+            "resolvedFamily" to request.family,
+            "resolvedAlphabet" to request.alphabet,
             "backendScalar" to unicodeLabel(resolved.backendScalar),
             "glyphIds" to run.glyphs.joinToString(",") { it.glyphId.toString() },
             "italicCorrectionPx" to italicCorrection,
+            "shaping" to "single-noad",
         )
         val placements = run.glyphs.map { glyph ->
             MathGlyphPlacement(
@@ -282,6 +280,114 @@ private class MathLayoutPass(
             },
         )
     }
+
+    private fun layoutSymbolRun(items: List<PendingHorizontalItem>): HorizontalItem {
+        require(items.size >= 2)
+        val symbols = items.map { it.node as MathSymbol }
+        val style = items.first().style
+        val requests = items.map { symbolRequest(it.node as MathSymbol, it.style, it.alphabetOverride) }
+        val size = fontSize(style)
+        val resolved = glyphSource.resolveSymbols(requests, size)
+        val coveredRange = SourceRange(symbols.first().range.start, symbols.last().range.endExclusive)
+        val finalItalicCorrection = resolved.run.glyphs.lastOrNull()?.glyphId
+            ?.let { glyphSource.mathFont.italicCorrection(it, size) }
+            ?: 0f
+
+        symbols.indices.forEach { index ->
+            val symbol = symbols[index]
+            val request = requests[index]
+            val glyphIds = resolved.run.glyphs.indices
+                .filter { resolved.glyphSourceRanges[it] == symbol.range }
+                .map { resolved.run.glyphs[it].glyphId }
+            if (!resolved.supported[index]) {
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.UnsupportedMathAlphabet,
+                    "The selected formula-wide math face cannot resolve ${symbol.identity.debugName} " +
+                        "in ${request.family}/${request.alphabet}",
+                    symbol.range,
+                )
+            }
+            if (glyphIds.any { it == 0.toUShort() }) {
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.MissingGlyph,
+                    "The selected formula-wide math face has no ${request.family}/${request.alphabet} glyph " +
+                        "for ${symbol.identity.debugName}",
+                    symbol.range,
+                )
+            }
+            decision(
+                "TeXMathSymbolResolution",
+                symbol.range,
+                "sourceText" to symbol.sourceText,
+                "identity" to symbol.identity.debugName,
+                "baseScalar" to unicodeLabel(symbol.identity.baseScalar),
+                "atomClass" to symbol.atomClass,
+                "familyBinding" to symbol.familyBinding,
+                "declaredFamily" to symbol.family,
+                "declaredAlphabet" to symbol.alphabet,
+                "resolvedFamily" to request.family,
+                "resolvedAlphabet" to request.alphabet,
+                "backendScalar" to unicodeLabel(resolved.backendScalars[index]),
+                "glyphIds" to glyphIds.joinToString(","),
+                "italicCorrectionPx" to if (index == symbols.lastIndex) finalItalicCorrection else 0f,
+                "shaping" to "compatible-ord-run",
+            )
+        }
+        val placements = resolved.run.glyphs.mapIndexed { index, glyph ->
+            MathGlyphPlacement(
+                glyphId = glyph.glyphId,
+                x = glyph.x,
+                baselineY = 0f,
+                advance = glyph.advance,
+                inkBounds = glyph.inkBounds.translated(glyph.x, 0f),
+                fontSizePx = size,
+                sourceRange = resolved.glyphSourceRanges[index],
+                style = style,
+            )
+        }
+        val runNode = MathList(symbols, coveredRange)
+        decision(
+            "TeXCompatibleOrdRunShaping",
+            coveredRange,
+            "noadCount" to symbols.size,
+            "family" to requests.first().family,
+            "alphabet" to requests.first().alphabet,
+            "style" to style,
+            "backendScalars" to resolved.backendScalars.joinToString(",") { unicodeLabel(it) },
+            "glyphIds" to resolved.run.glyphs.joinToString(",") { it.glyphId.toString() },
+            "finalItalicCorrectionPx" to finalItalicCorrection,
+            "policy" to "one-shaping-call-final-glyph-correction",
+        )
+        val laid = LaidNode(
+            node = runNode,
+            box = geometryExtents(resolved.run.width, placements, emptyList(), coveredRange),
+            atomClass = MathAtomClass.Ordinary,
+            italicCorrectionPx = finalItalicCorrection,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+        return HorizontalItem(runNode, laid, MathGlueAdjustment.Zero, MathAtomClass.Ordinary)
+    }
+
+    private fun symbolRequest(
+        node: MathSymbol,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): MathSymbolGlyphRequest = MathSymbolGlyphRequest(
+        identity = node.identity,
+        family = if (node.familyBinding == MathFamilyBinding.Variable) {
+            alphabetOverride?.family ?: node.family
+        } else {
+            node.family
+        },
+        alphabet = if (node.familyBinding == MathFamilyBinding.Variable) {
+            alphabetOverride?.alphabet ?: node.alphabet
+        } else {
+            node.alphabet
+        },
+        style = style,
+        sourceRange = node.range,
+    )
 
     private fun layoutScripts(node: MathScripts, style: MathStyle, alphabetOverride: MathAlphabetOverride?): LaidNode {
         val base = layoutNode(node.base, style, alphabetOverride)
@@ -478,7 +584,11 @@ private class MathLayoutPass(
         val denominator = layoutNode(node.denominator, style.fractionDenominator(), alphabetOverride).box
         val display = style.level == MathStyleLevel.Display
         val stack = layoutFractionStack(node, style, numerator, denominator, display)
-        val withDelimiters = if (node.hasParentheses) addBinomialParentheses(stack, node, style) else stack
+        val withDelimiters = if (node.hasParentheses) {
+            addBinomialParentheses(stack, node, style)
+        } else {
+            addNullFractionDelimiters(stack, node)
+        }
         return LaidNode(
             node,
             withDelimiters,
@@ -486,6 +596,24 @@ private class MathLayoutPass(
             0f,
             style,
             ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun addNullFractionDelimiters(stack: MathBox, node: MathFraction): MathBox {
+        val shiftedStack = stack.translated(nullDelimiterSpacePx, 0f)
+        decision(
+            "TeXFractionNullDelimiters",
+            node.range,
+            "leftSpacePx" to nullDelimiterSpacePx,
+            "rightSpacePx" to nullDelimiterSpacePx,
+            "parameter" to "nullDelimiterSpacePx",
+            "styleInvariant" to true,
+        )
+        return geometryExtents(
+            width = stack.width + 2f * nullDelimiterSpacePx,
+            glyphs = shiftedStack.glyphs,
+            rules = shiftedStack.rules,
+            range = node.range,
         )
     }
 
@@ -778,21 +906,15 @@ private class MathLayoutPass(
         }
         val items = spacedItems.mapIndexed { index, item ->
             val rightClass = classes.getOrNull(index + 1)
-            val correction = if (
-                rightClass in uprightInteractionClasses &&
-                item.laid.italicCorrectionPx > 0f
-            ) {
-                item.laid.italicCorrectionPx
-            } else {
-                0f
-            }
+            val correction = item.laid.italicCorrectionPx.coerceAtLeast(0f)
             if (correction > 0f) {
                 decision(
                     "OpenTypeItalicCorrectionBoundary",
                     item.node.range,
                     "rightClass" to rightClass,
                     "correctionPx" to correction,
-                    "policy" to "slanted-run-before-upright-atom",
+                    "owner" to if (item.node is MathList) "compatible-ord-run-final-glyph" else "character-noad",
+                    "policy" to "nucleus-owned-not-next-atom-classified",
                 )
             }
             item.copy(trailingItalicCorrectionPx = correction)
@@ -814,7 +936,7 @@ private class MathLayoutPass(
                 list,
                 box,
                 atomClass,
-                items.lastOrNull()?.laid?.italicCorrectionPx ?: 0f,
+                0f,
                 style,
                 items.singleOrNull()?.laid?.scriptBaseKind ?: ScriptBaseKind.CompoundBox,
             ),
@@ -826,7 +948,15 @@ private class MathLayoutPass(
         list: MathList,
         initialStyle: MathStyle,
         alphabetOverride: MathAlphabetOverride?,
-    ): List<HorizontalItem> {
+    ): List<HorizontalItem> = layoutPendingItems(
+        flattenPendingListChildren(list, initialStyle, alphabetOverride),
+    )
+
+    private fun flattenPendingListChildren(
+        list: MathList,
+        initialStyle: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): List<PendingHorizontalItem> {
         var currentStyle = initialStyle
         return buildList {
             list.children.forEach { child ->
@@ -841,17 +971,17 @@ private class MathLayoutPass(
                     )
                     currentStyle = nextStyle
                 } else {
-                    addAll(flattenHorizontal(child, currentStyle, alphabetOverride))
+                    addAll(flattenPendingHorizontal(child, currentStyle, alphabetOverride))
                 }
             }
         }
     }
 
-    private fun flattenHorizontal(
+    private fun flattenPendingHorizontal(
         node: MathNode,
         style: MathStyle,
         alphabetOverride: MathAlphabetOverride?,
-    ): List<HorizontalItem> = when (node) {
+    ): List<PendingHorizontalItem> = when (node) {
         is MathAlphabetScope -> {
             val override = MathAlphabetOverride(node.family, node.alphabet)
             decision(
@@ -862,12 +992,49 @@ private class MathLayoutPass(
                 "appliesTo" to MathFamilyBinding.Variable,
             )
             when (val body = node.body) {
-                is MathGroup -> flattenListChildren(body.body, style, override)
-                is MathList -> flattenListChildren(body, style, override)
-                else -> listOf(HorizontalItem(body, layoutNode(body, style, override), MathGlueAdjustment.Zero, MathAtomClass.Ordinary))
+                is MathGroup -> flattenPendingListChildren(body.body, style, override)
+                is MathList -> flattenPendingListChildren(body, style, override)
+                else -> listOf(PendingHorizontalItem(body, style, override))
             }
         }
-        else -> listOf(HorizontalItem(node, layoutNode(node, style, alphabetOverride), MathGlueAdjustment.Zero, MathAtomClass.Ordinary))
+        else -> listOf(PendingHorizontalItem(node, style, alphabetOverride))
+    }
+
+    private fun layoutPendingItems(pending: List<PendingHorizontalItem>): List<HorizontalItem> = buildList {
+        var index = 0
+        while (index < pending.size) {
+            val first = pending[index]
+            val key = first.ordRunKey()
+            if (key == null) {
+                add(first.layoutIndividually())
+                index += 1
+                continue
+            }
+            var endExclusive = index + 1
+            while (endExclusive < pending.size && pending[endExclusive].ordRunKey() == key) {
+                endExclusive += 1
+            }
+            if (endExclusive - index >= 2) {
+                add(layoutSymbolRun(pending.subList(index, endExclusive)))
+            } else {
+                add(first.layoutIndividually())
+            }
+            index = endExclusive
+        }
+    }
+
+    private fun PendingHorizontalItem.layoutIndividually(): HorizontalItem = HorizontalItem(
+        node = node,
+        laid = layoutNode(node, style, alphabetOverride),
+        glueBefore = MathGlueAdjustment.Zero,
+        atomClass = MathAtomClass.Ordinary,
+    )
+
+    private fun PendingHorizontalItem.ordRunKey(): OrdRunKey? {
+        val symbol = node as? MathSymbol ?: return null
+        if (symbol.atomClass != MathAtomClass.Ordinary) return null
+        val request = symbolRequest(symbol, style, alphabetOverride)
+        return OrdRunKey(style, request.family, request.alphabet)
     }
 
     private fun atomGlue(
@@ -1083,6 +1250,18 @@ private class MathLayoutPass(
         val trailingItalicCorrectionPx: Float = 0f,
     )
 
+    private data class PendingHorizontalItem(
+        val node: MathNode,
+        val style: MathStyle,
+        val alphabetOverride: MathAlphabetOverride?,
+    )
+
+    private data class OrdRunKey(
+        val style: MathStyle,
+        val family: MathFamily,
+        val alphabet: MathAlphabet,
+    )
+
     private data class HorizontalLayout(
         val laid: LaidNode,
         val items: List<HorizontalItem>,
@@ -1109,19 +1288,12 @@ private class MathLayoutPass(
             MathAtomClass.Punctuation,
         )
 
-        val uprightInteractionClasses = setOf(
-            MathAtomClass.Operator,
-            MathAtomClass.Binary,
-            MathAtomClass.Relation,
-            MathAtomClass.Opening,
-            MathAtomClass.Closing,
-            MathAtomClass.Punctuation,
-        )
-
     }
 }
 
 private fun unicodeLabel(scalar: Int): String = "U+${scalar.toString(16).uppercase().padStart(4, '0')}"
+
+private const val DEFAULT_NULL_DELIMITER_SPACE_EM = 0.12f
 
 private enum class ScriptBaseKind {
     Character,

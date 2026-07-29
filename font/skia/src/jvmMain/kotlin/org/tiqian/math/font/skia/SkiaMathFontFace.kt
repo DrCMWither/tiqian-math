@@ -20,6 +20,7 @@ import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathGlyph
 import org.tiqian.math.layout.MeasuredMathRun
 import org.tiqian.math.layout.ResolvedMathSymbol
+import org.tiqian.math.layout.ResolvedMathSymbolRun
 import kotlin.math.max
 
 /**
@@ -60,6 +61,42 @@ class SkiaMathFontFace(
         )
     }
 
+    override fun resolveSymbols(
+        requests: List<MathSymbolGlyphRequest>,
+        fontSizePx: Float,
+    ): ResolvedMathSymbolRun {
+        require(requests.isNotEmpty()) { "a symbol run must not be empty" }
+        require(requests.all { it.style == requests.first().style }) {
+            "one shaping run cannot mix math styles"
+        }
+        require(requests.all {
+            it.family == requests.first().family && it.alphabet == requests.first().alphabet
+        }) {
+            "one shaping run cannot mix math families or alphabets"
+        }
+        val selections = requests.map(::resolveBackendScalar)
+        val spans = buildList {
+            var utf16Offset = 0
+            selections.zip(requests).forEach { (selection, request) ->
+                val backendText = unicodeScalarString(selection.scalar)
+                add(BackendTextSpan(utf16Offset, utf16Offset + backendText.length, request.sourceRange))
+                utf16Offset += backendText.length
+            }
+        }
+        val backendText = selections.joinToString("") { unicodeScalarString(it.scalar) }
+        val run = shape(backendText, fontSizePx, requests.first().style, requests.coveredRange())
+        val sourceRanges = run.glyphs.map { glyph ->
+            spans.firstOrNull { glyph.textCluster in it.startUtf16 until it.endUtf16 }?.sourceRange
+                ?: spans.last().sourceRange
+        }
+        return ResolvedMathSymbolRun(
+            run = run,
+            backendScalars = selections.map { it.scalar },
+            supported = selections.map { it.supported },
+            glyphSourceRanges = sourceRanges,
+        )
+    }
+
     override fun shape(
         text: String,
         fontSizePx: Float,
@@ -85,7 +122,13 @@ class SkiaMathFontFace(
                 Float.MAX_VALUE,
                 collector,
             )
-            measuredRun(font, collector.glyphIds.toShortArray(), collector.xPositions.toFloatArray(), collector.advance)
+            measuredRun(
+                font,
+                collector.glyphIds.toShortArray(),
+                collector.xPositions.toFloatArray(),
+                collector.clusters.toIntArray(),
+                collector.advance,
+            )
         } finally {
             font.close()
         }
@@ -100,7 +143,7 @@ class SkiaMathFontFace(
         val font = Font(typeface, fontSizePx)
         return try {
             val ids = shortArrayOf(glyphId.toShort())
-            measuredRun(font, ids, floatArrayOf(0f), font.getWidths(ids).single())
+            measuredRun(font, ids, floatArrayOf(0f), intArrayOf(0), font.getWidths(ids).single())
         } finally {
             font.close()
         }
@@ -112,6 +155,7 @@ class SkiaMathFontFace(
         font: Font,
         glyphIds: ShortArray,
         xPositions: FloatArray,
+        clusters: IntArray,
         runAdvance: Float,
     ): MeasuredMathRun {
         val widths = font.getWidths(glyphIds)
@@ -123,6 +167,7 @@ class SkiaMathFontFace(
                 x = xPositions.getOrElse(glyphIndex) { widths.take(glyphIndex).sum() },
                 advance = widths[glyphIndex],
                 inkBounds = MathRect(bound.left, bound.top, bound.right, bound.bottom),
+                textCluster = clusters.getOrElse(glyphIndex) { 0 },
             )
         }
         val ascent = glyphs.maxOfOrNull { (-it.inkBounds.top).coerceAtLeast(0f) } ?: 0f
@@ -144,6 +189,7 @@ class SkiaMathFontFace(
     private class GlyphCollector : RunHandler {
         val glyphIds = mutableListOf<Short>()
         val xPositions = mutableListOf<Float>()
+        val clusters = mutableListOf<Int>()
         var advance: Float = 0f
             private set
         private var penX = 0f
@@ -163,6 +209,7 @@ class SkiaMathFontFace(
             glyphs.forEachIndexed { glyphIndex, glyphId ->
                 glyphIds += glyphId
                 xPositions += (positions.getOrNull(glyphIndex)?.x ?: penX)
+                this.clusters += clusters?.getOrElse(glyphIndex) { 0 } ?: 0
             }
             penX += info.advanceX
             advance = penX
@@ -172,6 +219,12 @@ class SkiaMathFontFace(
     }
 
     private data class BackendScalarSelection(val scalar: Int, val supported: Boolean)
+
+    private data class BackendTextSpan(
+        val startUtf16: Int,
+        val endUtf16: Int,
+        val sourceRange: SourceRange,
+    )
 
     private fun resolveBackendScalar(request: MathSymbolGlyphRequest): BackendScalarSelection {
         if (request.alphabet == MathAlphabet.MathNormal) {
@@ -190,4 +243,7 @@ class SkiaMathFontFace(
             ?: return BackendScalarSelection(request.identity.baseScalar, supported = false)
         return BackendScalarSelection(scalar, supported = true)
     }
+
+    private fun List<MathSymbolGlyphRequest>.coveredRange(): SourceRange =
+        SourceRange(first().sourceRange.start, last().sourceRange.endExclusive)
 }

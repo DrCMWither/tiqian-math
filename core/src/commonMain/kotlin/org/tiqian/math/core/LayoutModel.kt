@@ -132,7 +132,7 @@ data class MathInlineFragment(
     val sourceRange: SourceRange,
     /** Visible geometry only: no leading or trailing mathematical glue. */
     val box: MathBox,
-    /** Fixed OpenType italic correction consumed by the following upright atom, when any. */
+    /** Fixed italic correction owned by this character noad or compatible Ord run. */
     val trailingItalicCorrectionPx: Float,
     /** Named TeX glue and host adjustment capacity following this fragment. */
     val trailingGlue: MathGlueAdjustment,

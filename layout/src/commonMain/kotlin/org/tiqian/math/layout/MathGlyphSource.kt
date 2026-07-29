@@ -13,6 +13,8 @@ data class MeasuredMathGlyph(
     val x: Float,
     val advance: Float,
     val inkBounds: MathRect,
+    /** UTF-16 cluster offset in the exact backend string passed to the shaper. */
+    val textCluster: Int = 0,
 )
 
 data class MeasuredMathRun(
@@ -39,6 +41,23 @@ data class ResolvedMathSymbol(
     val supported: Boolean,
 )
 
+/**
+ * One shaping result for consecutive compatible Ord noads. [glyphSourceRanges] is parallel to
+ * [MeasuredMathRun.glyphs] and maps backend shaping clusters back to the untouched input.
+ */
+data class ResolvedMathSymbolRun(
+    val run: MeasuredMathRun,
+    val backendScalars: List<Int>,
+    val supported: List<Boolean>,
+    val glyphSourceRanges: List<SourceRange>,
+) {
+    init {
+        require(backendScalars.isNotEmpty())
+        require(backendScalars.size == supported.size)
+        require(run.glyphs.size == glyphSourceRanges.size)
+    }
+}
+
 /** Platform font adapter. Layout consumes only immutable, replayable evidence. */
 interface MathFontFace {
     val mathFont: OpenTypeMathFont
@@ -47,6 +66,12 @@ interface MathFontFace {
         request: MathSymbolGlyphRequest,
         fontSizePx: Float,
     ): ResolvedMathSymbol
+
+    /** Resolve and shape a compatible Ord run in one backend shaping call. */
+    fun resolveSymbols(
+        requests: List<MathSymbolGlyphRequest>,
+        fontSizePx: Float,
+    ): ResolvedMathSymbolRun
 
     fun shape(
         text: String,

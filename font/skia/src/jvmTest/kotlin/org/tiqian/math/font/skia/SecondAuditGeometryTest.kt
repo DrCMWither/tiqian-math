@@ -31,18 +31,47 @@ class SecondAuditGeometryTest {
     }
 
     @Test
-    fun italicCorrectionIsFinalGlyphBasedAndOnlyConsumedBeforeUprightAtoms() = withSecondAuditFaces { label, face ->
+    fun compatibleOrdNoadsShapeAsOneRunWithSourceClustersAndOneFinalCorrection() = withSecondAuditFaces { label, face ->
         val engine = MathLayoutEngine(face)
         val continuous = engine.layout("abc", MathLayoutOptions(fontSizePx = 40f))
-        assertTrue(continuous.fragments.all { it.trailingItalicCorrectionPx == 0f }, "$label continuous variables")
+        assertEquals(1, continuous.fragments.size, "$label compatible Ord noads are one fragment")
+        assertEquals(SourceRange(0, 3), continuous.fragments.single().sourceRange)
+        assertEquals(
+            listOf(SourceRange(0, 1), SourceRange(1, 2), SourceRange(2, 3)),
+            continuous.box.glyphs.map { it.sourceRange }.distinct(),
+            "$label backend clusters map to original symbols",
+        )
+        val runDecision = continuous.decisions.single { it.name == "TeXCompatibleOrdRunShaping" }
+        assertEquals("3", runDecision.details["noadCount"])
+        assertEquals("one-shaping-call-final-glyph-correction", runDecision.details["policy"])
+        val finalGlyph = continuous.box.glyphs.last().glyphId
+        val expected = face.mathFont.italicCorrection(finalGlyph, 40f)
+        assertNear(expected, continuous.fragments.single().trailingItalicCorrectionPx, "$label run final glyph")
+        assertNear(
+            continuous.fragments.single().box.width + expected,
+            continuous.box.width,
+            "$label formula includes its terminal correction",
+        )
+    }
+
+    @Test
+    fun italicCorrectionBelongsToTheNucleusRatherThanTheNextAtomClass() = withSecondAuditFaces { label, face ->
+        val engine = MathLayoutEngine(face)
+        val terminal = engine.layout("x", MathLayoutOptions(fontSizePx = 40f))
+        val expected = face.mathFont.italicCorrection(terminal.box.glyphs.single().glyphId, 40f)
+        assertTrue(expected > 0f, "$label audited italic x has correction")
+        assertNear(expected, terminal.fragments.single().trailingItalicCorrectionPx, "$label formula end")
 
         val beforeOperator = engine.layout("x+y", MathLayoutOptions(fontSizePx = 40f))
         val x = beforeOperator.fragments.first()
-        val finalItalicGlyph = x.box.glyphs.single().glyphId
-        val expected = face.mathFont.italicCorrection(finalItalicGlyph, 40f)
         assertNear(expected, x.trailingItalicCorrectionPx, "$label x before operator")
-        assertTrue(x.trailingItalicCorrectionPx > 0f, "$label audited italic x has correction")
         assertTrue(beforeOperator.decisions.any { it.name == "OpenTypeItalicCorrectionBoundary" })
+
+        val beforeOrdinary = engine.layout("x2", MathLayoutOptions(fontSizePx = 40f))
+        assertNear(expected, beforeOrdinary.fragments.first().trailingItalicCorrectionPx, "$label x before Ordinary digit")
+
+        val beforeFraction = engine.layout("x\\frac{a}{b}", MathLayoutOptions(fontSizePx = 40f))
+        assertNear(expected, beforeFraction.fragments.first().trailingItalicCorrectionPx, "$label x before fraction")
 
         val beforeDelimiter = engine.layout("x)", MathLayoutOptions(fontSizePx = 40f))
         assertNear(expected, beforeDelimiter.fragments.first().trailingItalicCorrectionPx, "$label x before delimiter")
@@ -57,6 +86,12 @@ class SecondAuditGeometryTest {
         val character = engine.layout("E^2", MathLayoutOptions(MathMode.Display, 48f)).scriptDecision()
         assertEquals("Character", character.details["baseKind"], label)
         assertEquals("false", character.details["baselineDropApplied"], label)
+
+        val alphabetCharacter = engine.layout("\\mathrm{x}^2", MathLayoutOptions(MathMode.Display, 48f)).scriptDecision()
+        assertEquals("Character", alphabetCharacter.details["baseKind"], "$label one alphabet-scoped symbol")
+
+        val alphabetRun = engine.layout("\\mathrm{xy}^2", MathLayoutOptions(MathMode.Display, 48f)).scriptDecision()
+        assertEquals("CompoundBox", alphabetRun.details["baseKind"], "$label alphabet-scoped run")
 
         val compound = engine.layout("{xy}^2", MathLayoutOptions(MathMode.Display, 48f)).scriptDecision()
         assertEquals("CompoundBox", compound.details["baseKind"], label)
@@ -91,17 +126,43 @@ class SecondAuditGeometryTest {
     fun logicalAdvanceStaysSeparateFromInkAndOnlyCollisionKernsSeparateBinomialInk() = withSecondAuditFaces { label, face ->
         val engine = MathLayoutEngine(face)
         val size = 40f
+        val nullDelimiterSpace = 7f
         val child = engine.layout(
             "x",
             MathLayoutOptions(fontSizePx = size, initialStyle = MathStyle.Script),
         )
-        val fraction = engine.layout("\\frac{x}{x}", MathLayoutOptions(fontSizePx = size))
+        val fraction = engine.layout(
+            "\\frac{x}{x}",
+            MathLayoutOptions(fontSizePx = size, nullDelimiterSpacePx = nullDelimiterSpace),
+        )
         val rule = fraction.box.rules.single()
         assertNear(child.box.width, rule.right - rule.left, "$label rule uses child logical advance")
+        assertNear(nullDelimiterSpace, rule.left, "$label left null delimiter")
+        assertNear(
+            rule.right - rule.left + 2f * nullDelimiterSpace,
+            fraction.box.width,
+            "$label both null delimiters contribute fixed logical space",
+        )
         assertTrue(fraction.box.inkBounds.left < rule.left + 0.02f, "$label numerator overhang remains ink, not width")
+        assertEquals(
+            listOf(nullDelimiterSpace.toString(), nullDelimiterSpace.toString()),
+            fraction.decisions.single { it.name == "TeXFractionNullDelimiters" }.let {
+                listOf(it.details["leftSpacePx"], it.details["rightSpacePx"])
+            },
+        )
+        val scriptFraction = engine.layout(
+            "\\scriptstyle\\frac{x}{x}",
+            MathLayoutOptions(fontSizePx = size, nullDelimiterSpacePx = nullDelimiterSpace),
+        )
+        assertEquals(
+            nullDelimiterSpace.toString(),
+            scriptFraction.decisions.single { it.name == "TeXFractionNullDelimiters" }.details["leftSpacePx"],
+            "$label null delimiter parameter does not scale again with math style",
+        )
 
         val source = "\\binom{n}{k}"
         val binomial = engine.layout(source, MathLayoutOptions(fontSizePx = size))
+        assertTrue(binomial.decisions.none { it.name == "TeXFractionNullDelimiters" }, "$label real delimiters replace null ones")
         val content = binomial.box.glyphs.filter {
             it.sourceRange == SourceRange(source.indexOf('n'), source.indexOf('n') + 1) ||
                 it.sourceRange == SourceRange(source.indexOf('k'), source.indexOf('k') + 1)
@@ -123,7 +184,7 @@ class SecondAuditGeometryTest {
         assertTrue(letters.breakOpportunities.isEmpty(), label)
         val oneOverflow = letters.breakIntoLines(letters.box.width / 3f)
         assertEquals(1, oneOverflow.lines.size, label)
-        assertEquals(6, oneOverflow.lines.single().fragments.size, label)
+        assertEquals(1, oneOverflow.lines.single().fragments.size, label)
         assertTrue(oneOverflow.lines.single().unbreakableOverflow, label)
 
         val operator = engine.layout("a+b", MathLayoutOptions(fontSizePx = 40f))
@@ -141,6 +202,11 @@ private class SecondAuditOverrideFace(
         request: org.tiqian.math.layout.MathSymbolGlyphRequest,
         fontSizePx: Float,
     ): org.tiqian.math.layout.ResolvedMathSymbol = delegate.resolveSymbol(request, fontSizePx)
+
+    override fun resolveSymbols(
+        requests: List<MathSymbolGlyphRequest>,
+        fontSizePx: Float,
+    ): ResolvedMathSymbolRun = delegate.resolveSymbols(requests, fontSizePx)
 
     override fun shape(text: String, fontSizePx: Float, style: MathStyle, sourceRange: SourceRange): MeasuredMathRun =
         delegate.shape(text, fontSizePx, style, sourceRange)
