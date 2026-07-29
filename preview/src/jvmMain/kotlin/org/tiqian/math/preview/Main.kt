@@ -288,6 +288,8 @@ private fun auditRadicalPreviewTiers() {
                     "preview-degree=$label/$caseLabel construction=$expected " +
                         "reference=${geometry.details["degreeRaiseReferencePx"]}/" +
                         "${geometry.details["degreeRaiseReferenceMetric"]} " +
+                        "ascent=${geometry.details["degreeRaiseReferenceAscentPx"]} " +
+                        "descent=${geometry.details["degreeRaiseReferenceDescentPx"]} " +
                         "percent=${geometry.details["radicalDegreeBottomRaisePercent"]} " +
                         "raise=${geometry.details["degreeRaisePx"]} " +
                         "B=${geometry.details["unindexedBlockSizePx"]} " +

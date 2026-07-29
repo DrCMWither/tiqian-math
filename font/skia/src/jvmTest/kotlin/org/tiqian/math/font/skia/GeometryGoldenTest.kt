@@ -170,7 +170,9 @@ class GeometryGoldenTest {
                                         "adjusted=${decision.details.getValue("adjustedRadicalKernBeforeDegreePx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("adjustedRadicalKernAfterDegreePx").toFloat().fmt()}/" +
                                         "${decision.details["radicalDegreeBottomRaisePercent"]}/" +
-                                        "raise=${decision.details["degreeRaiseReferencePx"]}/" +
+                                        "raise=${decision.details["degreeRaiseReferencePx"]}(" +
+                                        "${decision.details["degreeRaiseReferenceAscentPx"]}+" +
+                                        "${decision.details["degreeRaiseReferenceDescentPx"]})/" +
                                         "${decision.details["degreeRaiseReferenceMetric"]}/" +
                                         "${decision.details["degreeRaisePx"]}/" +
                                         "bottom=${decision.details["degreeLogicalBottomY"]}/" +

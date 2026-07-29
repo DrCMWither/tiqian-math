@@ -43,7 +43,7 @@ import org.tiqian.math.layout.ResolvedMathSymbolRun
 
 class MathRadicalNoadTest {
     @Test
-    fun degreeRaiseUsesSelectedRadicalAscenderInsteadOfUnindexedBoxReserveForBothFonts() =
+    fun degreeRaiseUsesSelectedRadicalBoxHeightInsteadOfUnindexedBoxReserveForBothFonts() =
         withRadicalFaces { label, face ->
             val size = 48f
             val assemblyRadicand = (1..12).fold("x") { radicand, _ -> "\\frac{$radicand}{y}" }
@@ -52,7 +52,7 @@ class MathRadicalNoadTest {
                 Triple("variant", "\\sqrt[3]{\\frac{a}{b}}", "Variant"),
                 Triple("assembly", "\\sqrt[5]{$assemblyRadicand}", "Assembly"),
             )
-            val selectedAscenders = mutableListOf<Float>()
+            val selectedBlockSizes = mutableListOf<Float>()
             val selectedRaises = mutableListOf<Float>()
 
             cases.forEach { (caseLabel, source, expectedConstruction) ->
@@ -95,12 +95,31 @@ class MathRadicalNoadTest {
                     reserveGeometry.float("degreeRaisePx"),
                     "$label/$caseLabel B reserve must not change degree raise",
                 )
-                selectedAscenders += baseGeometry.float("radicalGlyphAscentPx")
+                assertNear(
+                    baseGeometry.float("degreeRaiseReferencePx"),
+                    reserveGeometry.float("degreeRaiseReferencePx"),
+                    "$label/$caseLabel B reserve must not change the selected radical reference",
+                )
+                val selectedAscent = baseGeometry.float("radicalGlyphAscentPx")
+                val selectedDescent = baseGeometry.float("radicalGlyphDescentPx")
+                val selectedBlockSize = baseGeometry.float("radicalGlyphBlockSizePx")
+                if (expectedConstruction == "BaseGlyph" || expectedConstruction == "Variant") {
+                    assertTrue(
+                        selectedDescent > 0f,
+                        "$label/$caseLabel must exercise a selected radical with non-zero descent",
+                    )
+                }
+                selectedBlockSizes += selectedBlockSize
                 selectedRaises += baseGeometry.float("degreeRaisePx")
                 assertNear(
-                    baseGeometry.float("radicalGlyphAscentPx"),
+                    selectedAscent + selectedDescent,
+                    selectedBlockSize,
+                    "$label/$caseLabel selected radical box height closes over ascent and descent",
+                )
+                assertNear(
+                    selectedBlockSize,
                     baseGeometry.float("degreeRaiseReferencePx"),
-                    "$label/$caseLabel degree raise references the selected radical ascender",
+                    "$label/$caseLabel degree raise references the complete selected radical box height",
                 )
                 assertNear(
                     baseGeometry.float("degreeRaiseReferencePx") *
@@ -109,22 +128,32 @@ class MathRadicalNoadTest {
                     "$label/$caseLabel degree raise applies the MATH percentage",
                 )
                 assertEquals(
-                    "SelectedRadicalConstructionBoxAscent",
+                    "SelectedRadicalConstructionBoxHeight",
                     baseGeometry.details["degreeRaiseReferenceMetric"],
                     "$label/$caseLabel reference metric",
                 )
                 assertEquals(
-                    "OpenTypeMATH.RadicalDegreeBottomRaisePercentTimesRadicalSignAscender",
+                    "OpenTypeMATH.RadicalDegreeBottomRaisePercentTimesSelectedRadicalConstructionBoxHeight",
                     baseGeometry.details["degreeRaiseReferencePolicy"],
                     "$label/$caseLabel reference policy",
                 )
+                assertNear(
+                    selectedAscent,
+                    baseGeometry.float("degreeRaiseReferenceAscentPx"),
+                    "$label/$caseLabel decision records the selected radical ascent",
+                )
+                assertNear(
+                    selectedDescent,
+                    baseGeometry.float("degreeRaiseReferenceDescentPx"),
+                    "$label/$caseLabel decision records the selected radical descent",
+                )
                 assertEquals(
-                    "OpenTypeRadicalSignAscenderRaiseFromCompletedBLineDescent",
+                    "OpenTypeRadicalConstructionBoxHeightRaiseFromCompletedBLineDescent",
                     baseGeometry.details["degreePlacementPolicy"],
                     "$label/$caseLabel placement policy",
                 )
                 assertEquals(
-                    "OpenTypeMATHRadicalSignAscender;NotMathMLCore3.3.3.3UnindexedBlockSize",
+                    "OpenTypeMATHRadicalSignFullBoxHeightMapping;NotMathMLCore3.3.3.3UnindexedBlockSize",
                     baseGeometry.details["degreePlacementSpecificationDivergence"],
                     "$label/$caseLabel specification mapping",
                 )
@@ -154,8 +183,8 @@ class MathRadicalNoadTest {
                 )
             }
 
-            selectedAscenders.zipWithNext().forEach { (smaller, larger) ->
-                assertTrue(larger > smaller, "$label construction growth must increase radical ascender")
+            selectedBlockSizes.zipWithNext().forEach { (smaller, larger) ->
+                assertTrue(larger > smaller, "$label construction growth must increase radical box height")
             }
             selectedRaises.zipWithNext().forEach { (smaller, larger) ->
                 assertTrue(larger > smaller, "$label construction growth must proportionally increase degree raise")
@@ -281,7 +310,7 @@ class MathRadicalNoadTest {
                 indexedGeometry.details["unindexedBoxPolicy"],
             )
             assertEquals(
-                "OpenTypeRadicalSignAscenderRaiseFromCompletedBLineDescent",
+                "OpenTypeRadicalConstructionBoxHeightRaiseFromCompletedBLineDescent",
                 indexedGeometry.details["degreePlacementPolicy"],
             )
             assertNear(
