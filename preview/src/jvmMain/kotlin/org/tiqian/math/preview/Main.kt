@@ -28,6 +28,8 @@ import org.tiqian.math.core.MathMode
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.skia.SkiaMathFontFace
 import org.tiqian.math.font.stix.StixTwoMath
+import org.tiqian.math.layout.MathLayoutEngine
+import org.tiqian.math.layout.MathLayoutOptions
 import java.io.File
 import kotlin.system.exitProcess
 
@@ -91,9 +93,21 @@ private fun PreviewScreen() {
 private fun RadicalSample(label: String, face: SkiaMathFontFace) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            RadicalTier("base · indexed", RADICAL_BASE_SOURCE, face)
+            RadicalTier("variant · fraction", RADICAL_VARIANT_SOURCE, face)
+            RadicalTier("nested · linked groups", "\\sqrt{1+\\sqrt{x}}", face)
+            RadicalTier("assembly · deep fraction", RADICAL_ASSEMBLY_SOURCE, face)
+        }
+    }
+}
+
+@Composable
+private fun RadicalTier(label: String, source: String, face: SkiaMathFontFace) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, fontSize = 10.sp, color = Color(0xFF6B655E))
         TiqianMath(
-            source = "\\sqrt[3]{x^2+1}+\\sqrt{\\frac{a+b}{\\sqrt{x}}}+" +
-                "\\sqrt{\\frac{\\frac{\\frac{a}{b}}{c}}{d}}",
+            source = source,
             modifier = Modifier.background(Color.White).padding(7.dp),
             mode = MathMode.Display,
             fontFace = face,
@@ -164,6 +178,7 @@ private fun FontSample(label: String, face: SkiaMathFontFace, mode: MathMode) {
 
 @OptIn(ExperimentalComposeUiApi::class)
 private fun renderSnapshot() {
+    auditRadicalPreviewTiers()
     ImageComposeScene(width = 900, height = 2400) { PreviewScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/math-preview.png")
@@ -172,3 +187,36 @@ private fun renderSnapshot() {
         println("preview=${output.absolutePath} bytes=${output.length()}")
     }
 }
+
+private fun auditRadicalPreviewTiers() {
+    listOf(
+        "Lete Sans Math" to LeteSansMath.load(),
+        "STIX Two Math" to StixTwoMath.load(),
+    ).forEach { (label, font) ->
+        SkiaMathFontFace(font).use { face ->
+            listOf(
+                "BaseGlyph" to RADICAL_BASE_SOURCE,
+                "Variant" to RADICAL_VARIANT_SOURCE,
+                "Assembly" to RADICAL_ASSEMBLY_SOURCE,
+            ).forEach { (expected, source) ->
+                val result = MathLayoutEngine(face).layout(
+                    source,
+                    MathLayoutOptions(MathMode.Display, 32f),
+                )
+                val actual = result.decisions.first {
+                    it.name == "OpenTypeRadicalConstruction" && it.range.start == 0
+                }.details["construction"]
+                check(actual == expected) {
+                    "$label preview tier expected $expected but selected $actual for $source"
+                }
+                println("preview-radical=$label/$expected source=$source")
+            }
+        }
+    }
+}
+
+private const val RADICAL_BASE_SOURCE = "\\sqrt[3]{x}"
+private const val RADICAL_VARIANT_SOURCE = "\\sqrt{\\frac{a}{b}}"
+private val RADICAL_ASSEMBLY_SOURCE = "\\sqrt{" +
+    (1..12).fold("x") { radicand, _ -> "\\frac{$radicand}{y}" } +
+    "}"
