@@ -668,9 +668,13 @@ private class MathLayoutPass(
                 )
             }
         }
+        val constructionInkTop = placements.minOfOrNull { it.inkBounds.top } ?: 0f
+        val constructionInkBottom = placements.maxOfOrNull { it.inkBounds.bottom } ?: 0f
         return PlacedVerticalConstruction(
             width = width,
             glyphs = placements,
+            boxAscentPx = (-constructionInkTop).coerceAtLeast(0f),
+            boxDescentPx = constructionInkBottom.coerceAtLeast(0f),
             componentHorizontalOriginsPx = horizontalOrigins,
             componentBottomOriginsPx = bottomOrigins,
             componentBaselineOriginsPx = baselineOrigins,
@@ -751,13 +755,16 @@ private class MathLayoutPass(
             )
         }
         val radicalGlyphAscent = when (construction?.kind) {
-            MathConstructionKind.Assembly -> achievedAdvance
+            // GlyphAssembly advance is the nominal stretch/selection extent. Its actual box
+            // ascent comes from the union of placed part bounds and can protrude beyond that
+            // nominal extent. MathML Core aligns the radical glyph box ascent to the overbar.
+            MathConstructionKind.Assembly -> placedConstruction!!.boxAscentPx
             MathConstructionKind.BaseGlyph,
             MathConstructionKind.Variant -> constructionRuns!!.single().second.ascent
             null -> baseRun.ascent
         }
         val radicalGlyphDescent = when (construction?.kind) {
-            MathConstructionKind.Assembly -> 0f
+            MathConstructionKind.Assembly -> placedConstruction!!.boxDescentPx
             MathConstructionKind.BaseGlyph,
             MathConstructionKind.Variant -> constructionRuns!!.single().second.descent
             null -> baseRun.descent
@@ -939,6 +946,14 @@ private class MathLayoutPass(
             "targetHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
             "reachesTarget" to (achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight),
+            "constructionBoxAscentPx" to placedConstruction?.boxAscentPx,
+            "constructionBoxDescentPx" to placedConstruction?.boxDescentPx,
+            "constructionBoxHeightPx" to placedConstruction?.let { it.boxAscentPx + it.boxDescentPx },
+            "constructionExtentPolicy" to if (construction?.kind == MathConstructionKind.Assembly) {
+                "NominalAdvanceForSelectionActualPlacedBoundsForBox"
+            } else {
+                "ShapedGlyphBoxMetrics"
+            },
             "componentBottomOriginsPx" to placedConstruction?.componentBottomOriginsPx?.joinToString(","),
             "componentBaselineOriginsPx" to placedConstruction?.componentBaselineOriginsPx?.joinToString(","),
             "componentHorizontalOriginsPx" to placedConstruction?.componentHorizontalOriginsPx?.joinToString(","),
@@ -965,6 +980,11 @@ private class MathLayoutPass(
             "radicalGlyphAscentPx" to radicalGlyphAscent,
             "radicalGlyphDescentPx" to radicalGlyphDescent,
             "radicalGlyphBlockSizePx" to radicalGlyphBlockSize,
+            "radicalGlyphBoxMetricSource" to if (construction?.kind == MathConstructionKind.Assembly) {
+                "PlacedAssemblyGlyphBounds"
+            } else {
+                "ShapedGlyphBoxMetrics"
+            },
             "radicalBoxAdvancePx" to rawRadical.width,
             "radicalPaintOriginY" to radicalBaselineInB,
             "overbarAnchorPolicy" to "MathMLCoreRadicalBoxLineOverEdge",
@@ -2085,6 +2105,8 @@ private class MathLayoutPass(
     private data class PlacedVerticalConstruction(
         val width: Float,
         val glyphs: List<MathGlyphPlacement>,
+        val boxAscentPx: Float,
+        val boxDescentPx: Float,
         val componentHorizontalOriginsPx: List<Float>,
         val componentBottomOriginsPx: List<Float>,
         val componentBaselineOriginsPx: List<Float>,

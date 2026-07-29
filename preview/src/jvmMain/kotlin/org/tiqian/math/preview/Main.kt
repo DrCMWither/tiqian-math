@@ -206,10 +206,27 @@ private fun auditRadicalPreviewTiers() {
                 val actual = result.decisions.first {
                     it.name == "OpenTypeRadicalConstruction" && it.range.start == 0
                 }.details["construction"]
+                val construction = result.decisions.first {
+                    it.name == "OpenTypeRadicalConstruction" && it.range.start == 0
+                }
+                val geometry = result.decisions.first {
+                    it.name == "OpenTypeMathRadical" && it.range.start == 0
+                }
                 check(actual == expected) {
                     "$label preview tier expected $expected but selected $actual for $source"
                 }
-                println("preview-radical=$label/$expected source=$source")
+                val ruleTop = geometry.details.getValue("ruleTop").toFloat()
+                val radicalInkTop = geometry.details.getValue("radicalInkTopPx").toFloat()
+                val topError = radicalInkTop - ruleTop
+                check(kotlin.math.abs(topError) <= 0.001f) {
+                    "$label/$expected radical top $radicalInkTop does not meet rule top $ruleTop"
+                }
+                println(
+                    "preview-radical=$label/$expected " +
+                        "ruleTop=$ruleTop radicalInkTop=$radicalInkTop error=$topError " +
+                        "boxAscent=${geometry.details["radicalGlyphAscentPx"]} " +
+                        "achievedAdvance=${construction.details["achievedAdvancePx"]} source=$source",
+                )
             }
         }
     }

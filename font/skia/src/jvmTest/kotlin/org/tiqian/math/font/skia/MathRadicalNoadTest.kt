@@ -206,11 +206,58 @@ class MathRadicalNoadTest {
                 )
             }
             val geometry = result.radicalGeometryDecision()
+            assertAssemblyTopAlignedToOverbar(geometry, "$label real assembly")
             assertNear(
                 geometry.float("unindexedDescentPx") - geometry.float("degreeRaisePx"),
                 geometry.float("degreeLogicalBottomY"),
                 "$label tall indexed assembly positions the degree from completed box B",
             )
+        }
+
+    @Test
+    fun realAssemblyBoxAscentAlignsTheOverbarForBothFontsAcrossSizesAndDepths() =
+        withRadicalFaces { label, face ->
+            listOf(32f, 52f).forEach { size ->
+                var radicand = "x"
+                val assemblies = mutableListOf<Pair<Int, MathLayoutResult>>()
+                for (depth in 1..14) {
+                    radicand = "\\frac{$radicand}{y}"
+                    val candidate = MathLayoutEngine(face).layout(
+                        "\\sqrt{$radicand}",
+                        MathLayoutOptions(MathMode.Display, size),
+                    )
+                    if (candidate.radicalConstructionDecision().details["construction"] == "Assembly") {
+                        assemblies += depth to candidate
+                        if (assemblies.size == 2) break
+                    }
+                }
+                assertEquals(2, assemblies.size, "$label/$size reaches two assembly depths")
+                assemblies.forEach { (depth, result) ->
+                    val construction = result.radicalConstructionDecision()
+                    val geometry = result.radicalGeometryDecision()
+                    assertTrue(
+                        construction.float("achievedAdvancePx") + EPSILON >=
+                            construction.float("targetHeightPx"),
+                        "$label/$size/depth=$depth nominal extent still drives selection",
+                    )
+                    assertEquals(
+                        "NominalAdvanceForSelectionActualPlacedBoundsForBox",
+                        construction.details["constructionExtentPolicy"],
+                    )
+                    assertEquals("PlacedAssemblyGlyphBounds", geometry.details["radicalGlyphBoxMetricSource"])
+                    assertNear(
+                        construction.float("constructionBoxAscentPx"),
+                        geometry.float("radicalGlyphAscentPx"),
+                        "$label/$size/depth=$depth consumes actual placed box ascent",
+                    )
+                    assertNear(
+                        construction.float("constructionBoxDescentPx"),
+                        geometry.float("radicalGlyphDescentPx"),
+                        "$label/$size/depth=$depth consumes actual placed box descent",
+                    )
+                    assertAssemblyTopAlignedToOverbar(geometry, "$label/$size/depth=$depth")
+                }
+            }
         }
 
     @Test
@@ -788,6 +835,11 @@ private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String)
         "$label glyph box ascent anchors its top to the overbar",
     )
     assertNear(
+        geometry.float("ruleTop"),
+        geometry.float("radicalInkTopPx"),
+        "$label placed radical glyph box top meets the overbar line-over edge",
+    )
+    assertNear(
         geometry.float("radicalX") + geometry.float("radicalBoxAdvancePx"),
         geometry.float("ruleLeft"),
         "$label overbar starts at radical box advance",
@@ -799,6 +851,19 @@ private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String)
     )
     assertEquals("MathMLCoreRadicalBoxLineOverEdge", geometry.details["overbarAnchorPolicy"])
     assertEquals("RadicalBoxAdvance", geometry.details["overbarLeftPolicy"])
+}
+
+private fun assertAssemblyTopAlignedToOverbar(geometry: MathLayoutDecision, label: String) {
+    assertNear(
+        geometry.float("ruleTop"),
+        geometry.float("radicalInkTopPx"),
+        "$label actual assembly top meets overbar",
+    )
+    assertNear(
+        geometry.float("ruleTop") + geometry.float("radicalGlyphAscentPx"),
+        geometry.float("radicalPaintOriginY"),
+        "$label actual assembly box ascent drives the paint origin",
+    )
 }
 
 private inline fun withRadicalFaces(block: (String, SkiaMathFontFace) -> Unit) {
