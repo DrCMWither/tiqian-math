@@ -65,6 +65,7 @@ class MathRadicalNoadTest {
                     assertNear(0f, noad.float("italicCorrectionPx"), "$label/${result.source} radical IC")
                 }
                 result.radicalGeometryDecisions().forEach { geometry ->
+                    assertRadicalBoxAlgebra(geometry, "$label/${result.source}")
                     assertNear(
                         geometry.float("radicalRuleThicknessPx"),
                         geometry.float("ruleBottom") - geometry.float("ruleTop"),
@@ -185,8 +186,12 @@ class MathRadicalNoadTest {
             assertEquals("MathMLCore5.3.1UniformOverlap", construction.details["constructionPolicy"])
             assertEquals("true", construction.details["assemblyValid"])
             assertEquals(
-                "MathMLCore5.3.1ParticipatingConnections",
-                construction.details["assemblyConnectorValidationPolicy"],
+                "TiqianOpenTypeTerminalConnectorCompatibility",
+                construction.details["assemblyValidationPolicy"],
+            )
+            assertEquals(
+                "MathMLCore5.3.1RequiresEveryTerminalConnectorAtLeastMinimum",
+                construction.details["assemblySpecificationDivergence"],
             )
             assertTrue(construction.details["componentGlyphIds"].orEmpty().contains(','), construction.toString())
             assertTrue(construction.details["componentOffsetsDesignUnits"].orEmpty().contains(','), construction.toString())
@@ -302,6 +307,7 @@ class MathRadicalNoadTest {
             val base = layout(delegate, withoutConstruction, "\\sqrt{x}", size)
             assertEquals("BaseGlyph", base.radicalConstructionDecision().details["construction"])
             assertTrue(base.diagnostics.none { it.code == DiagnosticCode.MissingMathConstruction }, base.debugDump)
+            assertRadicalBoxAlgebra(base.radicalGeometryDecision(), "base radical")
 
             val variantAdvance = 4_000
             val constructionWhoseVariantsOmitBase = delegate.mathFont.copy(
@@ -326,6 +332,7 @@ class MathRadicalNoadTest {
             assertEquals("Variant", variant.radicalConstructionDecision().details["construction"])
             assertEquals("MathGlyphVariantRecord", variant.radicalConstructionDecision().details["selectionStep"])
             assertTrue(variant.box.glyphs.any { it.glyphId == otherGlyph && it.sourceRange == range })
+            assertRadicalBoxAlgebra(variant.radicalGeometryDecision(), "variant radical")
 
             val assembly = MathGlyphAssembly(
                 parts = listOf(
@@ -342,7 +349,8 @@ class MathRadicalNoadTest {
             )
             val assembled = layout(delegate, assemblyFont, "\\sqrt{x}", size)
             val selected = assertNotNull(
-                assemblyFont.verticalConstruction(
+                assemblyFont.verticalConstructionForTest(
+                    delegate,
                     rootGlyph,
                     assembled.radicalConstructionDecision().float("targetHeightPx"),
                     size,
@@ -369,6 +377,7 @@ class MathRadicalNoadTest {
             )
             assertTrue(assembled.radicalConstructionDecision().details["connectorOverlapsDesignUnits"].orEmpty() != "[]")
             assertEquals("shared-font-x/bottom", assembled.radicalConstructionDecision().details["placementOrigin"])
+            assertRadicalBoxAlgebra(assembled.radicalGeometryDecision(), "assembly radical")
 
             val insufficientFont = delegate.mathFont.copy(
                 constants = zeroGeometry.copy(radicalVerticalGap = 2_000),
@@ -454,6 +463,56 @@ class MathRadicalNoadTest {
             )
             assertEquals(baseChoice.details["construction"], reservedChoice.details["construction"])
             assertEquals(baseChoice.details["componentGlyphIds"], reservedChoice.details["componentGlyphIds"])
+        }
+    }
+
+    @Test
+    fun radicalRuleStartsAfterAllPartRecordsWidthWhenRMinSkipsTheWidestExtender() {
+        SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
+            val size = 44f
+            val range = SourceRange(0, 5)
+            val root = delegate.shapeConstructionBase("√", size, range).glyphs.single().glyphId
+            val skippedWideExtender = delegate.shapeConstructionBase("W", size, range).glyphs.single().glyphId
+            val assembly = MathGlyphAssembly(
+                parts = listOf(
+                    MathGlyphAssemblyPart(root, 100, 300, 1_500, false),
+                    MathGlyphAssemblyPart(skippedWideExtender, 300, 300, 600, true),
+                    MathGlyphAssemblyPart(root, 300, 100, 1_500, false),
+                ),
+                minimumConnectorOverlap = 100,
+            )
+            val font = delegate.mathFont.copy(
+                constants = delegate.mathFont.constants.copy(
+                    radicalVerticalGap = 1_000,
+                    radicalRuleThickness = 0,
+                    radicalExtraAscender = 0,
+                ),
+                verticalConstructions = delegate.mathFont.verticalConstructions +
+                    (root to MathGlyphConstruction(emptyList(), assembly)),
+            )
+            val face = RadicalOverrideFace(
+                delegate,
+                font,
+                advanceWidthOverrides = mapOf(skippedWideExtender to 200f),
+            )
+            val result = MathLayoutEngine(face).layout("\\sqrt{x}", MathLayoutOptions(fontSizePx = size))
+            val construction = result.radicalConstructionDecision()
+            val geometry = result.radicalGeometryDecision()
+            assertEquals("Assembly", construction.details["construction"])
+            assertEquals("0", construction.details["extenderRepetitions"])
+            assertTrue(
+                construction.details["componentGlyphIds"].orEmpty()
+                    .split(',')
+                    .none { it == skippedWideExtender.toString() },
+            )
+            assertNear(200f, construction.float("orthogonalAdvancePx"), "all-record assembly width")
+            assertNear(200f, geometry.float("radicalBoxAdvancePx"), "radical box consumes construction width")
+            assertNear(
+                geometry.float("radicalX") + 200f,
+                geometry.float("ruleLeft"),
+                "overbar starts after all-record assembly width",
+            )
+            assertRadicalBoxAlgebra(geometry, "rMin=0 assembly radical")
         }
     }
 
@@ -658,6 +717,7 @@ class MathRadicalNoadTest {
 private class RadicalOverrideFace(
     private val delegate: SkiaMathFontFace,
     override val mathFont: OpenTypeMathFont,
+    private val advanceWidthOverrides: Map<UShort, Float> = emptyMap(),
 ) : MathFontFace {
     override fun resolveSymbol(request: MathSymbolGlyphRequest, fontSizePx: Float): ResolvedMathSymbol =
         delegate.resolveSymbol(request, fontSizePx)
@@ -682,7 +742,9 @@ private class RadicalOverrideFace(
         fontSizePx: Float,
         style: MathStyle,
         sourceRange: SourceRange,
-    ): MeasuredMathRun = delegate.measureGlyph(glyphId, fontSizePx, style, sourceRange)
+    ): MeasuredMathRun = delegate.measureGlyph(glyphId, fontSizePx, style, sourceRange).let { run ->
+        advanceWidthOverrides[glyphId]?.let { run.copy(width = it) } ?: run
+    }
 }
 
 private fun MathLayoutResult.radicalNoadDecision(): MathLayoutDecision =
@@ -699,6 +761,45 @@ private fun MathLayoutResult.radicalGeometryDecisions(): List<MathLayoutDecision
 
 private fun MathLayoutDecision.float(name: String): Float =
     checkNotNull(details[name]) { "$name is absent from $this" }.toFloat()
+
+/** Pure MathML Core square-root box equations; no raster evidence participates. */
+private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String) {
+    val ruleThickness = geometry.float("radicalRuleThicknessPx")
+    val gap = geometry.float("radicalVerticalGapPx")
+    val radicandInkHeight = geometry.float("radicandInkBottomPx") - geometry.float("radicandInkTopPx")
+    assertNear(
+        radicandInkHeight + gap + ruleThickness,
+        geometry.float("targetHeightPx"),
+        "$label stretch target uses radicand ink only",
+    )
+    assertNear(
+        -geometry.float("unindexedAscentPx") + geometry.float("radicalExtraAscenderPx"),
+        geometry.float("ruleTop"),
+        "$label overbar top is the completed radical box line-over edge",
+    )
+    assertNear(
+        geometry.float("ruleTop") + ruleThickness,
+        geometry.float("ruleBottom"),
+        "$label overbar thickness",
+    )
+    assertNear(
+        geometry.float("ruleTop") + geometry.float("radicalGlyphAscentPx"),
+        geometry.float("radicalPaintOriginY"),
+        "$label glyph box ascent anchors its top to the overbar",
+    )
+    assertNear(
+        geometry.float("radicalX") + geometry.float("radicalBoxAdvancePx"),
+        geometry.float("ruleLeft"),
+        "$label overbar starts at radical box advance",
+    )
+    assertNear(
+        geometry.float("ruleLeft") + geometry.float("radicandWidthPx"),
+        geometry.float("ruleRight"),
+        "$label overbar spans the radicand logical width",
+    )
+    assertEquals("MathMLCoreRadicalBoxLineOverEdge", geometry.details["overbarAnchorPolicy"])
+    assertEquals("RadicalBoxAdvance", geometry.details["overbarLeftPolicy"])
+}
 
 private inline fun withRadicalFaces(block: (String, SkiaMathFontFace) -> Unit) {
     listOf(

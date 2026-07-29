@@ -116,9 +116,18 @@ data class MathGlyphKernInfo(
 }
 
 enum class MathConstructionKind {
+    BaseGlyph,
     Variant,
     Assembly,
 }
+
+data class MathVerticalConstructionRequest(
+    val baseGlyphId: UShort,
+    val targetSizePx: Float,
+    val fontSizePx: Float,
+    val normalGlyphHeightPx: Float,
+    val normalGlyphAdvanceWidthPx: Float,
+)
 
 data class MathGlyphComponent(
     val glyphId: UShort,
@@ -142,6 +151,8 @@ data class MathVerticalConstruction(
     val constructionPolicy: String = "OpenTypeMathVariants",
     /** MathML Core 5.3.1 uses one overlap value for every assembly connection. */
     val uniformConnectorOverlap: Float? = null,
+    /** Advance in the direction orthogonal to stretching; pixels at the requested size. */
+    val orthogonalAdvancePx: Float,
 )
 
 enum class MathGlyphAssemblyInvalidReason {
@@ -157,7 +168,8 @@ data class MathGlyphAssemblyValidation(
     val nonExtenderCount: Int,
     val extenderNonOverlappingAdvance: Long,
     val checkedConnectionCount: Int,
-    val connectorValidationPolicy: String,
+    val validationPolicy: String,
+    val specificationDivergence: String?,
 )
 
 data class OpenTypeMathFont(
@@ -207,12 +219,21 @@ data class OpenTypeMathFont(
     }
 
     fun verticalConstruction(
-        baseGlyphId: UShort,
-        minimumAdvancePx: Float,
-        fontSizePx: Float,
+        request: MathVerticalConstructionRequest,
+        glyphAdvanceWidthPx: (UShort) -> Float,
     ): MathVerticalConstruction? {
-        val construction = verticalConstructions[baseGlyphId] ?: return null
-        val target = minimumAdvancePx * unitsPerEm / fontSizePx
+        if (request.normalGlyphHeightPx >= request.targetSizePx) {
+            return MathVerticalConstruction(
+                kind = MathConstructionKind.BaseGlyph,
+                components = listOf(MathGlyphComponent(request.baseGlyphId, 0f)),
+                advanceMeasurement = request.normalGlyphHeightPx * unitsPerEm / request.fontSizePx,
+                reachesTarget = true,
+                constructionPolicy = "MathMLCore5.3.2NormalGlyph",
+                orthogonalAdvancePx = request.normalGlyphAdvanceWidthPx,
+            )
+        }
+        val construction = verticalConstructions[request.baseGlyphId] ?: return null
+        val target = request.targetSizePx * unitsPerEm / request.fontSizePx
         construction.variants.firstOrNull { it.advanceMeasurement >= target }?.let { variant ->
             return MathVerticalConstruction(
                 MathConstructionKind.Variant,
@@ -220,12 +241,13 @@ data class OpenTypeMathFont(
                 variant.advanceMeasurement.toFloat(),
                 reachesTarget = true,
                 constructionPolicy = "MathMLCore5.3.2Variant",
+                orthogonalAdvancePx = glyphAdvanceWidthPx(variant.glyphId),
             )
         }
         val assembly = construction.assembly
         val assemblyValidation = assembly?.let(::validateAssembly)
         if (assembly != null && assemblyValidation?.valid == true) {
-            return assemble(assembly, assemblyValidation, target)
+            return assemble(assembly, assemblyValidation, target, glyphAdvanceWidthPx)
         }
         val last = construction.variants.lastOrNull() ?: return null
         return MathVerticalConstruction(
@@ -239,6 +261,7 @@ data class OpenTypeMathFont(
             } else {
                 "MathMLCore5.3.2LastVariant"
             },
+            orthogonalAdvancePx = glyphAdvanceWidthPx(last.glyphId),
         )
     }
 
@@ -280,7 +303,9 @@ data class OpenTypeMathFont(
             nonExtenderCount = assembly.parts.size - extenders.size,
             extenderNonOverlappingAdvance = nonOverlappingAdvance,
             checkedConnectionCount = adjacentConnections.size + extenders.size,
-            connectorValidationPolicy = "MathMLCore5.3.1ParticipatingConnections",
+            validationPolicy = "TiqianOpenTypeTerminalConnectorCompatibility",
+            specificationDivergence =
+                "MathMLCore5.3.1RequiresEveryTerminalConnectorAtLeastMinimum",
         )
     }
 
@@ -288,6 +313,7 @@ data class OpenTypeMathFont(
         assembly: MathGlyphAssembly,
         validation: MathGlyphAssemblyValidation,
         target: Float,
+        glyphAdvanceWidthPx: (UShort) -> Float,
     ): MathVerticalConstruction {
         check(validation.valid)
         val extenders = assembly.parts.filter { it.extender }
@@ -344,6 +370,9 @@ data class OpenTypeMathFont(
             assemblyValidation = validation,
             constructionPolicy = "MathMLCore5.3.1UniformOverlap",
             uniformConnectorOverlap = oMax,
+            // MathML Core 5.3.1 defines the vertical assembly's orthogonal width from
+            // every part record, including an extender skipped when rMin is zero.
+            orthogonalAdvancePx = assembly.parts.maxOf { glyphAdvanceWidthPx(it.glyphId) },
         )
     }
 

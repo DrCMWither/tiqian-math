@@ -25,19 +25,19 @@ class MathAssemblyAndKernTest {
         val font = LeteSansMath.load().copy(
             verticalConstructions = mapOf(TEST_GLYPH to construction(withExtender = true)),
         )
-        val noExtender = font.verticalConstruction(TEST_GLYPH, 170f, 1000f)!!
+        val noExtender = font.testVerticalConstruction(170f)!!
         assertEquals(0, noExtender.extenderRepetitions)
         assertEquals(2, noExtender.components.size)
         assertNear(170f, noExtender.advanceMeasurement)
 
-        val oneRound = font.verticalConstruction(TEST_GLYPH, 220f, 1000f)!!
+        val oneRound = font.testVerticalConstruction(220f)!!
         assertEquals(1, oneRound.extenderRepetitions)
         assertEquals(3, oneRound.components.size)
         assertEquals(73, oneRound.assemblyItalicCorrection)
         assertEqualOverlaps(oneRound.connectorOverlaps)
         assertNear(220f, oneRound.advanceMeasurement)
 
-        val multipleRounds = font.verticalConstruction(TEST_GLYPH, 260f, 1000f)!!
+        val multipleRounds = font.testVerticalConstruction(260f)!!
         assertEquals(2, multipleRounds.extenderRepetitions)
         assertEquals(4, multipleRounds.components.size)
         assertEqualOverlaps(multipleRounds.connectorOverlaps)
@@ -52,7 +52,7 @@ class MathAssemblyAndKernTest {
         val validation = assertNotNull(font.verticalAssemblyValidation(TEST_GLYPH))
         assertFalse(validation.valid)
         assertTrue(MathGlyphAssemblyInvalidReason.NoExtender in validation.invalidReasons)
-        assertNull(font.verticalConstruction(TEST_GLYPH, 170f, 1000f))
+        assertNull(font.testVerticalConstruction(170f))
     }
 
     @Test
@@ -88,7 +88,7 @@ class MathAssemblyAndKernTest {
                 ),
             )
             val selected = assertCompletesWithinOneSecond {
-                assertNotNull(font.verticalConstruction(TEST_GLYPH, 250f, 1000f))
+                assertNotNull(font.testVerticalConstruction(250f))
             }
             assertEquals(MathConstructionKind.Variant, selected.kind, reason.toString())
             assertEquals(FALLBACK_GLYPH, selected.components.single().glyphId, reason.toString())
@@ -117,9 +117,13 @@ class MathAssemblyAndKernTest {
 
         val validation = assertNotNull(font.verticalAssemblyValidation(TEST_GLYPH))
         assertTrue(validation.valid, validation.toString())
-        assertEquals("MathMLCore5.3.1ParticipatingConnections", validation.connectorValidationPolicy)
+        assertEquals("TiqianOpenTypeTerminalConnectorCompatibility", validation.validationPolicy)
+        assertEquals(
+            "MathMLCore5.3.1RequiresEveryTerminalConnectorAtLeastMinimum",
+            validation.specificationDivergence,
+        )
         assertEquals(3, validation.checkedConnectionCount)
-        assertEquals(MathConstructionKind.Assembly, font.verticalConstruction(TEST_GLYPH, 220f, 1000f)?.kind)
+        assertEquals(MathConstructionKind.Assembly, font.testVerticalConstruction(220f)?.kind)
     }
 
     @Test
@@ -137,7 +141,7 @@ class MathAssemblyAndKernTest {
                 TEST_GLYPH to MathGlyphConstruction(emptyList(), assembly),
             ),
         )
-        val selected = assertNotNull(font.verticalConstruction(TEST_GLYPH, 220f, 1000f))
+        val selected = assertNotNull(font.testVerticalConstruction(220f))
         assertEquals(MathConstructionKind.Assembly, selected.kind)
         assertEquals("MathMLCore5.3.1UniformOverlap", selected.constructionPolicy)
         assertEquals(true, selected.assemblyValidation?.valid)
@@ -145,6 +149,59 @@ class MathAssemblyAndKernTest {
         assertNear(30f, assertNotNull(selected.uniformConnectorOverlap))
         assertEquals(listOf(0f, 70f, 140f), selected.components.map { it.offset })
         assertNear(240f, selected.advanceMeasurement)
+    }
+
+    @Test
+    fun normalGlyphPrecedesLargerVariantAndDoesNotRequireAConstructionTable() {
+        val noTable = LeteSansMath.load().copy(verticalConstructions = emptyMap())
+        val normal = assertNotNull(
+            noTable.testVerticalConstruction(
+                target = 80f,
+                normalHeight = 90f,
+                normalWidth = 37f,
+            ),
+        )
+        assertEquals(MathConstructionKind.BaseGlyph, normal.kind)
+        assertEquals("MathMLCore5.3.2NormalGlyph", normal.constructionPolicy)
+        assertNear(37f, normal.orthogonalAdvancePx)
+
+        val withLargerVariant = noTable.copy(
+            verticalConstructions = mapOf(
+                TEST_GLYPH to MathGlyphConstruction(
+                    variants = listOf(MathGlyphVariant(FALLBACK_GLYPH, 200)),
+                    assembly = null,
+                ),
+            ),
+        )
+        val stillNormal = assertNotNull(
+            withLargerVariant.testVerticalConstruction(
+                target = 80f,
+                normalHeight = 90f,
+                normalWidth = 37f,
+                glyphWidths = mapOf(FALLBACK_GLYPH to 99f),
+            ),
+        )
+        assertEquals(MathConstructionKind.BaseGlyph, stillNormal.kind)
+        assertEquals(TEST_GLYPH, stillNormal.components.single().glyphId)
+        assertNear(37f, stillNormal.orthogonalAdvancePx)
+    }
+
+    @Test
+    fun assemblyOrthogonalWidthUsesEveryPartRecordEvenWhenWidestExtenderIsSkipped() {
+        val widestExtender = 11.toUShort()
+        val font = LeteSansMath.load().copy(
+            verticalConstructions = mapOf(TEST_GLYPH to construction(withExtender = true)),
+        )
+        val selected = assertNotNull(
+            font.testVerticalConstruction(
+                target = 170f,
+                glyphWidths = mapOf(10.toUShort() to 23f, widestExtender to 91f, 12.toUShort() to 29f),
+            ),
+        )
+        assertEquals(MathConstructionKind.Assembly, selected.kind)
+        assertEquals(0, selected.extenderRepetitions)
+        assertTrue(selected.components.none { it.glyphId == widestExtender })
+        assertNear(91f, selected.orthogonalAdvancePx)
     }
 
     private fun construction(withExtender: Boolean): MathGlyphConstruction = MathGlyphConstruction(
@@ -174,6 +231,21 @@ class MathAssemblyAndKernTest {
         val FALLBACK_GLYPH: UShort = 2u
     }
 }
+
+private fun OpenTypeMathFont.testVerticalConstruction(
+    target: Float,
+    normalHeight: Float = 0f,
+    normalWidth: Float = 20f,
+    glyphWidths: Map<UShort, Float> = emptyMap(),
+): MathVerticalConstruction? = verticalConstruction(
+    MathVerticalConstructionRequest(
+        baseGlyphId = 1u,
+        targetSizePx = target,
+        fontSizePx = 1000f,
+        normalGlyphHeightPx = normalHeight,
+        normalGlyphAdvanceWidthPx = normalWidth,
+    ),
+) { glyphId -> glyphWidths[glyphId] ?: 20f }
 
 private fun <T> assertCompletesWithinOneSecond(block: () -> T): T {
     val executor = Executors.newSingleThreadExecutor { runnable ->

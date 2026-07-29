@@ -117,7 +117,9 @@ class MathVerticalSliceTest {
         assertTrue(data.variants.isNotEmpty(), "$label has parenthesis variants")
 
         val variantTarget = face.mathFont.scaleDesignUnits(data.variants.first().advanceMeasurement, size)
-        val variant = assertNotNull(face.mathFont.verticalConstruction(base, variantTarget, size))
+        val variant = assertNotNull(
+            face.mathFont.verticalConstructionForTest(face, base, variantTarget, size),
+        )
         assertEquals(MathConstructionKind.Variant, variant.kind, "$label chooses a sufficient variant")
         assertTrue(variant.reachesTarget)
 
@@ -126,7 +128,9 @@ class MathVerticalSliceTest {
             data.variants.last().advanceMeasurement + assemblyData.parts.sumOf { it.fullAdvance },
             size,
         )
-        val assembly = assertNotNull(face.mathFont.verticalConstruction(base, assemblyTarget, size))
+        val assembly = assertNotNull(
+            face.mathFont.verticalConstructionForTest(face, base, assemblyTarget, size),
+        )
         assertEquals(MathConstructionKind.Assembly, assembly.kind, "$label chooses assembly above variants")
         assertTrue(assembly.components.size > assemblyData.parts.count { !it.extender })
         assertTrue(assembly.reachesTarget, "$label assembly covers target")

@@ -12,6 +12,8 @@ import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.opentype.MathGlyphKernInfo
+import org.tiqian.math.font.opentype.MathGlyphConstruction
+import org.tiqian.math.font.opentype.MathGlyphVariant
 import org.tiqian.math.font.opentype.MathKernTable
 import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.font.stix.StixTwoMath
@@ -33,6 +35,44 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class MathGeometryAuditTest {
+    @Test
+    fun binomialDelimitersUseNormalGlyphBeforeLargerVariants() {
+        SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
+            val size = 40f
+            val range = SourceRange(0, 1)
+            val left = delegate.shapeConstructionBase("(", size, range).glyphs.single().glyphId
+            val right = delegate.shapeConstructionBase(")", size, range).glyphs.single().glyphId
+            val unrelated = delegate.shapeConstructionBase("√", size, range).glyphs.single().glyphId
+            val constants = delegate.mathFont.constants.copy(
+                delimitedSubFormulaMinHeight = 0,
+                stackTopShiftUp = 0,
+                stackTopDisplayStyleShiftUp = 0,
+                stackBottomShiftDown = 0,
+                stackBottomDisplayStyleShiftDown = 0,
+                stackGapMin = 0,
+                stackDisplayStyleGapMin = 0,
+            )
+            val font = delegate.mathFont.copy(
+                constants = constants,
+                verticalConstructions = delegate.mathFont.verticalConstructions + mapOf(
+                    left to MathGlyphConstruction(listOf(MathGlyphVariant(unrelated, 10_000)), null),
+                    right to MathGlyphConstruction(listOf(MathGlyphVariant(unrelated, 10_000)), null),
+                ),
+            )
+            val result = MathLayoutEngine(FontOverrideFace(delegate, font)).layout(
+                "\\binom{}{}",
+                MathLayoutOptions(MathMode.Inline, size),
+            )
+            val delimiters = result.decisions.filter { it.name == "BinomialDelimiter" }
+            assertEquals(2, delimiters.size)
+            delimiters.forEach { decision ->
+                assertEquals("BaseGlyph", decision.details["construction"])
+                assertEquals("MathMLCore5.3.2NormalGlyph", decision.details["constructionPolicy"])
+            }
+            assertTrue(result.box.glyphs.none { it.glyphId == unrelated })
+        }
+    }
+
     @Test
     fun ordinaryGroupsAreIndependentSubMlistsForBothFonts() = withAuditFaces { label, face ->
         val engine = MathLayoutEngine(face)

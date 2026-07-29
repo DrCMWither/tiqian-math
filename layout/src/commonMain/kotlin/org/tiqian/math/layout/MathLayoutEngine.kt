@@ -5,6 +5,7 @@ import org.tiqian.math.font.opentype.MathConstructionKind
 import org.tiqian.math.font.opentype.MathGlyphComponent
 import org.tiqian.math.font.opentype.MathKernCorner
 import org.tiqian.math.font.opentype.MathVerticalConstruction
+import org.tiqian.math.font.opentype.MathVerticalConstructionRequest
 import org.tiqian.math.font.opentype.OpenTypeMathConstants
 import org.tiqian.math.parser.MacroExpansionLimits
 import org.tiqian.math.parser.MathMacroDefinition
@@ -415,7 +416,14 @@ private class MathLayoutPass(
         val targetHeight = if (display) scale(constants.displayOperatorMinHeight, style) else 0f
         val construction = if (display) {
             resolved.constructionBaseGlyphId?.let {
-                glyphSource.mathFont.verticalConstruction(it, targetHeight, size)
+                selectVerticalConstruction(
+                    baseGlyphId = it,
+                    normalRun = resolved.run,
+                    targetHeight = targetHeight,
+                    size = size,
+                    style = style,
+                    range = node.commandRange,
+                )
             }
         } else {
             null
@@ -456,6 +464,7 @@ private class MathLayoutPass(
         }
 
         val finalGlyphId = when (construction?.kind) {
+            MathConstructionKind.BaseGlyph,
             MathConstructionKind.Variant ->
                 construction.components.singleOrNull()?.glyphId
             MathConstructionKind.Assembly -> null
@@ -493,7 +502,8 @@ private class MathLayoutPass(
             } else null),
             "assemblyValid" to assemblyValidation?.valid,
             "assemblyInvalidReasons" to assemblyValidation?.invalidReasons,
-            "assemblyConnectorValidationPolicy" to assemblyValidation?.connectorValidationPolicy,
+            "assemblyValidationPolicy" to assemblyValidation?.validationPolicy,
+            "assemblySpecificationDivergence" to assemblyValidation?.specificationDivergence,
             "assemblyCheckedConnectionCount" to assemblyValidation?.checkedConnectionCount,
             "displayOperatorMinHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
@@ -515,7 +525,7 @@ private class MathLayoutPass(
             italicCorrectionPx = italicCorrection,
             style = style,
             scriptBaseKind = if (
-                construction != null ||
+                (construction?.kind != null && construction.kind != MathConstructionKind.BaseGlyph) ||
                 box.glyphs.singleOrNull()?.glyphId in glyphSource.mathFont.extendedShapeGlyphs
             ) {
                 ScriptBaseKind.ExtendedShape
@@ -544,6 +554,26 @@ private class MathLayoutPass(
             )
         }
         return geometryExtents(run.width, placements, emptyList(), range)
+    }
+
+    /** One normal-glyph-first entry point shared by operators, radicals, and delimiters. */
+    private fun selectVerticalConstruction(
+        baseGlyphId: UShort,
+        normalRun: MeasuredMathRun,
+        targetHeight: Float,
+        size: Float,
+        style: MathStyle,
+        range: SourceRange,
+    ): MathVerticalConstruction? = glyphSource.mathFont.verticalConstruction(
+        MathVerticalConstructionRequest(
+            baseGlyphId = baseGlyphId,
+            targetSizePx = targetHeight,
+            fontSizePx = size,
+            normalGlyphHeightPx = normalRun.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f,
+            normalGlyphAdvanceWidthPx = normalRun.width,
+        ),
+    ) { glyphId ->
+        glyphSource.measureGlyph(glyphId, size, style, range).width
     }
 
     private fun operatorConstructionBox(
@@ -576,7 +606,8 @@ private class MathLayoutPass(
             "constructionPolicy" to construction.constructionPolicy,
             "assemblyValid" to construction.assemblyValidation?.valid,
             "assemblyInvalidReasons" to construction.assemblyValidation?.invalidReasons,
-            "assemblyConnectorValidationPolicy" to construction.assemblyValidation?.connectorValidationPolicy,
+            "assemblyValidationPolicy" to construction.assemblyValidation?.validationPolicy,
+            "assemblySpecificationDivergence" to construction.assemblyValidation?.specificationDivergence,
             "assemblyCheckedConnectionCount" to construction.assemblyValidation?.checkedConnectionCount,
             "uniformConnectorOverlapDesignUnits" to construction.uniformConnectorOverlap,
             "componentHorizontalOriginsPx" to placed.componentHorizontalOriginsPx.joinToString(","),
@@ -602,7 +633,7 @@ private class MathLayoutPass(
         sourceRange: SourceRange,
         centerComponentsHorizontally: Boolean,
     ): PlacedVerticalConstruction {
-        val width = componentRuns.maxOfOrNull { it.second.width } ?: 0f
+        val width = construction.orthogonalAdvancePx
         val assembly = construction.kind == MathConstructionKind.Assembly
         val horizontalOrigins = mutableListOf<Float>()
         val bottomOrigins = mutableListOf<Float>()
@@ -683,14 +714,10 @@ private class MathLayoutPass(
         val targetHeight = radicand.inkBounds.height + gapMin + ruleThickness
         val baseRadical = measuredRunBox(baseRun, node.commandRange, style, size)
         val baseGlyphHeight = baseRadical.inkBounds.height
-        val baseGlyphCoversTarget = baseGlyphHeight + GEOMETRY_EPSILON_PX >= targetHeight
-        // MathML Core 5.3.2 requires normal shaping before consulting variants. A font's
-        // MathGlyphVariantRecord list is not required to repeat the base glyph.
-        val construction = if (baseGlyphCoversTarget) {
-            null
-        } else {
-            baseGlyphId?.let { glyphSource.mathFont.verticalConstruction(it, targetHeight, size) }
+        val construction = baseGlyphId?.let {
+            selectVerticalConstruction(it, baseRun, targetHeight, size, style, node.commandRange)
         }
+        val baseGlyphCoversTarget = construction?.kind == MathConstructionKind.BaseGlyph
         val constructionRuns = construction?.components?.map { component ->
             component to glyphSource.measureGlyph(component.glyphId, size, style, node.commandRange)
         }
@@ -723,21 +750,23 @@ private class MathLayoutPass(
         }
         val radicalGlyphAscent = when (construction?.kind) {
             MathConstructionKind.Assembly -> achievedAdvance
+            MathConstructionKind.BaseGlyph,
             MathConstructionKind.Variant -> constructionRuns!!.single().second.ascent
             null -> baseRun.ascent
         }
         val radicalGlyphDescent = when (construction?.kind) {
             MathConstructionKind.Assembly -> 0f
+            MathConstructionKind.BaseGlyph,
             MathConstructionKind.Variant -> constructionRuns!!.single().second.descent
             null -> baseRun.descent
         }
         val radicalGlyphBlockSize = radicalGlyphAscent + radicalGlyphDescent
-        val constructionLabel = construction?.kind?.toString() ?: "BaseGlyph"
-        val selectionStep = when {
-            baseGlyphCoversTarget -> "NormalGlyphHeight"
-            construction?.kind == MathConstructionKind.Variant -> "MathGlyphVariantRecord"
-            construction?.kind == MathConstructionKind.Assembly -> "GlyphAssembly"
-            else -> "NoCoveringConstruction"
+        val constructionLabel = construction?.kind?.toString() ?: "Unavailable"
+        val selectionStep = when (construction?.kind) {
+            MathConstructionKind.BaseGlyph -> "NormalGlyphHeight"
+            MathConstructionKind.Variant -> "MathGlyphVariantRecord"
+            MathConstructionKind.Assembly -> "GlyphAssembly"
+            null -> "NoCoveringConstruction"
         }
         if (!baseGlyphCoversTarget && construction == null) {
             diagnostics += MathDiagnostic(
@@ -745,7 +774,7 @@ private class MathLayoutPass(
                 "The radical sign has no MATH construction covering ${targetHeight}px",
                 node.commandRange,
             )
-        } else if (construction != null && !construction.reachesTarget) {
+        } else if (!construction.reachesTarget) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MathVariantTooShort,
                 "The radical MATH construction does not cover the required radicand height",
@@ -873,9 +902,11 @@ private class MathLayoutPass(
             } else null),
             "assemblyValid" to assemblyValidation?.valid,
             "assemblyInvalidReasons" to assemblyValidation?.invalidReasons,
-            "assemblyConnectorValidationPolicy" to assemblyValidation?.connectorValidationPolicy,
+            "assemblyValidationPolicy" to assemblyValidation?.validationPolicy,
+            "assemblySpecificationDivergence" to assemblyValidation?.specificationDivergence,
             "assemblyCheckedConnectionCount" to assemblyValidation?.checkedConnectionCount,
             "uniformConnectorOverlapDesignUnits" to construction?.uniformConnectorOverlap,
+            "orthogonalAdvancePx" to construction?.orthogonalAdvancePx,
             "selectionStep" to selectionStep,
             "selectionPolicy" to "MathMLCore5.3.2NormalGlyphFirst",
             "targetMetric" to "RadicandInkHeightPlusGapAndRule",
@@ -912,6 +943,10 @@ private class MathLayoutPass(
             "radicalGlyphAscentPx" to radicalGlyphAscent,
             "radicalGlyphDescentPx" to radicalGlyphDescent,
             "radicalGlyphBlockSizePx" to radicalGlyphBlockSize,
+            "radicalBoxAdvancePx" to rawRadical.width,
+            "radicalPaintOriginY" to radicalBaselineInB,
+            "overbarAnchorPolicy" to "MathMLCoreRadicalBoxLineOverEdge",
+            "overbarLeftPolicy" to "RadicalBoxAdvance",
             "targetHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
             "unindexedAscentPx" to unindexedBox.ascent,
@@ -1443,8 +1478,10 @@ private class MathLayoutPass(
 
         fun construction(baseRun: MeasuredMathRun, side: String): MathVerticalConstruction? {
             val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
-            val selected = baseGlyphId?.let { glyphSource.mathFont.verticalConstruction(it, targetHeight, size) }
-            if (selected == null && baseRun.ascent + baseRun.descent + GEOMETRY_EPSILON_PX < targetHeight) {
+            val selected = baseGlyphId?.let {
+                selectVerticalConstruction(it, baseRun, targetHeight, size, style, node.range)
+            }
+            if (selected == null) {
                 diagnostics += MathDiagnostic(
                     DiagnosticCode.MissingMathConstruction,
                     "The $side parenthesis has no MATH construction covering ${targetHeight}px",
@@ -1551,9 +1588,11 @@ private class MathLayoutPass(
                 } else null),
                 "assemblyValid" to assemblyValidation?.valid,
                 "assemblyInvalidReasons" to assemblyValidation?.invalidReasons,
-                "assemblyConnectorValidationPolicy" to assemblyValidation?.connectorValidationPolicy,
+                "assemblyValidationPolicy" to assemblyValidation?.validationPolicy,
+                "assemblySpecificationDivergence" to assemblyValidation?.specificationDivergence,
                 "assemblyCheckedConnectionCount" to assemblyValidation?.checkedConnectionCount,
                 "uniformConnectorOverlapDesignUnits" to construction?.uniformConnectorOverlap,
+                "orthogonalAdvancePx" to construction?.orthogonalAdvancePx,
             )
             return box
         }

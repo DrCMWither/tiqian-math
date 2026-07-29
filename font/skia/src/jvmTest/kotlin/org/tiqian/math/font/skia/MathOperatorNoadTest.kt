@@ -15,6 +15,7 @@ import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.opentype.MathGlyphAssembly
 import org.tiqian.math.font.opentype.MathGlyphAssemblyPart
 import org.tiqian.math.font.opentype.MathGlyphConstruction
+import org.tiqian.math.font.opentype.MathGlyphVariant
 import org.tiqian.math.font.opentype.OpenTypeMathConstants
 import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.font.stix.StixTwoMath
@@ -244,6 +245,39 @@ class MathOperatorNoadTest {
     }
 
     @Test
+    fun displayOperatorUsesNormalGlyphBeforeAReadyLargerVariant() {
+        SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
+            val size = 40f
+            val range = SourceRange(0, 4)
+            val operatorGlyph = assertNotNull(
+                delegate.resolveOperator(
+                    MathOperatorGlyphRequest(MathLargeOperatorIdentity.Sum, MathStyle.Display, range),
+                    size,
+                ).constructionBaseGlyphId,
+            )
+            val unrelatedVariant = delegate.shapeConstructionBase("(", size, range).glyphs.single().glyphId
+            val overridden = delegate.mathFont.copy(
+                constants = delegate.mathFont.constants.copy(displayOperatorMinHeight = 1),
+                verticalConstructions = delegate.mathFont.verticalConstructions + (
+                    operatorGlyph to MathGlyphConstruction(
+                        variants = listOf(MathGlyphVariant(unrelatedVariant, 10_000)),
+                        assembly = null,
+                    )
+                ),
+            )
+            val result = MathLayoutEngine(OperatorOverrideFace(delegate, overridden)).layout(
+                "\\sum",
+                MathLayoutOptions(MathMode.Display, size),
+            )
+            val decision = result.operatorDecision()
+            assertEquals("BaseGlyph", decision.details["construction"])
+            assertEquals("MathMLCore5.3.2NormalGlyph", decision.details["constructionPolicy"])
+            assertTrue(result.box.glyphs.any { it.glyphId == operatorGlyph })
+            assertTrue(result.box.glyphs.none { it.glyphId == unrelatedVariant })
+        }
+    }
+
+    @Test
     fun heterogeneousAssemblyGlyphBottomsFollowAdvanceOffsets() {
         SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
             val size = 40f
@@ -282,7 +316,8 @@ class MathOperatorNoadTest {
                 ),
             )
             val construction = assertNotNull(
-                overriddenFont.verticalConstruction(
+                overriddenFont.verticalConstructionForTest(
+                    delegate,
                     operatorGlyph,
                     overriddenFont.scaleDesignUnits(1_800, size),
                     size,
