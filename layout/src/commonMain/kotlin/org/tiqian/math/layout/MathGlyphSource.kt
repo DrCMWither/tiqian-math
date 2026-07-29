@@ -3,6 +3,7 @@ package org.tiqian.math.layout
 import org.tiqian.math.core.MathRect
 import org.tiqian.math.core.MathAlphabet
 import org.tiqian.math.core.MathFamily
+import org.tiqian.math.core.MathLargeOperatorIdentity
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.MathSymbolIdentity
 import org.tiqian.math.core.SourceRange
@@ -41,6 +42,23 @@ data class ResolvedMathSymbol(
     val supported: Boolean,
 )
 
+/** Semantic request for a TeX op noad in the fixed LargeSymbols family. */
+data class MathOperatorGlyphRequest(
+    val identity: MathLargeOperatorIdentity,
+    val style: MathStyle,
+    val sourceRange: SourceRange,
+)
+
+/**
+ * The style-shaped run is used for normal operators. [constructionBaseGlyphId] deliberately
+ * bypasses `ssty`, since MathVariants coverage is keyed by the base large-operator glyph.
+ */
+data class ResolvedMathOperator(
+    val run: MeasuredMathRun,
+    val backendScalar: Int,
+    val constructionBaseGlyphId: UShort?,
+)
+
 /**
  * One shaping result for consecutive compatible Ord noads. [glyphSourceRanges] is parallel to
  * [MeasuredMathRun.glyphs] and maps backend shaping clusters back to the untouched input.
@@ -66,6 +84,11 @@ interface MathFontFace {
         request: MathSymbolGlyphRequest,
         fontSizePx: Float,
     ): ResolvedMathSymbol
+
+    fun resolveOperator(
+        request: MathOperatorGlyphRequest,
+        fontSizePx: Float,
+    ): ResolvedMathOperator
 
     /** Resolve and shape a compatible Ord run in one backend shaping call. */
     fun resolveSymbols(

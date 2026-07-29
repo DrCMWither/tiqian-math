@@ -133,7 +133,7 @@ private fun FontSample(label: String, face: SkiaMathFontFace, mode: MathMode) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(label, fontSize = 13.sp, color = Color(0xFF55504A))
         TiqianMath(
-            source = "x_1^2+\\frac{a+b}{\\binom{n}{k}}=y_2^3",
+            source = "\\sum_{i=1}^n+\\int\\limits_0^1+x_1^2+\\frac{a+b}{\\binom{n}{k}}=y_2^3",
             modifier = Modifier.background(Color.White).padding(8.dp),
             mode = mode,
             fontFace = face,

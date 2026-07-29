@@ -156,6 +156,42 @@ class TiqianMathRenderTest {
             assertTrue(darkRowBands(pixels, snapshot.width, snapshot.height).size >= 2, "raster contains multiple separated math lines")
         }
     }
+
+    @Test
+    fun displayOperatorLimitsReachActualComposeMeasureBaselineAndRaster() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var measured: MeasureSnapshot? = null
+            var observed: MathLayoutResult? = null
+            ImageComposeScene(width = 360, height = 260, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    CompositionLocalProvider(
+                        LocalTextStyle provides TextStyle(fontSize = 40.sp, lineHeight = 48.sp, color = Color.Black),
+                    ) {
+                        MeasureProbe(onMeasured = { measured = it }) {
+                            TiqianMath(
+                                source = "\\sum_i^n+\\int\\limits_0^1",
+                                modifier = Modifier.padding(10.dp),
+                                mode = MathMode.Display,
+                                fontFace = face,
+                                onMathLayout = { observed = it },
+                            )
+                        }
+                    }
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                val snapshot = assertNotNull(measured)
+                val layout = assertNotNull(observed)
+                assertTrue(layout.decisions.count { it.name == "TeXOperatorNoad" } == 2)
+                assertTrue(layout.decisions.count { it.name == "OpenTypeMathOperatorLimits" } == 2)
+                assertTrue(snapshot.firstBaseline in 10 until snapshot.height - 10)
+                assertTrue(snapshot.height > 48, "stacked limits expand actual Compose height")
+                val ink = darkPixelBounds(pixels)
+                assertTrue(ink.left >= 10 && ink.right < snapshot.width - 10, "operator ink is not horizontally cropped")
+                assertTrue(ink.top >= 10 && ink.bottom < snapshot.height - 10, "operator limits are not vertically cropped")
+            }
+        }
+    }
 }
 
 private data class MeasureSnapshot(val width: Int, val height: Int, val firstBaseline: Int)

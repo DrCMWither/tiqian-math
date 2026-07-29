@@ -297,6 +297,11 @@ private class ConstantOverrideFace(
         fontSizePx: Float,
     ): org.tiqian.math.layout.ResolvedMathSymbol = delegate.resolveSymbol(request, fontSizePx)
 
+    override fun resolveOperator(
+        request: MathOperatorGlyphRequest,
+        fontSizePx: Float,
+    ): ResolvedMathOperator = delegate.resolveOperator(request, fontSizePx)
+
     override fun resolveSymbols(
         requests: List<MathSymbolGlyphRequest>,
         fontSizePx: Float,

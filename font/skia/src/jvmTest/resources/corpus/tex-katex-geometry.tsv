@@ -5,4 +5,6 @@ tight-spacing	x_{k-1}	KaTeX spacingData tight table	binary glue is suppressed in
 cramped-superscript	\frac{a}{x^{y^z}}	KaTeX Style.sup [S,Sc,S,Sc,SS,SSc,SS,SSc]	nested denominator superscripts remain ScriptScriptCramped
 script-binomial	\frac{a}{\binom{n}{k}}	TeX style transitions; OpenType MATH variants	ScriptCramped delimiters use base-glyph construction coverage
 math-kern	x_1^2	OpenType MATH MathKern two-height algorithm	parsed corner kerns participate in final script x
+operator-auto	\sum_i^n	TeX make_op displaylimits; OpenType MATH n-ary variants	Auto uses stacked limits only in display style and the operator follows the math axis
+operator-integral	\int_i^n	plain.tex integral nolimits; TeX op noad	integrals default to side scripts while an explicit limits modifier overrides
 assembly	\binom{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{a}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{k}	OpenType MATH GlyphAssembly	extenders repeat and connector overlap covers the target

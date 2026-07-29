@@ -88,6 +88,24 @@ private class ParserState(
         while (true) {
             skipIgnored()
             val marker = peek()
+            if (
+                base is MathOperator &&
+                marker.kind == MathTokenKind.ControlWord &&
+                marker.text in limitsModifiers
+            ) {
+                advance()
+                base = base.copy(
+                    limitsPolicy = if (marker.text == "limits") {
+                        MathLimitsPolicy.Limits
+                    } else {
+                        MathLimitsPolicy.NoLimits
+                    },
+                    limitsModifierRange = marker.range,
+                    range = base.range.cover(marker.range),
+                )
+                totalRange = totalRange.cover(marker.range)
+                continue
+            }
             if (marker.kind != MathTokenKind.Superscript && marker.kind != MathTokenKind.Subscript) break
             advance()
             val argument = parseScriptArgument(marker)
@@ -177,6 +195,16 @@ private class ParserState(
     }
 
     private fun parseControlWord(token: MathToken): MathNode {
+        TeXMathSymbolTable.largeOperator(token.text)?.let { identity ->
+            return MathOperator(
+                sourceText = sourceSlice(token.range),
+                identity = identity,
+                limitsPolicy = identity.defaultLimitsPolicy,
+                commandRange = token.range,
+                limitsModifierRange = null,
+                range = token.range,
+            )
+        }
         TeXMathSymbolTable.command(token.text)?.let { spec ->
             return symbolNode(token, spec)
         }
@@ -202,6 +230,15 @@ private class ParserState(
                 hasParentheses = token.text == "binom",
                 range = token.range.cover(numerator.range).cover(denominator.range),
             )
+        }
+
+        if (token.text in limitsModifiers) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MisplacedLimitsModifier,
+                "Command \\${token.text} must immediately follow a large operator",
+                token.range,
+            )
+            return MathErrorNode(sourceSlice(token.range), token.range)
         }
 
         val code = if (token.text in explicitlyUnsupportedCommands) {
@@ -259,11 +296,13 @@ private class ParserState(
         )
 
         val explicitlyUnsupportedCommands = setOf(
-            "sqrt", "left", "right", "sum", "prod", "int", "oint", "overline", "underline",
+            "sqrt", "left", "right", "overline", "underline",
             "hat", "bar", "vec", "begin", "end", "text", "operatorname", "limits", "nolimits",
             "matrix", "cases", "newcommand", "def", "color", "mathnormal", "mathit", "mathbf",
             "boldsymbol", "mathsf",
         )
+
+        val limitsModifiers = setOf("limits", "nolimits")
 
     }
 }

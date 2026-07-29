@@ -18,10 +18,12 @@ import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathFontFace
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathOperatorGlyphRequest
 import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathRun
 import org.tiqian.math.layout.ResolvedMathSymbol
 import org.tiqian.math.layout.ResolvedMathSymbolRun
+import org.tiqian.math.layout.ResolvedMathOperator
 import org.tiqian.math.layout.breakIntoLines
 import kotlin.math.abs
 import kotlin.test.Test
@@ -340,6 +342,11 @@ private class FontOverrideFace(
 ) : MathFontFace {
     override fun resolveSymbol(request: MathSymbolGlyphRequest, fontSizePx: Float): ResolvedMathSymbol =
         delegate.resolveSymbol(request, fontSizePx)
+
+    override fun resolveOperator(
+        request: MathOperatorGlyphRequest,
+        fontSizePx: Float,
+    ): ResolvedMathOperator = delegate.resolveOperator(request, fontSizePx)
 
     override fun resolveSymbols(
         requests: List<MathSymbolGlyphRequest>,

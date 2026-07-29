@@ -14,11 +14,21 @@ class LeteSansMathTest {
         assertEquals(OpenTypeLineMetrics(750, -250, 0), font.lineMetrics)
         assertEquals(70, font.constants.scriptPercentScaleDown)
         assertEquals(55, font.constants.scriptScriptPercentScaleDown)
+        assertEquals(1400, font.constants.displayOperatorMinHeight)
         assertEquals(280, font.constants.axisHeight)
         assertEquals(250, font.constants.subscriptShiftDown)
         assertEquals(420, font.constants.superscriptShiftUp)
         assertEquals(370, font.constants.superscriptShiftUpCramped)
         assertEquals(170, font.constants.subSuperscriptGapMin)
+        assertEquals(
+            listOf(150, 150, 150, 600),
+            listOf(
+                font.constants.upperLimitGapMin,
+                font.constants.upperLimitBaselineRiseMin,
+                font.constants.lowerLimitGapMin,
+                font.constants.lowerLimitBaselineDropMin,
+            ),
+        )
         assertEquals(580, font.constants.fractionNumeratorDisplayStyleShiftUp)
         assertEquals(700, font.constants.fractionDenominatorDisplayStyleShiftDown)
         assertEquals(66, font.constants.fractionRuleThickness)

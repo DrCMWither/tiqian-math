@@ -42,6 +42,7 @@ enum class DiagnosticCode {
     DuplicateSubscript,
     DuplicateSuperscript,
     MissingCommandArgument,
+    MisplacedLimitsModifier,
     UnknownCommand,
     UnsupportedCommand,
     UnsupportedMathAlphabet,

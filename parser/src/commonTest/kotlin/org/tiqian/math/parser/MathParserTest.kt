@@ -51,6 +51,75 @@ class MathParserTest {
     }
 
     @Test
+    fun parsesLargeOperatorsWithPlainTexDefaultsAndExplicitLimitPolicies() {
+        val source = "\\sum_{i=1}^n+\\prod\\nolimits_k+\\int_0^1+\\oint\\limits_C"
+        val result = MathParser().parse(source)
+
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val scripted = result.root.children.filterIsInstance<MathScripts>()
+        assertEquals(4, scripted.size)
+
+        val sum = assertIs<MathOperator>(scripted[0].base)
+        assertEquals(MathLargeOperatorIdentity.Sum, sum.identity)
+        assertEquals(MathLimitsPolicy.Auto, sum.limitsPolicy)
+        assertTrue(!sum.hasExplicitLimitsPolicy)
+        assertEquals("\\sum", sum.sourceText)
+        assertEquals(SourceRange(0, 4), sum.commandRange)
+        assertEquals(SourceRange(0, 4), sum.range)
+
+        val product = assertIs<MathOperator>(scripted[1].base)
+        assertEquals(MathLargeOperatorIdentity.Product, product.identity)
+        assertEquals(MathLimitsPolicy.NoLimits, product.limitsPolicy)
+        assertEquals(
+            SourceRange(source.indexOf("\\nolimits"), source.indexOf("\\nolimits") + "\\nolimits".length),
+            product.limitsModifierRange,
+        )
+        assertEquals(source.indexOf("\\prod") + "\\prod\\nolimits".length, product.range.endExclusive)
+
+        val integral = assertIs<MathOperator>(scripted[2].base)
+        assertEquals(MathLargeOperatorIdentity.Integral, integral.identity)
+        assertEquals(MathLimitsPolicy.NoLimits, integral.limitsPolicy)
+        assertTrue(!integral.hasExplicitLimitsPolicy)
+
+        val contour = assertIs<MathOperator>(scripted[3].base)
+        assertEquals(MathLargeOperatorIdentity.ContourIntegral, contour.identity)
+        assertEquals(MathLimitsPolicy.Limits, contour.limitsPolicy)
+        assertEquals(SourceRange(source.indexOf("\\oint"), source.indexOf("_C")), contour.range)
+    }
+
+    @Test
+    fun operatorLimitModifiersCanSwitchBeforeBetweenOrAfterScripts() {
+        val result = MathParser().parse(
+            "\\sum\\limits_i^n+\\sum_i\\nolimits^n+\\int_0^1\\limits+\\prod\\limits\\nolimits_k",
+        )
+
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val operators = result.root.children.filterIsInstance<MathScripts>().map {
+            assertIs<MathOperator>(it.base)
+        }
+        assertEquals(
+            listOf(
+                MathLimitsPolicy.Limits,
+                MathLimitsPolicy.NoLimits,
+                MathLimitsPolicy.Limits,
+                MathLimitsPolicy.NoLimits,
+            ),
+            operators.map { it.limitsPolicy },
+        )
+        assertTrue(operators.all { it.hasExplicitLimitsPolicy })
+        assertTrue(operators.all { it.sourceText.length == it.commandRange.length })
+        assertTrue(operators.all { it.range.endExclusive == it.limitsModifierRange?.endExclusive })
+    }
+
+    @Test
+    fun limitsModifierOutsideAnOperatorRecoversExplicitly() {
+        val result = MathParser().parse("x\\limits+y\\nolimits")
+
+        assertEquals(2, result.diagnostics.count { it.code == DiagnosticCode.MisplacedLimitsModifier })
+        assertEquals(2, result.root.children.count { it is MathErrorNode })
+    }
+
+    @Test
     fun recoversAfterUnknownCommandAndUnclosedGroup() {
         val result = MathParser().parse("a+\\unknown{b+c")
 

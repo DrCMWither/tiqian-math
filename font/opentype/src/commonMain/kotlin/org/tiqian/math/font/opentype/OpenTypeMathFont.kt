@@ -19,6 +19,10 @@ data class OpenTypeMathConstants(
     val subSuperscriptGapMin: Int,
     val superscriptBottomMaxWithSubscript: Int,
     val spaceAfterScript: Int,
+    val upperLimitGapMin: Int,
+    val upperLimitBaselineRiseMin: Int,
+    val lowerLimitGapMin: Int,
+    val lowerLimitBaselineDropMin: Int,
     val stackTopShiftUp: Int,
     val stackTopDisplayStyleShiftUp: Int,
     val stackBottomShiftDown: Int,
@@ -52,6 +56,8 @@ data class MathGlyphAssemblyPart(
 data class MathGlyphAssembly(
     val parts: List<MathGlyphAssemblyPart>,
     val minimumConnectorOverlap: Int,
+    /** MATH GlyphAssembly italics correction, in design units. */
+    val italicCorrection: Int = 0,
 )
 
 data class MathGlyphConstruction(
@@ -120,6 +126,8 @@ data class MathVerticalConstruction(
     val connectorOverlaps: List<Float> = emptyList(),
     /** Number of instances inserted for each extender record. */
     val extenderRepetitions: Int = 0,
+    /** Present only for a GlyphAssembly; variants use their glyph correction record. */
+    val assemblyItalicCorrection: Int? = null,
 )
 
 data class OpenTypeMathFont(
@@ -255,6 +263,7 @@ data class OpenTypeMathFont(
             reachesTarget = actualAdvance + ASSEMBLY_REACH_EPSILON_DESIGN_UNITS >= target,
             connectorOverlaps = overlaps,
             extenderRepetitions = extenderRepetitions,
+            assemblyItalicCorrection = assembly.italicCorrection,
         )
     }
 
@@ -377,6 +386,10 @@ class OpenTypeMathReader {
             subSuperscriptGapMin = value(11),
             superscriptBottomMaxWithSubscript = value(12),
             spaceAfterScript = value(13),
+            upperLimitGapMin = value(14),
+            upperLimitBaselineRiseMin = value(15),
+            lowerLimitGapMin = value(16),
+            lowerLimitBaselineDropMin = value(17),
             stackTopShiftUp = value(18),
             stackTopDisplayStyleShiftUp = value(19),
             stackBottomShiftDown = value(20),
@@ -493,7 +506,11 @@ class OpenTypeMathReader {
             } else {
                 val assemblyBase = construction + assemblyOffset
                 reader.requireRange(assemblyBase, 6)
-                readStaticMathValue(reader, assemblyBase, "GlyphAssembly.italicsCorrection")
+                val italicCorrection = readStaticMathValue(
+                    reader,
+                    assemblyBase,
+                    "GlyphAssembly.italicsCorrection",
+                )
                 val partCount = reader.u16(assemblyBase + 4)
                 reader.requireRange(assemblyBase + 6, partCount * 10)
                 MathGlyphAssembly(
@@ -508,6 +525,7 @@ class OpenTypeMathReader {
                         )
                     },
                     minimumConnectorOverlap = minimumConnectorOverlap,
+                    italicCorrection = italicCorrection,
                 )
             }
             glyphId to MathGlyphConstruction(variants, assembly)

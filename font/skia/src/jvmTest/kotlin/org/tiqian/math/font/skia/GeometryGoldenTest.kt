@@ -38,6 +38,8 @@ class GeometryGoldenTest {
                 GoldenCase("tight", "x_{k-1}", MathMode.Inline, 40f),
                 GoldenCase("cramped", "\\frac{a}{x^{y^z}}", MathMode.Inline, 40f),
                 GoldenCase("script-binomial", "\\frac{a}{\\binom{n}{k}}", MathMode.Inline, 40f),
+                GoldenCase("operator-inline", "\\sum_i^n+\\int_0^1", MathMode.Inline, 40f),
+                GoldenCase("operator-display", "\\sum_i^n+\\int\\limits_0^1", MathMode.Display, 40f),
                 GoldenCase("adjustment", "a,b=c+d", MathMode.Inline, 40f),
             ).forEach { case ->
                 val result = engine.layout(case.source, MathLayoutOptions(case.mode, case.size))
@@ -81,6 +83,34 @@ class GeometryGoldenTest {
                         "  evidence=" + result.decisions.filter { it.name == "BinomialDelimiter" }.joinToString(",") {
                             "${it.details["side"]}:${it.details["baseGlyphId"]}/${it.details["construction"]}/" +
                                 "${it.details.getValue("targetPx").toFloat().fmt()}/${it.details.getValue("achievedAdvancePx").toFloat().fmt()}"
+                        },
+                    )
+                    "operator-inline", "operator-display" -> appendLine(
+                        "  evidence=" + result.decisions.filter {
+                            it.name == "TeXOperatorNoad" ||
+                                it.name == "TeXOperatorLimitsPolicy" ||
+                                it.name == "OpenTypeMathOperatorLimits" ||
+                                it.name == "TeXOperatorSideScripts"
+                        }.joinToString(",") { decision ->
+                            when (decision.name) {
+                                "TeXOperatorNoad" ->
+                                    "op:${decision.details["identity"]}/${decision.details["style"]}/" +
+                                        "${decision.details["construction"]}/" +
+                                        "${decision.details.getValue("displayOperatorMinHeightPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("achievedAdvancePx").toFloat().fmt()}/" +
+                                        "axis=${decision.details.getValue("inkCenterAfter").toFloat().fmt()}/" +
+                                        "ic=${decision.details.getValue("italicCorrectionPx").toFloat().fmt()}/" +
+                                        decision.details["italicCorrectionSource"]
+                                "TeXOperatorLimitsPolicy" ->
+                                    "policy:${decision.details["identity"]}/${decision.details["declaredPolicy"]}->" +
+                                        "${decision.details["effectivePolicy"]}/${decision.details["reason"]}"
+                                "OpenTypeMathOperatorLimits" ->
+                                    "limits:${decision.details.getValue("actualUpperGapPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("actualUpperBaselineRisePx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("actualLowerGapPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("actualLowerBaselineDropPx").toFloat().fmt()}"
+                                else -> "side:${decision.details["identity"]}/${decision.details["style"]}"
+                            }
                         },
                     )
                     "adjustment" -> appendLine(

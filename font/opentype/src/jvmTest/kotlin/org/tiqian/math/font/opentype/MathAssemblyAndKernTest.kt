@@ -29,6 +29,7 @@ class MathAssemblyAndKernTest {
         val oneRound = font.verticalConstruction(TEST_GLYPH, 220f, 1000f)!!
         assertEquals(1, oneRound.extenderRepetitions)
         assertEquals(3, oneRound.components.size)
+        assertEquals(73, oneRound.assemblyItalicCorrection)
         assertEqualOverlaps(oneRound.connectorOverlaps)
         assertNear(220f, oneRound.advanceMeasurement)
 
@@ -57,6 +58,7 @@ class MathAssemblyAndKernTest {
                 add(MathGlyphAssemblyPart(12u, 40, 0, 100, false))
             },
             minimumConnectorOverlap = 10,
+            italicCorrection = 73,
         ),
     )
 

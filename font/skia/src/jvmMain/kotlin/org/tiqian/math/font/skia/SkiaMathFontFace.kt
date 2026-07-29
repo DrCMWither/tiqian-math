@@ -16,11 +16,13 @@ import org.jetbrains.skia.shaper.TrivialScriptRunIterator
 import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.layout.MathFontFace
+import org.tiqian.math.layout.MathOperatorGlyphRequest
 import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathGlyph
 import org.tiqian.math.layout.MeasuredMathRun
 import org.tiqian.math.layout.ResolvedMathSymbol
 import org.tiqian.math.layout.ResolvedMathSymbolRun
+import org.tiqian.math.layout.ResolvedMathOperator
 import kotlin.math.max
 
 /**
@@ -58,6 +60,23 @@ class SkiaMathFontFace(
             ),
             backendScalar = selection.scalar,
             supported = selection.supported,
+        )
+    }
+
+    override fun resolveOperator(
+        request: MathOperatorGlyphRequest,
+        fontSizePx: Float,
+    ): ResolvedMathOperator {
+        val backendScalar = request.identity.baseScalar
+        val backendText = unicodeScalarString(backendScalar)
+        return ResolvedMathOperator(
+            run = shape(backendText, fontSizePx, request.style, request.sourceRange),
+            backendScalar = backendScalar,
+            constructionBaseGlyphId = shapeConstructionBase(
+                backendText,
+                fontSizePx,
+                request.sourceRange,
+            ).glyphs.singleOrNull()?.glyphId,
         )
     }
 

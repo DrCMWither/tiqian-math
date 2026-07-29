@@ -2,6 +2,7 @@ package org.tiqian.math.layout
 
 import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.MathKernCorner
+import org.tiqian.math.font.opentype.MathConstructionKind
 import org.tiqian.math.font.opentype.MathVerticalConstruction
 import org.tiqian.math.font.opentype.OpenTypeMathConstants
 import org.tiqian.math.parser.MacroExpansionLimits
@@ -134,7 +135,12 @@ private class MathLayoutPass(
         is MathList -> layoutList(node, style, alphabetOverride).laid
         is MathGroup -> layoutGroup(node, style, alphabetOverride)
         is MathSymbol -> layoutSymbol(node, style, alphabetOverride)
-        is MathScripts -> layoutScripts(node, style, alphabetOverride)
+        is MathOperator -> layoutOperator(node, style)
+        is MathScripts -> if (node.base is MathOperator) {
+            layoutOperatorScripts(node, node.base as MathOperator, style, alphabetOverride)
+        } else {
+            layoutScripts(node, style, alphabetOverride)
+        }
         is MathFraction -> layoutFraction(node, style, alphabetOverride)
         is MathStyleDeclaration -> LaidNode(
             node,
@@ -389,8 +395,331 @@ private class MathLayoutPass(
         sourceRange = node.range,
     )
 
-    private fun layoutScripts(node: MathScripts, style: MathStyle, alphabetOverride: MathAlphabetOverride?): LaidNode {
-        val base = layoutNode(node.base, style, alphabetOverride)
+    private fun layoutOperator(node: MathOperator, style: MathStyle): LaidNode {
+        val size = fontSize(style)
+        val resolved = glyphSource.resolveOperator(
+            MathOperatorGlyphRequest(node.identity, style, node.commandRange),
+            size,
+        )
+        if (resolved.run.missingGlyph) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingGlyph,
+                "The selected formula-wide math face has no LargeSymbols glyph for ${node.identity.debugName}",
+                node.commandRange,
+            )
+        }
+
+        val display = style.level == MathStyleLevel.Display
+        val targetHeight = if (display) scale(constants.displayOperatorMinHeight, style) else 0f
+        val construction = if (display) {
+            resolved.constructionBaseGlyphId?.let {
+                glyphSource.mathFont.verticalConstruction(it, targetHeight, size)
+            }
+        } else {
+            null
+        }
+        val rawBox = if (construction != null) {
+            operatorConstructionBox(construction, node, style, size)
+        } else {
+            measuredRunBox(resolved.run, node.commandRange, style, size)
+        }
+        val axisY = -scale(constants.axisHeight, style)
+        val inkCenterBefore = (rawBox.inkBounds.top + rawBox.inkBounds.bottom) / 2f
+        val centerShift = axisY - inkCenterBefore
+        val centeredPlacements = rawBox.glyphs.map { placement ->
+            placement.copy(
+                baselineY = placement.baselineY + centerShift,
+                inkBounds = placement.inkBounds.translated(0f, centerShift),
+            )
+        }
+        val box = geometryExtents(rawBox.width, centeredPlacements, rawBox.rules, node.range)
+        val achievedAdvance = construction?.let {
+            glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
+        } ?: rawBox.inkBounds.height
+        if (display && construction == null && achievedAdvance + GEOMETRY_EPSILON_PX < targetHeight) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingMathConstruction,
+                "${node.identity.debugName} has no MATH construction covering ${targetHeight}px",
+                node.commandRange,
+            )
+        } else if (display && construction != null && !construction.reachesTarget) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MathVariantTooShort,
+                "${node.identity.debugName} MATH construction does not reach DisplayOperatorMinHeight",
+                node.commandRange,
+                DiagnosticSeverity.Warning,
+            )
+        }
+
+        val finalGlyphId = when (construction?.kind) {
+            MathConstructionKind.Variant ->
+                construction.components.singleOrNull()?.glyphId
+            MathConstructionKind.Assembly -> null
+            null -> resolved.run.glyphs.lastOrNull()?.glyphId
+        }
+        val italicCorrectionSource = if (
+            construction?.kind == MathConstructionKind.Assembly
+        ) {
+            "GlyphAssembly"
+        } else {
+            "MathItalicsCorrectionInfo"
+        }
+        val italicCorrection = construction?.assemblyItalicCorrection?.let {
+            glyphSource.mathFont.scaleDesignUnits(it, size)
+        } ?: finalGlyphId?.let {
+            glyphSource.mathFont.italicCorrection(it, size)
+        } ?: 0f
+        decision(
+            "TeXOperatorNoad",
+            node.range,
+            "sourceText" to node.sourceText,
+            "commandRange" to node.commandRange,
+            "identity" to node.identity.debugName,
+            "atomClass" to node.atomClass,
+            "family" to node.family,
+            "baseScalar" to unicodeLabel(node.identity.baseScalar),
+            "backendScalar" to unicodeLabel(resolved.backendScalar),
+            "style" to style,
+            "fontSizePx" to size,
+            "constructionBaseGlyphId" to resolved.constructionBaseGlyphId,
+            "glyphIds" to box.glyphs.joinToString(",") { it.glyphId.toString() },
+            "construction" to (construction?.kind ?: "BaseGlyph"),
+            "displayOperatorMinHeightPx" to targetHeight,
+            "achievedAdvancePx" to achievedAdvance,
+            "reachesTarget" to if (display) achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight else true,
+            "axisY" to axisY,
+            "inkCenterBefore" to inkCenterBefore,
+            "centerShiftPx" to centerShift,
+            "inkCenterAfter" to (box.inkBounds.top + box.inkBounds.bottom) / 2f,
+            "italicCorrectionPx" to italicCorrection,
+            "italicCorrectionSource" to italicCorrectionSource,
+            "limitsPolicy" to node.limitsPolicy,
+            "limitsPolicyExplicit" to node.hasExplicitLimitsPolicy,
+            "limitsModifierRange" to node.limitsModifierRange,
+        )
+        return LaidNode(
+            node = node,
+            box = box,
+            atomClass = MathAtomClass.Operator,
+            italicCorrectionPx = italicCorrection,
+            style = style,
+            scriptBaseKind = if (
+                construction != null ||
+                box.glyphs.singleOrNull()?.glyphId in glyphSource.mathFont.extendedShapeGlyphs
+            ) {
+                ScriptBaseKind.ExtendedShape
+            } else {
+                ScriptBaseKind.Character
+            },
+        )
+    }
+
+    private fun measuredRunBox(
+        run: MeasuredMathRun,
+        range: SourceRange,
+        style: MathStyle,
+        size: Float,
+    ): MathBox {
+        val placements = run.glyphs.map { glyph ->
+            MathGlyphPlacement(
+                glyphId = glyph.glyphId,
+                x = glyph.x,
+                baselineY = 0f,
+                advance = glyph.advance,
+                inkBounds = glyph.inkBounds.translated(glyph.x, 0f),
+                fontSizePx = size,
+                sourceRange = range,
+                style = style,
+            )
+        }
+        return geometryExtents(run.width, placements, emptyList(), range)
+    }
+
+    private fun operatorConstructionBox(
+        construction: MathVerticalConstruction,
+        node: MathOperator,
+        style: MathStyle,
+        size: Float,
+    ): MathBox {
+        val componentRuns = construction.components.map { component ->
+            component to glyphSource.measureGlyph(component.glyphId, size, style, node.commandRange)
+        }
+        val width = componentRuns.maxOfOrNull { it.second.width } ?: 0f
+        val placements = if (
+            construction.kind == MathConstructionKind.Variant
+        ) {
+            componentRuns.flatMap { (_, run) -> measuredRunBox(run, node.commandRange, style, size).glyphs }
+        } else {
+            componentRuns.flatMap { (component, run) ->
+                val componentBottomY = -glyphSource.mathFont.scaleDesignUnits(component.offset, size)
+                run.glyphs.map { glyph ->
+                    val baselineY = componentBottomY - glyph.inkBounds.bottom
+                    MathGlyphPlacement(
+                        glyphId = glyph.glyphId,
+                        x = glyph.x,
+                        baselineY = baselineY,
+                        advance = glyph.advance,
+                        inkBounds = glyph.inkBounds.translated(glyph.x, baselineY),
+                        fontSizePx = size,
+                        sourceRange = node.commandRange,
+                        style = style,
+                    )
+                }
+            }
+        }
+        decision(
+            "OpenTypeOperatorConstruction",
+            node.range,
+            "kind" to construction.kind,
+            "componentGlyphIds" to construction.components.joinToString(",") { it.glyphId.toString() },
+            "componentOffsetsDesignUnits" to construction.components.joinToString(",") { it.offset.toString() },
+            "advanceMeasurementDesignUnits" to construction.advanceMeasurement,
+            "extenderRepetitions" to construction.extenderRepetitions,
+            "connectorOverlapsDesignUnits" to construction.connectorOverlaps,
+            "assemblyItalicCorrectionDesignUnits" to construction.assemblyItalicCorrection,
+            "placementOrigin" to if (
+                construction.kind == MathConstructionKind.Assembly
+            ) "shared-left/component-bottom" else "glyph-baseline",
+        )
+        return geometryExtents(width, placements, emptyList(), node.range)
+    }
+
+    private fun layoutOperatorScripts(
+        node: MathScripts,
+        operator: MathOperator,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val base = layoutOperator(operator, style)
+        val effectivePolicy = when (operator.limitsPolicy) {
+            MathLimitsPolicy.Limits -> MathLimitsPolicy.Limits
+            MathLimitsPolicy.NoLimits -> MathLimitsPolicy.NoLimits
+            MathLimitsPolicy.Auto -> if (style.level == MathStyleLevel.Display) {
+                MathLimitsPolicy.Limits
+            } else {
+                MathLimitsPolicy.NoLimits
+            }
+        }
+        val reason = when {
+            operator.hasExplicitLimitsPolicy -> "explicit-postfix-modifier"
+            operator.limitsPolicy == MathLimitsPolicy.Auto && style.level == MathStyleLevel.Display -> "auto-display"
+            operator.limitsPolicy == MathLimitsPolicy.Auto -> "auto-non-display"
+            else -> "plain-tex-operator-default"
+        }
+        decision(
+            "TeXOperatorLimitsPolicy",
+            node.range,
+            "identity" to operator.identity.debugName,
+            "declaredPolicy" to operator.limitsPolicy,
+            "effectivePolicy" to effectivePolicy,
+            "explicit" to operator.hasExplicitLimitsPolicy,
+            "modifierRange" to operator.limitsModifierRange,
+            "style" to style,
+            "reason" to reason,
+            "upperPresent" to (node.superscript != null),
+            "lowerPresent" to (node.subscript != null),
+        )
+        return if (effectivePolicy == MathLimitsPolicy.Limits) {
+            layoutStackedOperatorLimits(node, base, style, alphabetOverride)
+        } else {
+            decision(
+                "TeXOperatorSideScripts",
+                node.range,
+                "identity" to operator.identity.debugName,
+                "style" to style,
+                "geometry" to "operator-centered-base-plus-ordinary-side-script-kernel",
+            )
+            layoutScriptsWithBase(node, base, style, alphabetOverride)
+        }
+    }
+
+    private fun layoutStackedOperatorLimits(
+        node: MathScripts,
+        base: LaidNode,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val upper = node.superscript?.let { layoutNode(it, style.superscript(), alphabetOverride) }
+        val lower = node.subscript?.let { layoutNode(it, style.subscript(), alphabetOverride) }
+        val upperGapMin = scale(constants.upperLimitGapMin, style)
+        val upperBaselineRiseMin = scale(constants.upperLimitBaselineRiseMin, style)
+        val lowerGapMin = scale(constants.lowerLimitGapMin, style)
+        val lowerBaselineDropMin = scale(constants.lowerLimitBaselineDropMin, style)
+        val upperShift = upper?.let {
+            base.box.ascent + max(upperBaselineRiseMin, it.box.descent + upperGapMin)
+        }
+        val lowerShift = lower?.let {
+            base.box.descent + max(lowerBaselineDropMin, it.box.ascent + lowerGapMin)
+        }
+        val halfItalicCorrection = base.italicCorrectionPx / 2f
+        val initialUpperX = upper?.let { (base.box.width - it.box.width) / 2f + halfItalicCorrection }
+        val initialLowerX = lower?.let { (base.box.width - it.box.width) / 2f - halfItalicCorrection }
+        val logicalLeft = minOf(0f, initialUpperX ?: 0f, initialLowerX ?: 0f)
+        val logicalRight = maxOf(
+            base.box.width,
+            upper?.let { initialUpperX!! + it.box.width } ?: base.box.width,
+            lower?.let { initialLowerX!! + it.box.width } ?: base.box.width,
+        )
+        val baseX = -logicalLeft
+        val upperX = initialUpperX?.minus(logicalLeft)
+        val lowerX = initialLowerX?.minus(logicalLeft)
+        val shiftedBase = base.box.translated(baseX, 0f)
+        val shiftedUpper = upper?.let { it.box.translated(upperX!!, -upperShift!!) }
+        val shiftedLower = lower?.let { it.box.translated(lowerX!!, lowerShift!!) }
+        val actualUpperGap = upper?.let { upperShift!! - base.box.ascent - it.box.descent }
+        val actualUpperRise = upperShift?.minus(base.box.ascent)
+        val actualLowerGap = lower?.let { lowerShift!! - base.box.descent - it.box.ascent }
+        val actualLowerDrop = lowerShift?.minus(base.box.descent)
+        decision(
+            "OpenTypeMathOperatorLimits",
+            node.range,
+            "style" to style,
+            "upperStyle" to upper?.style,
+            "lowerStyle" to lower?.style,
+            "upperLimitGapMinPx" to upperGapMin,
+            "upperLimitBaselineRiseMinPx" to upperBaselineRiseMin,
+            "lowerLimitGapMinPx" to lowerGapMin,
+            "lowerLimitBaselineDropMinPx" to lowerBaselineDropMin,
+            "upperShiftPx" to upperShift,
+            "lowerShiftPx" to lowerShift,
+            "actualUpperGapPx" to actualUpperGap,
+            "actualUpperBaselineRisePx" to actualUpperRise,
+            "actualLowerGapPx" to actualLowerGap,
+            "actualLowerBaselineDropPx" to actualLowerDrop,
+            "operatorItalicCorrectionPx" to base.italicCorrectionPx,
+            "upperCenterOffsetPx" to halfItalicCorrection,
+            "lowerCenterOffsetPx" to -halfItalicCorrection,
+            "operatorWidthPx" to base.box.width,
+            "upperWidthPx" to upper?.box?.width,
+            "lowerWidthPx" to lower?.box?.width,
+            "operatorX" to baseX,
+            "upperX" to upperX,
+            "lowerX" to lowerX,
+        )
+        return LaidNode(
+            node = node,
+            box = geometryExtents(
+                logicalRight - logicalLeft,
+                shiftedBase.glyphs + shiftedUpper?.glyphs.orEmpty() + shiftedLower?.glyphs.orEmpty(),
+                shiftedBase.rules + shiftedUpper?.rules.orEmpty() + shiftedLower?.rules.orEmpty(),
+                node.range,
+            ),
+            atomClass = MathAtomClass.Operator,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutScripts(node: MathScripts, style: MathStyle, alphabetOverride: MathAlphabetOverride?): LaidNode =
+        layoutScriptsWithBase(node, layoutNode(node.base, style, alphabetOverride), style, alphabetOverride)
+
+    private fun layoutScriptsWithBase(
+        node: MathScripts,
+        base: LaidNode,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
         val superscript = node.superscript?.let { layoutNode(it, style.superscript(), alphabetOverride) }
         val subscript = node.subscript?.let { layoutNode(it, style.subscript(), alphabetOverride) }
         var superscriptShift = scale(
@@ -913,7 +1242,11 @@ private class MathLayoutPass(
                     item.node.range,
                     "rightClass" to rightClass,
                     "correctionPx" to correction,
-                    "owner" to if (item.node is MathList) "compatible-ord-run-final-glyph" else "character-noad",
+                    "owner" to when (item.node) {
+                        is MathList -> "compatible-ord-run-final-glyph"
+                        is MathOperator -> "operator-noad"
+                        else -> "character-noad"
+                    },
                     "policy" to "nucleus-owned-not-next-atom-classified",
                 )
             }

@@ -18,11 +18,21 @@ class StixTwoMathTest {
         assertEquals(OpenTypeLineMetrics(762, -238, 250), font.lineMetrics)
         assertEquals(70, font.constants.scriptPercentScaleDown)
         assertEquals(55, font.constants.scriptScriptPercentScaleDown)
+        assertEquals(1800, font.constants.displayOperatorMinHeight)
         assertEquals(258, font.constants.axisHeight)
         assertEquals(210, font.constants.subscriptShiftDown)
         assertEquals(360, font.constants.superscriptShiftUp)
         assertEquals(252, font.constants.superscriptShiftUpCramped)
         assertEquals(150, font.constants.subSuperscriptGapMin)
+        assertEquals(
+            listOf(135, 300, 135, 670),
+            listOf(
+                font.constants.upperLimitGapMin,
+                font.constants.upperLimitBaselineRiseMin,
+                font.constants.lowerLimitGapMin,
+                font.constants.lowerLimitBaselineDropMin,
+            ),
+        )
         assertEquals(640, font.constants.fractionNumeratorDisplayStyleShiftUp)
         assertEquals(640, font.constants.fractionDenominatorDisplayStyleShiftDown)
         assertEquals(68, font.constants.fractionRuleThickness)

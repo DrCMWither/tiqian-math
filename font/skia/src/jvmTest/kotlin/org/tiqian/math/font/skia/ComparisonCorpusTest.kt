@@ -1,6 +1,7 @@
 package org.tiqian.math.font.skia
 
 import org.tiqian.math.core.DiagnosticCode
+import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
@@ -31,7 +32,16 @@ class ComparisonCorpusTest {
                 }.toList()
             }
         assertEquals(
-            setOf("ordinary-sub-mlist", "tight-spacing", "cramped-superscript", "script-binomial", "math-kern", "assembly"),
+            setOf(
+                "ordinary-sub-mlist",
+                "tight-spacing",
+                "cramped-superscript",
+                "script-binomial",
+                "math-kern",
+                "assembly",
+                "operator-auto",
+                "operator-integral",
+            ),
             corpus.map { it.id }.toSet(),
         )
 
@@ -79,6 +89,50 @@ class ComparisonCorpusTest {
                             assertTrue(result.decisions.filter { it.name == "BinomialDelimiter" }
                                 .all { it.details["construction"] == "Assembly" }, case.toString())
                         }
+                        ComparisonInvariant.OperatorAutoDisplayLimits -> {
+                            assertEquals(ComparisonOracle.TeXMakeOpAndOpenTypeNary, case.oracle)
+                            assertEquals(
+                                "NoLimits",
+                                result.decisions.first { it.name == "TeXOperatorLimitsPolicy" }
+                                    .details["effectivePolicy"],
+                                case.toString(),
+                            )
+                            val display = engine.layout(case.source, MathLayoutOptions(MathMode.Display, 44f))
+                            assertEquals(
+                                "Limits",
+                                display.decisions.first { it.name == "TeXOperatorLimitsPolicy" }
+                                    .details["effectivePolicy"],
+                                case.toString(),
+                            )
+                            val operator = display.decisions.first { it.name == "TeXOperatorNoad" }
+                            assertTrue(operator.details["construction"] != "BaseGlyph", case.toString())
+                            assertNear(
+                                operator.details.getValue("axisY").toFloat(),
+                                operator.details.getValue("inkCenterAfter").toFloat(),
+                                case,
+                            )
+                            assertTrue(display.decisions.any { it.name == "OpenTypeMathOperatorLimits" })
+                        }
+                        ComparisonInvariant.IntegralDefaultNoLimits -> {
+                            assertEquals(ComparisonOracle.PlainTeXIntegralNoLimits, case.oracle)
+                            val display = engine.layout(case.source, MathLayoutOptions(MathMode.Display, 44f))
+                            assertEquals(
+                                "NoLimits",
+                                display.decisions.first { it.name == "TeXOperatorLimitsPolicy" }
+                                    .details["effectivePolicy"],
+                                case.toString(),
+                            )
+                            assertTrue(display.decisions.any { it.name == "TeXOperatorSideScripts" })
+                            val forced = engine.layout(
+                                "\\int\\limits_i^n",
+                                MathLayoutOptions(MathMode.Inline, 44f),
+                            )
+                            assertEquals(
+                                "Limits",
+                                forced.decisions.first { it.name == "TeXOperatorLimitsPolicy" }
+                                    .details["effectivePolicy"],
+                            )
+                        }
                     }
                 }
             }
@@ -100,6 +154,8 @@ private enum class ComparisonOracle(val corpusText: String) {
     TeXStylesAndOpenTypeVariants("TeX style transitions; OpenType MATH variants"),
     OpenTypeMathKern("OpenType MATH MathKern two-height algorithm"),
     OpenTypeGlyphAssembly("OpenType MATH GlyphAssembly"),
+    TeXMakeOpAndOpenTypeNary("TeX make_op displaylimits; OpenType MATH n-ary variants"),
+    PlainTeXIntegralNoLimits("plain.tex integral nolimits; TeX op noad"),
     ;
 
     companion object {
@@ -115,6 +171,8 @@ private enum class ComparisonInvariant(val corpusText: String) {
     ScriptBinomialBaseCoverage("ScriptCramped delimiters use base-glyph construction coverage"),
     FinalMathKernParticipates("parsed corner kerns participate in final script x"),
     AssemblyCoversTarget("extenders repeat and connector overlap covers the target"),
+    OperatorAutoDisplayLimits("Auto uses stacked limits only in display style and the operator follows the math axis"),
+    IntegralDefaultNoLimits("integrals default to side scripts while an explicit limits modifier overrides"),
     ;
 
     companion object {

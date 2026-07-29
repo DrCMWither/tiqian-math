@@ -150,6 +150,44 @@ data class MathSymbol(
     override val range: SourceRange,
 ) : MathNode
 
+/** TeX operator-noad policy. Auto is display limits for ordinary large operators. */
+enum class MathLimitsPolicy {
+    Auto,
+    Limits,
+    NoLimits,
+}
+
+/**
+ * Large-operator identities supported by the first operator-noad slice. The default policy follows
+ * plain TeX: sums and products use display limits, while integrals keep side scripts.
+ */
+enum class MathLargeOperatorIdentity(
+    val debugName: String,
+    val baseScalar: Int,
+    val defaultLimitsPolicy: MathLimitsPolicy,
+) {
+    Sum("sum", 0x2211, MathLimitsPolicy.Auto),
+    Product("product", 0x220F, MathLimitsPolicy.Auto),
+    Integral("integral", 0x222B, MathLimitsPolicy.NoLimits),
+    ContourIntegral("contour-integral", 0x222E, MathLimitsPolicy.NoLimits),
+}
+
+/** A real TeX operator noad, kept distinct from a Unicode symbol with Operator spacing. */
+data class MathOperator(
+    val sourceText: String,
+    val identity: MathLargeOperatorIdentity,
+    val limitsPolicy: MathLimitsPolicy,
+    /** Exact command-token range used by glyph placements, never expanded across scripts. */
+    val commandRange: SourceRange,
+    /** The exact final postfix modifier, if the plain-TeX default was overridden. */
+    val limitsModifierRange: SourceRange? = null,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = MathAtomClass.Operator
+    val family: MathFamily get() = MathFamily.LargeSymbols
+    val hasExplicitLimitsPolicy: Boolean get() = limitsModifierRange != null
+}
+
 data class MathScripts(
     val base: MathNode,
     val superscript: MathNode?,

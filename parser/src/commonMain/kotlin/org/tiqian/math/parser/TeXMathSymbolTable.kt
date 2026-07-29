@@ -37,6 +37,8 @@ internal object TeXMathSymbolTable {
 
     fun command(name: String): TeXMathSymbolSpec? = commands[name]
 
+    fun largeOperator(name: String): MathLargeOperatorIdentity? = largeOperators[name]
+
     fun controlSymbol(text: String): TeXMathSymbolSpec? = controlSymbols[text]
 
     private fun variableLatin(
@@ -146,6 +148,13 @@ internal object TeXMathSymbolTable {
         put("to", named(MathNamedSymbol.RightArrow, MathAtomClass.Relation, MathFamily.Symbols))
         put("approx", named(MathNamedSymbol.ApproximatelyEqual, MathAtomClass.Relation, MathFamily.Symbols))
     }
+
+    private val largeOperators = mapOf(
+        "sum" to MathLargeOperatorIdentity.Sum,
+        "prod" to MathLargeOperatorIdentity.Product,
+        "int" to MathLargeOperatorIdentity.Integral,
+        "oint" to MathLargeOperatorIdentity.ContourIntegral,
+    )
 
     private val controlSymbols = mapOf(
         "{" to named(MathNamedSymbol.LeftBrace, MathAtomClass.Opening, MathFamily.Symbols),
