@@ -1328,45 +1328,34 @@ private class MathLayoutPass(
     ): LaidNode {
         val superscript = node.superscript?.let { layoutNode(it, style.superscript(), alphabetOverride) }
         val subscript = node.subscript?.let { layoutNode(it, style.subscript(), alphabetOverride) }
-        var superscriptShift = scale(
+        val standardSuperscriptShift = scale(
             if (style.cramped) constants.superscriptShiftUpCramped else constants.superscriptShiftUp,
             style,
         )
-        var subscriptShift = scale(constants.subscriptShiftDown, style)
-
+        val standardSubscriptShift = scale(constants.subscriptShiftDown, style)
         val appliesBaselineDrop = base.scriptBaseKind != ScriptBaseKind.Character
-        superscript?.let { laid ->
-            superscriptShift = max(superscriptShift, laid.box.descent + scale(constants.superscriptBottomMin, style))
-            if (appliesBaselineDrop) {
-                superscriptShift = max(
-                    superscriptShift,
-                    base.box.ascent - scale(constants.superscriptBaselineDropMax, style),
-                )
-            }
-        }
-        subscript?.let { laid ->
-            subscriptShift = max(subscriptShift, laid.box.ascent - scale(constants.subscriptTopMax, style))
-            if (appliesBaselineDrop) {
-                subscriptShift = max(
-                    subscriptShift,
-                    base.box.descent + scale(constants.subscriptBaselineDropMin, style),
-                )
-            }
-        }
-        if (superscript != null && subscript != null) {
-            val currentGap = (subscriptShift - subscript.box.ascent) -
-                (-superscriptShift + superscript.box.descent)
-            val missingGap = scale(constants.subSuperscriptGapMin, style) - currentGap
-            if (missingGap > 0f) {
-                val superBottomHeight = superscriptShift - superscript.box.descent
-                val availableSuperMove = (
-                    scale(constants.superscriptBottomMaxWithSubscript, style) - superBottomHeight
-                    ).coerceAtLeast(0f)
-                val superMove = minOf(missingGap, availableSuperMove)
-                superscriptShift += superMove
-                subscriptShift += missingGap - superMove
-            }
-        }
+        val baseVerticalMetrics = base.box.sideScriptVerticalMetrics()
+        val superscriptVerticalMetrics = superscript?.box?.sideScriptVerticalMetrics()
+        val subscriptVerticalMetrics = subscript?.box?.sideScriptVerticalMetrics()
+        val verticalConstraints = SideScriptVerticalConstraints(
+            superscriptShiftUpPx = standardSuperscriptShift,
+            subscriptShiftDownPx = standardSubscriptShift,
+            superscriptBottomMinPx = scale(constants.superscriptBottomMin, style),
+            superscriptBaselineDropMaxPx = scale(constants.superscriptBaselineDropMax, style),
+            subscriptTopMaxPx = scale(constants.subscriptTopMax, style),
+            subscriptBaselineDropMinPx = scale(constants.subscriptBaselineDropMin, style),
+            subSuperscriptGapMinPx = scale(constants.subSuperscriptGapMin, style),
+            superscriptBottomMaxWithSubscriptPx = scale(constants.superscriptBottomMaxWithSubscript, style),
+        )
+        val verticalPlacement = resolveSideScriptVerticalPlacement(
+            base = baseVerticalMetrics,
+            superscript = superscriptVerticalMetrics,
+            subscript = subscriptVerticalMetrics,
+            appliesBaselineDrop = appliesBaselineDrop,
+            constraints = verticalConstraints,
+        )
+        val superscriptShift = verticalPlacement.superscriptShiftPx
+        val subscriptShift = verticalPlacement.subscriptShiftPx
 
         val superscriptKern = superscript?.let { superscriptMathKern(base, it, superscriptShift, node.range) } ?: 0f
         val subscriptKern = subscript?.let { subscriptMathKern(base, it, subscriptShift, node.range) } ?: 0f
@@ -1399,7 +1388,51 @@ private class MathLayoutPass(
             "superscriptKernPx" to superscriptKern,
             "subscriptKernPx" to subscriptKern,
             "baseKind" to base.scriptBaseKind,
+            "superscriptKind" to superscript?.scriptBaseKind,
+            "subscriptKind" to subscript?.scriptBaseKind,
             "baselineDropApplied" to appliesBaselineDrop,
+            "verticalPlacementMetricPolicy" to "OpenTypeMATH1.9InkEdgesForOrdinarySideScripts",
+            "logicalReservePolicy" to "PreserveTranslatedChildLogicalExtentsAfterInkConstrainedPlacement",
+            "baseLogicalAscentPx" to baseVerticalMetrics.logicalAscentPx,
+            "baseLogicalDescentPx" to baseVerticalMetrics.logicalDescentPx,
+            "baseInkTopPx" to baseVerticalMetrics.inkTopPx,
+            "baseInkBottomPx" to baseVerticalMetrics.inkBottomPx,
+            "baseInkAscentPx" to baseVerticalMetrics.inkAscentPx,
+            "baseInkDescentPx" to baseVerticalMetrics.inkDescentPx,
+            "superscriptLogicalAscentPx" to superscriptVerticalMetrics?.logicalAscentPx,
+            "superscriptLogicalDescentPx" to superscriptVerticalMetrics?.logicalDescentPx,
+            "superscriptInkTopPx" to superscriptVerticalMetrics?.inkTopPx,
+            "superscriptInkBottomPx" to superscriptVerticalMetrics?.inkBottomPx,
+            "superscriptInkAscentPx" to superscriptVerticalMetrics?.inkAscentPx,
+            "superscriptInkDescentPx" to superscriptVerticalMetrics?.inkDescentPx,
+            "subscriptLogicalAscentPx" to subscriptVerticalMetrics?.logicalAscentPx,
+            "subscriptLogicalDescentPx" to subscriptVerticalMetrics?.logicalDescentPx,
+            "subscriptInkTopPx" to subscriptVerticalMetrics?.inkTopPx,
+            "subscriptInkBottomPx" to subscriptVerticalMetrics?.inkBottomPx,
+            "subscriptInkAscentPx" to subscriptVerticalMetrics?.inkAscentPx,
+            "subscriptInkDescentPx" to subscriptVerticalMetrics?.inkDescentPx,
+            "standardSuperscriptShiftUpPx" to standardSuperscriptShift,
+            "standardSubscriptShiftDownPx" to standardSubscriptShift,
+            "superscriptBottomMinPx" to verticalConstraints.superscriptBottomMinPx,
+            "superscriptBaselineDropMaxPx" to verticalConstraints.superscriptBaselineDropMaxPx,
+            "subscriptTopMaxPx" to verticalConstraints.subscriptTopMaxPx,
+            "subscriptBaselineDropMinPx" to verticalConstraints.subscriptBaselineDropMinPx,
+            "subSuperscriptGapMinPx" to verticalConstraints.subSuperscriptGapMinPx,
+            "superscriptBottomMaxWithSubscriptPx" to
+                verticalConstraints.superscriptBottomMaxWithSubscriptPx,
+            "superscriptShiftBeforePairGapPx" to verticalPlacement.superscriptShiftBeforePairGapPx,
+            "subscriptShiftBeforePairGapPx" to verticalPlacement.subscriptShiftBeforePairGapPx,
+            "pairGapBeforeAdjustmentPx" to verticalPlacement.pairGapBeforeAdjustmentPx,
+            "pairGapDeficitPx" to verticalPlacement.pairGapDeficitPx,
+            "superscriptPairGapMovePx" to verticalPlacement.superscriptPairGapMovePx,
+            "subscriptPairGapMovePx" to verticalPlacement.subscriptPairGapMovePx,
+            "finalInkGapPx" to verticalPlacement.finalInkGapPx,
+            "superscriptInkBottomAfterShiftPx" to superscriptVerticalMetrics?.let {
+                -superscriptShift + it.inkBottomPx
+            },
+            "subscriptInkTopAfterShiftPx" to subscriptVerticalMetrics?.let {
+                subscriptShift + it.inkTopPx
+            },
             "boxKernPolicy" to "single-glyph-corners-else-zero",
         )
         return LaidNode(
@@ -2339,6 +2372,14 @@ private enum class ScriptBaseKind {
 
 private fun MathBox.singleGlyphOrNull(): MathGlyphPlacement? =
     if (rules.isEmpty() && glyphs.size == 1) glyphs.single() else null
+
+private fun MathBox.sideScriptVerticalMetrics(): SideScriptBoxVerticalMetrics =
+    SideScriptBoxVerticalMetrics(
+        logicalAscentPx = ascent,
+        logicalDescentPx = descent,
+        inkTopPx = inkBounds.top,
+        inkBottomPx = inkBounds.bottom,
+    )
 
 private fun MathBox.translated(dx: Float, dy: Float): MathBox = copy(
     inkBounds = inkBounds.translated(dx, dy),

@@ -82,6 +82,9 @@ private fun PreviewScreen() {
                 Text("Indexed, nested, fraction and stretched radicals", fontSize = 13.sp)
                 RadicalSample("Lete Sans Math", lete)
                 RadicalSample("STIX Two Math", stix)
+                Text("Ordinary side scripts · ink-constrained placement", fontSize = 13.sp)
+                SideScriptSample("Lete Sans Math", lete)
+                SideScriptSample("STIX Two Math", stix)
                 Text("Script-style binomial coverage · real base glyph variants", fontSize = 13.sp)
                 ScriptBinomialSample("Lete Sans Math", lete)
                 ScriptBinomialSample("STIX Two Math", stix)
@@ -95,6 +98,34 @@ private fun PreviewScreen() {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SideScriptSample(label: String, face: SkiaMathFontFace) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            SideScriptTier("character base", "x_1^2", face)
+            SideScriptTier("radical base", "\\sqrt{x}_1^2", face)
+            SideScriptTier("radical superscript", "x^{\\sqrt{y_j}}", face)
+            SideScriptTier("paired radicals", "x_{\\sqrt{X}}^{\\sqrt{y_j}}", face)
+        }
+    }
+}
+
+@Composable
+private fun SideScriptTier(label: String, source: String, face: SkiaMathFontFace) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, fontSize = 10.sp, color = Color(0xFF6B655E))
+        TiqianMath(
+            source = source,
+            modifier = Modifier.background(Color.White).padding(7.dp),
+            mode = MathMode.Inline,
+            fontFace = face,
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 30.sp, lineHeight = 42.sp),
+            softWrap = false,
+        )
     }
 }
 
@@ -201,7 +232,7 @@ private fun FontSample(label: String, face: SkiaMathFontFace, mode: MathMode) {
 @OptIn(ExperimentalComposeUiApi::class)
 private fun renderSnapshot() {
     auditRadicalPreviewTiers()
-    ImageComposeScene(width = 900, height = 3700) { PreviewScreen() }.use { scene ->
+    ImageComposeScene(width = 900, height = 4300) { PreviewScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/math-preview.png")
         output.parentFile.mkdirs()

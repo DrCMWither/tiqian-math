@@ -10,6 +10,8 @@ case=tight logical=72.748 visual=-1.000..72.748 ink=-1.000,-22.000,70.108,11.000
   evidence=4..5:tight/None,5..6:tight/None
 case=cramped logical=53.046 visual=0.000..53.046 ink=3.800,-34.000,48.246,25.820 safe=40.000/25.820 fragments=1 breaks=0 diagnostics=[]
   evidence=x:ScriptCramped@24.820,y:ScriptScriptCramped@14.460,z:ScriptScriptCramped@6.320
+case=side-script-ink logical=84.252 visual=0.000..84.252 ink=0.640,-46.376,82.012,25.820 safe=54.504/25.820 fragments=1 breaks=0 diagnostics=[]
+  evidence=policy=OpenTypeMATH1.9InkEdgesForOrdinarySideScripts/PreserveTranslatedChildLogicalExtentsAfterInkConstrainedPlacement kinds=CompoundBox/CompoundBox/CompoundBox base=40.020004/9.099998:-36.980003/9.099998 sup=28.164001/6.219999:-26.036001/6.219999 sub=25.664001/8.719999:-23.536001/8.719999 shifts=20.340004/17.099998 gap=7.684002/7.684002
 case=script-binomial logical=45.945 visual=0.000..45.945 ink=4.800,-34.000,41.145,42.320 safe=40.000/42.320 fragments=1 breaks=0 diagnostics=[]
   evidence=left:9/Variant/44.560/46.144,right:10/Variant/44.560/46.144
 case=operator-inline logical=143.381 visual=0.000..143.381 ink=0.000,-40.560,140.741,22.800 safe=46.560/22.800 fragments=3 breaks=0 diagnostics=[]
@@ -35,6 +37,8 @@ case=tight logical=77.432 visual=-1.000..77.432 ink=-1.000,-21.000,75.580,10.400
   evidence=4..5:tight/None,5..6:tight/None
 case=cramped logical=59.796 visual=0.000..59.796 ink=3.800,-39.400,54.996,25.664 safe=45.400/25.664 fragments=1 breaks=0 diagnostics=[]
   evidence=x:ScriptCramped@23.664,y:ScriptScriptCramped@13.304,z:ScriptScriptCramped@7.760
+case=side-script-ink logical=95.924 visual=0.000..95.924 ink=0.720,-53.360,94.992,28.056 safe=61.544/28.056 fragments=1 breaks=0 diagnostics=[]
+  evidence=policy=OpenTypeMATH1.9InkEdgesForOrdinarySideScripts/PreserveTranslatedChildLogicalExtentsAfterInkConstrainedPlacement kinds=CompoundBox/CompoundBox/CompoundBox base=39.420002/11.179997:-36.300003/11.179997 sup=28.443998/6.9760013:-26.259998/6.9760013 sub=24.943998/10.476002:-22.759998/10.476002 shifts=27.100002/17.579998 gap=14.944/14.944
 case=script-binomial logical=52.556 visual=0.000..52.556 ink=4.800,-39.400,47.800,42.760 safe=45.400/42.760 fragments=1 breaks=0 diagnostics=[]
   evidence=left:1064/Variant/41.268/46.676,right:1065/Variant/41.268/46.676
 case=operator-inline logical=152.097 visual=0.000..152.097 ink=0.000,-42.120,150.245,20.080 safe=48.120/20.080 fragments=3 breaks=0 diagnostics=[]

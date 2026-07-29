@@ -37,6 +37,12 @@ class GeometryGoldenTest {
                 GoldenCase("style", "{\\scriptstyle x+y}z", MathMode.Inline, 40f),
                 GoldenCase("tight", "x_{k-1}", MathMode.Inline, 40f),
                 GoldenCase("cramped", "\\frac{a}{x^{y^z}}", MathMode.Inline, 40f),
+                GoldenCase(
+                    "side-script-ink",
+                    "\\sqrt{x}_{\\sqrt{y}}^{\\sqrt{z}}",
+                    MathMode.Inline,
+                    40f,
+                ),
                 GoldenCase("script-binomial", "\\frac{a}{\\binom{n}{k}}", MathMode.Inline, 40f),
                 GoldenCase("operator-inline", "\\sum_i^n+\\int_0^1", MathMode.Inline, 40f),
                 GoldenCase("operator-display", "\\sum_i^n+\\int\\limits_0^1", MathMode.Display, 40f),
@@ -92,6 +98,28 @@ class GeometryGoldenTest {
                             "$character:${glyph.style}@${glyph.baselineY.fmt()}"
                         },
                     )
+                    "side-script-ink" -> {
+                        val scripts = result.decisions.first { it.name == "OpenTypeMathScriptPlacement" }
+                        appendLine(
+                            "  evidence=policy=${scripts.details["verticalPlacementMetricPolicy"]}/" +
+                                "${scripts.details["logicalReservePolicy"]} " +
+                                "kinds=${scripts.details["baseKind"]}/" +
+                                "${scripts.details["superscriptKind"]}/${scripts.details["subscriptKind"]} " +
+                                "base=${scripts.details["baseLogicalAscentPx"]}/" +
+                                "${scripts.details["baseLogicalDescentPx"]}:" +
+                                "${scripts.details["baseInkTopPx"]}/${scripts.details["baseInkBottomPx"]} " +
+                                "sup=${scripts.details["superscriptLogicalAscentPx"]}/" +
+                                "${scripts.details["superscriptLogicalDescentPx"]}:" +
+                                "${scripts.details["superscriptInkTopPx"]}/${scripts.details["superscriptInkBottomPx"]} " +
+                                "sub=${scripts.details["subscriptLogicalAscentPx"]}/" +
+                                "${scripts.details["subscriptLogicalDescentPx"]}:" +
+                                "${scripts.details["subscriptInkTopPx"]}/${scripts.details["subscriptInkBottomPx"]} " +
+                                "shifts=${scripts.details["superscriptShiftPx"]}/" +
+                                "${scripts.details["subscriptShiftPx"]} " +
+                                "gap=${scripts.details["pairGapBeforeAdjustmentPx"]}/" +
+                                "${scripts.details["finalInkGapPx"]}",
+                        )
+                    }
                     "script-binomial" -> appendLine(
                         "  evidence=" + result.decisions.filter { it.name == "BinomialDelimiter" }.joinToString(",") {
                             "${it.details["side"]}:${it.details["baseGlyphId"]}/${it.details["construction"]}/" +
