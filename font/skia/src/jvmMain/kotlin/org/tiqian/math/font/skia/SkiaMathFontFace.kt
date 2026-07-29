@@ -3,7 +3,10 @@ package org.tiqian.math.font.skia
 import org.jetbrains.skia.Data
 import org.jetbrains.skia.Font
 import org.jetbrains.skia.FontMgr
+import org.jetbrains.skia.Path
+import org.jetbrains.skia.PathOp
 import org.jetbrains.skia.Point
+import org.jetbrains.skia.Rect
 import org.jetbrains.skia.Typeface
 import org.jetbrains.skia.shaper.RunHandler
 import org.jetbrains.skia.shaper.RunInfo
@@ -16,11 +19,15 @@ import org.jetbrains.skia.shaper.TrivialScriptRunIterator
 import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.layout.MathFontFace
+import org.tiqian.math.layout.MathConstructionOutlineEvidence
+import org.tiqian.math.layout.MathConstructionOutlineUnavailableReason
+import org.tiqian.math.layout.MathConstructionTopStroke
 import org.tiqian.math.layout.MathGlyphBoundsSource
 import org.tiqian.math.layout.MathOperatorGlyphRequest
 import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathGlyph
 import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.layout.MeasuredOutlineConstructionRun
 import org.tiqian.math.layout.ResolvedMathSymbol
 import org.tiqian.math.layout.ResolvedMathSymbolRun
 import org.tiqian.math.layout.ResolvedMathOperator
@@ -134,11 +141,14 @@ class SkiaMathFontFace(
         text: String,
         fontSizePx: Float,
         sourceRange: SourceRange,
-    ): MeasuredMathRun = shapeWithBoundsSource(
-        text,
-        fontSizePx,
-        MathStyle.Text,
-        MathGlyphBoundsSource.Outline,
+    ): MeasuredOutlineConstructionRun = outlineConstructionRun(
+        run = shapeWithBoundsSource(
+            text,
+            fontSizePx,
+            MathStyle.Text,
+            MathGlyphBoundsSource.Outline,
+        ),
+        fontSizePx = fontSizePx,
     )
 
     private fun shapeWithBoundsSource(
@@ -195,10 +205,13 @@ class SkiaMathFontFace(
         fontSizePx: Float,
         style: MathStyle,
         sourceRange: SourceRange,
-    ): MeasuredMathRun = measureGlyphWithBoundsSource(
-        glyphId,
-        fontSizePx,
-        MathGlyphBoundsSource.Outline,
+    ): MeasuredOutlineConstructionRun = outlineConstructionRun(
+        run = measureGlyphWithBoundsSource(
+            glyphId,
+            fontSizePx,
+            MathGlyphBoundsSource.Outline,
+        ),
+        fontSizePx = fontSizePx,
     )
 
     private fun measureGlyphWithBoundsSource(
@@ -272,16 +285,110 @@ class SkiaMathFontFace(
         val glyphAdvanceWidth = glyphs.maxOfOrNull { it.x + it.advance } ?: 0f
         return MeasuredMathRun(
             glyphs = glyphs,
-            width = if (boundsSource == MathGlyphBoundsSource.Outline) {
-                glyphAdvanceWidth
-            } else {
-                max(runAdvance, glyphAdvanceWidth)
-            },
+            width = max(runAdvance, glyphAdvanceWidth),
             ascent = ascent,
             descent = descent,
             missingGlyph = glyphIds.any { it.toInt() == 0 },
             boundsSource = if (usedReportedBounds) MathGlyphBoundsSource.FontReported else boundsSource,
         )
+    }
+
+    private fun outlineConstructionRun(
+        run: MeasuredMathRun,
+        fontSizePx: Float,
+    ): MeasuredOutlineConstructionRun {
+        val glyph = run.glyphs.singleOrNull()
+            ?: return MeasuredOutlineConstructionRun(
+                run,
+                MathConstructionOutlineEvidence.Unavailable(
+                    MathConstructionOutlineUnavailableReason.ExpectedSingleGlyphRun,
+                ),
+            )
+        if (run.boundsSource != MathGlyphBoundsSource.Outline) {
+            return MeasuredOutlineConstructionRun(
+                run,
+                MathConstructionOutlineEvidence.Unavailable(
+                    MathConstructionOutlineUnavailableReason.GlyphOutlineUnavailable,
+                ),
+            )
+        }
+        val evidence = font(fontSizePx).use { skiaFont ->
+            val outline = skiaFont.getPath(glyph.glyphId.toShort())
+            if (outline == null || outline.isEmpty) {
+                outline?.close()
+                MathConstructionOutlineEvidence.Unavailable(
+                    MathConstructionOutlineUnavailableReason.GlyphOutlineUnavailable,
+                )
+            } else {
+                try {
+                    outline.topStrokeEvidence(fontSizePx, glyph.x)
+                } finally {
+                    outline.close()
+                }
+            }
+        }
+        return MeasuredOutlineConstructionRun(run, evidence)
+    }
+
+    private fun Path.topStrokeEvidence(
+        fontSizePx: Float,
+        glyphX: Float,
+    ): MathConstructionOutlineEvidence {
+        val designUnitPx = fontSizePx / mathFont.unitsPerEm
+        val ruleThicknessPx = mathFont.scaleDesignUnits(mathFont.constants.radicalRuleThickness, fontSizePx)
+        val bounds = computeTightBounds()
+        val topZone = intersect(
+            Rect.makeLTRB(
+                bounds.left - designUnitPx,
+                bounds.top - designUnitPx,
+                bounds.right + designUnitPx,
+                bounds.top + RADICAL_TOP_STROKE_ZONE_RULE_MULTIPLIER * ruleThicknessPx,
+            ),
+        ) ?: return MathConstructionOutlineEvidence.Unavailable(
+            MathConstructionOutlineUnavailableReason.TopStrokeUnavailable,
+        )
+        topZone.use { zone ->
+            if (zone.isEmpty) {
+                return MathConstructionOutlineEvidence.Unavailable(
+                    MathConstructionOutlineUnavailableReason.TopStrokeUnavailable,
+                )
+            }
+            val right = zone.computeTightBounds().right
+            val crossSection = intersect(
+                Rect.makeLTRB(
+                    right - RADICAL_TOP_STROKE_SAMPLE_INNER_INSET_DESIGN_UNITS * designUnitPx,
+                    bounds.top - designUnitPx,
+                    right - RADICAL_TOP_STROKE_SAMPLE_OUTER_INSET_DESIGN_UNITS * designUnitPx,
+                    bounds.top + RADICAL_TOP_STROKE_ZONE_RULE_MULTIPLIER * ruleThicknessPx,
+                ),
+            ) ?: return MathConstructionOutlineEvidence.Unavailable(
+                MathConstructionOutlineUnavailableReason.TopStrokeUnavailable,
+            )
+            crossSection.use { cross ->
+                if (cross.isEmpty) {
+                    return MathConstructionOutlineEvidence.Unavailable(
+                        MathConstructionOutlineUnavailableReason.TopStrokeUnavailable,
+                    )
+                }
+                val crossBounds = cross.computeTightBounds()
+                return MathConstructionOutlineEvidence.Available(
+                    MathConstructionTopStroke(
+                        topPx = crossBounds.top,
+                        bottomPx = crossBounds.bottom,
+                        rightPx = right + glyphX,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun Path.intersect(rectangle: Rect): Path? {
+        val probe = Path.Rect(rectangle)
+        return try {
+            Path.makeCombining(this, probe, PathOp.INTERSECT)
+        } finally {
+            probe.close()
+        }
     }
 
     override fun close() {
@@ -351,3 +458,10 @@ class SkiaMathFontFace(
     private fun List<MathSymbolGlyphRequest>.coveredRange(): SourceRange =
         SourceRange(first().sourceRange.start, last().sourceRange.endExclusive)
 }
+
+/** MATH-rule-relative search zone for the radical's built-in horizontal top stroke. */
+private const val RADICAL_TOP_STROKE_ZONE_RULE_MULTIPLIER = 2f
+
+/** Cross-section window just inside the stroke's outline-derived right endpoint. */
+private const val RADICAL_TOP_STROKE_SAMPLE_INNER_INSET_DESIGN_UNITS = 5f
+private const val RADICAL_TOP_STROKE_SAMPLE_OUTER_INSET_DESIGN_UNITS = 3f

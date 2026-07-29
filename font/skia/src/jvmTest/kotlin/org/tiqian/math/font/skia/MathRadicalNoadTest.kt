@@ -36,6 +36,7 @@ import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.MathOperatorGlyphRequest
 import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.layout.MeasuredOutlineConstructionRun
 import org.tiqian.math.layout.ResolvedMathOperator
 import org.tiqian.math.layout.ResolvedMathSymbol
 import org.tiqian.math.layout.ResolvedMathSymbolRun
@@ -241,7 +242,7 @@ class MathRadicalNoadTest {
                         "$label/$size/depth=$depth nominal extent still drives selection",
                     )
                     assertEquals(
-                        "NominalAdvanceForSelectionActualPlacedBoundsForBox",
+                        "NominalAdvanceForSelectionActualPlacedOutlineBoundsForBox",
                         construction.details["constructionExtentPolicy"],
                     )
                     assertEquals("PlacedAssemblyOutlineBounds", geometry.details["radicalGlyphBoxMetricSource"])
@@ -310,7 +311,7 @@ class MathRadicalNoadTest {
             val topBarVerticalIntersection = minOf(top.inkBounds.bottom, overbar.bottom) -
                 maxOf(top.inkBounds.top, overbar.top)
             assertTrue(
-                topBarHorizontalIntersection > EPSILON && topBarVerticalIntersection >= -EPSILON,
+                topBarHorizontalIntersection >= -EPSILON && topBarVerticalIntersection >= -EPSILON,
                 "STIX top part must join the overbar: top=${top.inkBounds}, bar=$overbar",
             )
 
@@ -330,11 +331,15 @@ class MathRadicalNoadTest {
             val size = 44f
             val range = SourceRange(0, 5)
             val rootGlyph = delegate.shapeConstructionBase("√", size, range).glyphs.single().glyphId
-            val rootMetrics = delegate.measureGlyph(rootGlyph, size, MathStyle.Text, range).glyphs.single()
+            val rootMetrics = delegate
+                .measureOutlineConstructionGlyph(rootGlyph, size, MathStyle.Text, range)
+                .run.glyphs.single()
             val (otherGlyph, otherMetrics) = listOf("(", "g", "j", "∑", "∫")
                 .map { candidate ->
                     val glyph = delegate.shapeConstructionBase(candidate, size, range).glyphs.single().glyphId
-                    glyph to delegate.measureGlyph(glyph, size, MathStyle.Text, range).glyphs.single()
+                    glyph to delegate
+                        .measureOutlineConstructionGlyph(glyph, size, MathStyle.Text, range)
+                        .run.glyphs.single()
                 }.first { (glyph, metrics) ->
                     glyph != rootGlyph &&
                         abs(rootMetrics.inkBounds.bottom - metrics.inkBounds.bottom) > EPSILON &&
@@ -555,9 +560,9 @@ class MathRadicalNoadTest {
             assertNear(200f, construction.float("orthogonalAdvancePx"), "all-record assembly width")
             assertNear(200f, geometry.float("radicalBoxAdvancePx"), "radical box consumes construction width")
             assertNear(
-                geometry.float("radicalX") + 200f,
+                geometry.float("radicalX") + geometry.float("radicalTopStrokeRightPx"),
                 geometry.float("ruleLeft"),
-                "overbar starts after all-record assembly width",
+                "overbar starts at the selected top component's outline anchor",
             )
             assertRadicalBoxAlgebra(geometry, "rMin=0 assembly radical")
         }
@@ -792,6 +797,28 @@ private class RadicalOverrideFace(
     ): MeasuredMathRun = delegate.measureGlyph(glyphId, fontSizePx, style, sourceRange).let { run ->
         advanceWidthOverrides[glyphId]?.let { run.copy(width = it) } ?: run
     }
+
+    override fun shapeOutlineConstructionBase(
+        text: String,
+        fontSizePx: Float,
+        sourceRange: SourceRange,
+    ): MeasuredOutlineConstructionRun = delegate.shapeOutlineConstructionBase(text, fontSizePx, sourceRange)
+
+    override fun measureOutlineConstructionGlyph(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredOutlineConstructionRun = delegate.measureOutlineConstructionGlyph(
+        glyphId,
+        fontSizePx,
+        style,
+        sourceRange,
+    ).let { measurement ->
+        advanceWidthOverrides[glyphId]?.let { width ->
+            measurement.copy(run = measurement.run.copy(width = width))
+        } ?: measurement
+    }
 }
 
 private fun MathLayoutResult.radicalNoadDecision(): MathLayoutDecision =
@@ -830,40 +857,37 @@ private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String)
         "$label overbar thickness",
     )
     assertNear(
-        geometry.float("ruleTop") + geometry.float("radicalGlyphAscentPx"),
-        geometry.float("radicalPaintOriginY"),
-        "$label replayed outline ascent anchors its top to the overbar",
-    )
-    assertNear(
         geometry.float("ruleTop"),
-        geometry.float("radicalInkTopPx"),
-        "$label placed radical outline top meets the overbar top edge",
+        geometry.float("radicalPaintOriginY") + geometry.float("radicalTopStrokeTopPx"),
+        "$label font-adapter top-stroke anchor meets the overbar",
     )
     assertNear(
-        geometry.float("radicalX") + geometry.float("radicalBoxAdvancePx"),
+        geometry.float("radicalX") + geometry.float("radicalTopStrokeRightPx"),
         geometry.float("ruleLeft"),
-        "$label overbar starts at radical box advance",
+        "$label overbar starts at the font-adapter top-stroke right edge",
     )
     assertNear(
-        geometry.float("ruleLeft") + geometry.float("radicandWidthPx"),
+        geometry.float("radicalX") + geometry.float("radicalBoxAdvancePx") +
+            geometry.float("radicandWidthPx"),
         geometry.float("ruleRight"),
-        "$label overbar spans the radicand logical width",
+        "$label overbar reaches the radicand logical right edge without changing radical advance",
     )
-    assertEquals("ActualConstructionOutlineTopEdgeToRuleTop", geometry.details["overbarAnchorPolicy"])
+    assertEquals("Available(GlyphOutlineCrossSection)", geometry.details["radicalTopStrokeEvidence"])
+    assertEquals("FontAdapterTopStrokeTopAndRight", geometry.details["overbarAnchorPolicy"])
     assertEquals("OpenTypeMATH.RadicalRuleThickness", geometry.details["overbarThicknessSource"])
-    assertEquals("RadicalBoxAdvance", geometry.details["overbarLeftPolicy"])
+    assertEquals("FontAdapterTopStrokeRight", geometry.details["overbarLeftPolicy"])
 }
 
 private fun assertAssemblyTopAlignedToOverbar(geometry: MathLayoutDecision, label: String) {
     assertNear(
         geometry.float("ruleTop"),
-        geometry.float("radicalInkTopPx"),
-        "$label actual assembly top meets overbar",
+        geometry.float("radicalPaintOriginY") + geometry.float("radicalTopStrokeTopPx"),
+        "$label assembly top-stroke anchor meets overbar",
     )
     assertNear(
-        geometry.float("ruleTop") + geometry.float("radicalGlyphAscentPx"),
+        geometry.float("ruleTop") - geometry.float("radicalTopStrokeTopPx"),
         geometry.float("radicalPaintOriginY"),
-        "$label actual assembly box ascent drives the paint origin",
+        "$label assembly local top stroke drives the paint origin",
     )
 }
 

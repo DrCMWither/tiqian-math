@@ -630,6 +630,7 @@ private class MathLayoutPass(
     private fun placeVerticalConstruction(
         construction: MathVerticalConstruction,
         componentRuns: List<Pair<MathGlyphComponent, MeasuredMathRun>>,
+        componentOutlineEvidences: List<MathConstructionOutlineEvidence>? = null,
         size: Float,
         style: MathStyle,
         sourceRange: SourceRange,
@@ -640,9 +641,31 @@ private class MathLayoutPass(
         val horizontalOrigins = mutableListOf<Float>()
         val bottomOrigins = mutableListOf<Float>()
         val baselineOrigins = mutableListOf<Float>()
-        val placements = componentRuns.flatMap { (component, run) ->
+        val topStrokeCandidates = mutableListOf<MathConstructionOutlineEvidence.Available>()
+        val placements = componentRuns.flatMapIndexed { componentIndex, (component, run) ->
             val componentBottomY = -glyphSource.mathFont.scaleDesignUnits(component.offset, size)
             if (assembly) bottomOrigins += componentBottomY
+            val runOriginX = when {
+                assembly -> 0f
+                centerComponentsHorizontally -> (width - run.width) / 2f
+                else -> 0f
+            }
+            val runBaselineY = if (assembly) {
+                val glyph = run.glyphs.singleOrNull()
+                if (glyph == null) 0f else componentBottomY - glyph.inkBounds.bottom
+            } else {
+                0f
+            }
+            val outlineEvidence = componentOutlineEvidences?.getOrNull(componentIndex)
+            if (outlineEvidence is MathConstructionOutlineEvidence.Available) {
+                topStrokeCandidates += outlineEvidence.copy(
+                    topStroke = MathConstructionTopStroke(
+                        topPx = outlineEvidence.topStroke.topPx + runBaselineY,
+                        bottomPx = outlineEvidence.topStroke.bottomPx + runBaselineY,
+                        rightPx = outlineEvidence.topStroke.rightPx + runOriginX,
+                    ),
+                )
+            }
             run.glyphs.map { glyph ->
                 val componentX = when {
                     assembly -> glyph.x
@@ -670,11 +693,25 @@ private class MathLayoutPass(
         }
         val constructionInkTop = placements.minOfOrNull { it.inkBounds.top } ?: 0f
         val constructionInkBottom = placements.maxOfOrNull { it.inkBounds.bottom } ?: 0f
+        val allOutlineEvidenceAvailable = componentOutlineEvidences != null &&
+            componentOutlineEvidences.size == componentRuns.size &&
+            componentOutlineEvidences.all { it is MathConstructionOutlineEvidence.Available }
+        val topStrokeEvidence = if (allOutlineEvidenceAvailable) {
+            topStrokeCandidates.minByOrNull { it.topStroke.topPx }
+        } else {
+            null
+        }
+        val outlineEvidenceFailure = componentOutlineEvidences
+            ?.filterIsInstance<MathConstructionOutlineEvidence.Unavailable>()
+            ?.firstOrNull()
+            ?.reason
         return PlacedVerticalConstruction(
             width = width,
             glyphs = placements,
             boxAscentPx = (-constructionInkTop).coerceAtLeast(0f),
             boxDescentPx = constructionInkBottom.coerceAtLeast(0f),
+            topStrokeEvidence = topStrokeEvidence,
+            outlineEvidenceFailure = outlineEvidenceFailure,
             componentHorizontalOriginsPx = horizontalOrigins,
             componentBottomOriginsPx = bottomOrigins,
             componentBaselineOriginsPx = baselineOrigins,
@@ -697,7 +734,8 @@ private class MathLayoutPass(
         val degreeStyle = MathStyle.ScriptScript
         val degree = node.degree?.let { layoutNode(it, degreeStyle, alphabetOverride).box }
         val size = fontSize(style)
-        val baseRun = glyphSource.shapeOutlineConstructionBase(RADICAL_SIGN, size, node.commandRange)
+        val baseMeasurement = glyphSource.shapeOutlineConstructionBase(RADICAL_SIGN, size, node.commandRange)
+        val baseRun = baseMeasurement.run
         val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
         if (baseRun.missingGlyph || baseGlyphId == null) {
             diagnostics += MathDiagnostic(
@@ -724,7 +762,7 @@ private class MathLayoutPass(
             selectVerticalConstruction(it, baseRun, targetHeight, size, style, node.commandRange)
         }
         val baseGlyphCoversTarget = construction?.kind == MathConstructionKind.BaseGlyph
-        val constructionRuns = construction?.components?.map { component ->
+        val constructionMeasurements = construction?.components?.map { component ->
             component to glyphSource.measureOutlineConstructionGlyph(
                 component.glyphId,
                 size,
@@ -732,12 +770,16 @@ private class MathLayoutPass(
                 node.commandRange,
             )
         }
+        val constructionRuns = constructionMeasurements?.map { (component, measurement) ->
+            component to measurement.run
+        }
         val placedConstruction = if (construction == null || constructionRuns == null) {
             null
         } else {
             placeVerticalConstruction(
                 construction = construction,
                 componentRuns = constructionRuns,
+                componentOutlineEvidences = constructionMeasurements.map { it.second.evidence },
                 size = size,
                 style = style,
                 sourceRange = node.commandRange,
@@ -776,6 +818,31 @@ private class MathLayoutPass(
             null -> baseRun.descent
         }
         val radicalGlyphBlockSize = radicalGlyphAscent + radicalGlyphDescent
+        val radicalBoundsSources = when (construction?.kind) {
+            MathConstructionKind.Assembly -> constructionRuns.orEmpty().map { it.second.boundsSource }.distinct()
+            MathConstructionKind.BaseGlyph,
+            MathConstructionKind.Variant -> listOf(constructionRuns!!.single().second.boundsSource)
+            null -> listOf(baseRun.boundsSource)
+        }
+        val allRadicalBoundsAreOutline = radicalBoundsSources.isNotEmpty() &&
+            radicalBoundsSources.all { it == MathGlyphBoundsSource.Outline }
+        val radicalLogicalAdvancePolicy = if (construction?.kind == MathConstructionKind.Assembly) {
+            "MathAssemblyOrthogonalAdvanceAllPartRecords"
+        } else {
+            "MeasuredMathRunLogicalWidthIndependentOfBoundsSource"
+        }
+        val topStrokeEvidence = placedConstruction?.topStrokeEvidence ?: when (val evidence = baseMeasurement.evidence) {
+            is MathConstructionOutlineEvidence.Available -> evidence
+            is MathConstructionOutlineEvidence.Unavailable -> null
+        }
+        val outlineEvidenceFailure = placedConstruction?.outlineEvidenceFailure ?: when (
+            val evidence = baseMeasurement.evidence
+        ) {
+            is MathConstructionOutlineEvidence.Available -> null
+            is MathConstructionOutlineEvidence.Unavailable -> evidence.reason
+        }
+        val outlineEvidenceAvailable = topStrokeEvidence != null
+        val topStroke = topStrokeEvidence?.topStroke
         val constructionLabel = construction?.kind?.toString() ?: "Unavailable"
         val selectionStep = when (construction?.kind) {
             MathConstructionKind.BaseGlyph -> "NormalGlyphHeight"
@@ -797,6 +864,14 @@ private class MathLayoutPass(
                 DiagnosticSeverity.Warning,
             )
         }
+        if (!outlineEvidenceAvailable) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingConstructionOutlineEvidence,
+                "The math font adapter cannot provide replayable radical top-stroke outline evidence: " +
+                    outlineEvidenceFailure,
+                node.commandRange,
+            )
+        }
 
         // MathML Core 3.3.3.2 first forms the unindexed square-root box B. Its logical
         // reserve and overbar position use line metrics, while the stretch target above uses
@@ -813,7 +888,10 @@ private class MathLayoutPass(
         val ruleTopInB = -unindexedAscent + extraAscender
         val ruleBottomInB = ruleTopInB + ruleThickness
         val actualGap = radicand.inkBounds.top - ruleBottomInB
-        val radicalBaselineInB = ruleTopInB + radicalGlyphAscent
+        val radicalTopStrokeTopPx = topStroke?.topPx ?: -radicalGlyphAscent
+        val radicalTopStrokeBottomPx = topStroke?.bottomPx ?: (-radicalGlyphAscent + ruleThickness)
+        val radicalTopStrokeRightPx = topStroke?.rightPx ?: rawRadical.width
+        val radicalBaselineInB = ruleTopInB - radicalTopStrokeTopPx
         val radicandXInB = rawRadical.width
         val radicalInB = rawRadical.translated(0f, radicalBaselineInB)
         val radicandInB = radicand.translated(radicandXInB, 0f)
@@ -835,7 +913,7 @@ private class MathLayoutPass(
             constructionPaintGroups = radicalInB.constructionPaintGroups + constructionPaintGroup,
         )
         val ruleInB = MathRulePlacement(
-            left = radicandXInB,
+            left = radicalTopStrokeRightPx,
             top = ruleTopInB,
             right = radicandXInB + radicand.width,
             bottom = ruleBottomInB,
@@ -950,6 +1028,8 @@ private class MathLayoutPass(
             "baseGlyphHeightPx" to baseGlyphHeight,
             "baseGlyphBoundsSource" to baseRun.boundsSource,
             "componentBoundsSources" to constructionRuns?.map { it.second.boundsSource }?.distinct(),
+            "baseOutlineEvidence" to baseMeasurement.evidence.evidenceLabel(),
+            "componentOutlineEvidences" to constructionMeasurements?.map { it.second.evidence.evidenceLabel() },
             "baseGlyphCoversTarget" to baseGlyphCoversTarget,
             "targetHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
@@ -958,9 +1038,13 @@ private class MathLayoutPass(
             "constructionBoxDescentPx" to placedConstruction?.boxDescentPx,
             "constructionBoxHeightPx" to placedConstruction?.let { it.boxAscentPx + it.boxDescentPx },
             "constructionExtentPolicy" to if (construction?.kind == MathConstructionKind.Assembly) {
-                "NominalAdvanceForSelectionActualPlacedBoundsForBox"
+                if (allRadicalBoundsAreOutline) {
+                    "NominalAdvanceForSelectionActualPlacedOutlineBoundsForBox"
+                } else {
+                    "NominalAdvanceForSelectionReportedBoundsFallbackForBox"
+                }
             } else {
-                "ShapedGlyphBoxMetrics"
+                if (allRadicalBoundsAreOutline) "ShapedOutlineBounds" else "ShapedReportedBoundsFallback"
             },
             "componentBottomOriginsPx" to placedConstruction?.componentBottomOriginsPx?.joinToString(","),
             "componentBaselineOriginsPx" to placedConstruction?.componentBaselineOriginsPx?.joinToString(","),
@@ -989,15 +1073,36 @@ private class MathLayoutPass(
             "radicalGlyphDescentPx" to radicalGlyphDescent,
             "radicalGlyphBlockSizePx" to radicalGlyphBlockSize,
             "radicalGlyphBoxMetricSource" to if (construction?.kind == MathConstructionKind.Assembly) {
-                "PlacedAssemblyOutlineBounds"
+                if (allRadicalBoundsAreOutline) "PlacedAssemblyOutlineBounds" else "PlacedAssemblyReportedBoundsFallback"
             } else {
-                "ShapedConstructionOutlineBounds"
+                if (allRadicalBoundsAreOutline) {
+                    "ShapedConstructionOutlineBounds"
+                } else {
+                    "ShapedConstructionReportedBoundsFallback"
+                }
             },
+            "radicalGlyphBoundsSources" to radicalBoundsSources,
             "radicalBoxAdvancePx" to rawRadical.width,
+            "radicalLogicalAdvancePolicy" to radicalLogicalAdvancePolicy,
             "radicalPaintOriginY" to radicalBaselineInB,
-            "overbarAnchorPolicy" to "ActualConstructionOutlineTopEdgeToRuleTop",
+            "radicalTopStrokeEvidence" to (topStrokeEvidence?.evidenceLabel()
+                ?: "Unavailable($outlineEvidenceFailure)"),
+            "radicalTopStrokeEvidenceSource" to topStrokeEvidence?.source,
+            "radicalTopStrokeEvidenceFailure" to outlineEvidenceFailure,
+            "radicalTopStrokeTopPx" to radicalTopStrokeTopPx,
+            "radicalTopStrokeBottomPx" to radicalTopStrokeBottomPx,
+            "radicalTopStrokeRightPx" to radicalTopStrokeRightPx,
+            "overbarAnchorPolicy" to if (outlineEvidenceAvailable) {
+                "FontAdapterTopStrokeTopAndRight"
+            } else {
+                "ReportedBoundsAndLogicalAdvanceFallback"
+            },
             "overbarThicknessSource" to "OpenTypeMATH.RadicalRuleThickness",
-            "overbarLeftPolicy" to "RadicalBoxAdvance",
+            "overbarLeftPolicy" to if (outlineEvidenceAvailable) {
+                "FontAdapterTopStrokeRight"
+            } else {
+                "RadicalBoxAdvanceFallback"
+            },
             "targetHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
             "unindexedAscentPx" to unindexedBox.ascent,
@@ -2116,6 +2221,8 @@ private class MathLayoutPass(
         val glyphs: List<MathGlyphPlacement>,
         val boxAscentPx: Float,
         val boxDescentPx: Float,
+        val topStrokeEvidence: MathConstructionOutlineEvidence.Available?,
+        val outlineEvidenceFailure: MathConstructionOutlineUnavailableReason?,
         val componentHorizontalOriginsPx: List<Float>,
         val componentBottomOriginsPx: List<Float>,
         val componentBaselineOriginsPx: List<Float>,
@@ -2170,6 +2277,11 @@ private class MathLayoutPass(
         )
 
     }
+}
+
+private fun MathConstructionOutlineEvidence.evidenceLabel(): String = when (this) {
+    is MathConstructionOutlineEvidence.Available -> "Available($source)"
+    is MathConstructionOutlineEvidence.Unavailable -> "Unavailable($reason)"
 }
 
 private fun unicodeLabel(scalar: Int): String = "U+${scalar.toString(16).uppercase().padStart(4, '0')}"

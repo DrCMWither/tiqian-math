@@ -5,6 +5,7 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import org.jetbrains.skia.Bitmap
@@ -15,6 +16,9 @@ import org.tiqian.math.core.MathBox
 import org.tiqian.math.core.MathConstructionPaintGroup
 import org.tiqian.math.core.MathConstructionPaintKind
 import org.tiqian.math.core.MathConstructionShapeKind
+import org.tiqian.math.core.DiagnosticCode
+import org.tiqian.math.core.MathLayoutDecision
+import org.tiqian.math.core.MathLayoutResult
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathRect
 import org.tiqian.math.core.MathRulePlacement
@@ -25,11 +29,13 @@ import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.MathFontFace
+import org.tiqian.math.layout.MathConstructionOutlineEvidence
 import org.tiqian.math.layout.MathGlyphBoundsSource
 import org.tiqian.math.layout.MathOperatorGlyphRequest
 import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathGlyph
 import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.layout.MeasuredOutlineConstructionRun
 import org.tiqian.math.layout.ResolvedMathOperator
 import org.tiqian.math.layout.ResolvedMathSymbol
 import org.tiqian.math.layout.ResolvedMathSymbolRun
@@ -46,6 +52,29 @@ class MathRadicalSeamGeometryTest {
                         MathLayoutOptions(MathMode.Display, fontSizePx),
                     )
                     val seam = face.radicalSeamGeometry(result.box, result.outerRadicalGroup())
+                    val geometry = result.radicalGeometryDecision()
+                    assertTrue(
+                        result.diagnostics.any { it.code == DiagnosticCode.MissingConstructionOutlineEvidence },
+                        result.debugDump,
+                    )
+                    assertEquals(
+                        "Unavailable(AdapterDoesNotProvideOutlineEvidence)",
+                        geometry.details["radicalTopStrokeEvidence"],
+                    )
+                    assertEquals(
+                        "ReportedBoundsAndLogicalAdvanceFallback",
+                        geometry.details["overbarAnchorPolicy"],
+                    )
+                    assertEquals("[FontReported]", geometry.details["radicalGlyphBoundsSources"])
+                    assertEquals(
+                        if (case.kind == MathConstructionShapeKind.Assembly) {
+                            "MathAssemblyOrthogonalAdvanceAllPartRecords"
+                        } else {
+                            "MeasuredMathRunLogicalWidthIndependentOfBoundsSource"
+                        },
+                        geometry.details["radicalLogicalAdvancePolicy"],
+                    )
+                    assertFalse(geometry.details.getValue("overbarAnchorPolicy").contains("Actual"))
                     assertTrue(
                         !seam.edgesAndThicknessMatch,
                         "$label/${case.label}/$fontSizePx legacy font-reported bounds must reproduce the seam bug: $seam",
@@ -81,6 +110,42 @@ class MathRadicalSeamGeometryTest {
                         listOf(MathGlyphBoundsSource.Outline).toString(),
                         constructionDecision.details["componentBoundsSources"],
                     )
+                    assertEquals(
+                        "Available(GlyphOutlineCrossSection)",
+                        constructionDecision.details["baseOutlineEvidence"],
+                    )
+                    val componentEvidence = constructionDecision.details
+                        .getValue("componentOutlineEvidences")
+                    assertFalse(componentEvidence.contains("Unavailable"), componentEvidence)
+                    assertTrue(componentEvidence.contains("Available(GlyphOutlineCrossSection)"), componentEvidence)
+                    val geometry = result.radicalGeometryDecision()
+                    assertEquals(
+                        "Available(GlyphOutlineCrossSection)",
+                        geometry.details["radicalTopStrokeEvidence"],
+                    )
+                    assertEquals("GlyphOutlineCrossSection", geometry.details["radicalTopStrokeEvidenceSource"])
+                    assertEquals("FontAdapterTopStrokeTopAndRight", geometry.details["overbarAnchorPolicy"])
+                    assertEquals("FontAdapterTopStrokeRight", geometry.details["overbarLeftPolicy"])
+                    assertEquals("[Outline]", geometry.details["radicalGlyphBoundsSources"])
+                    assertEquals(
+                        if (case.kind == MathConstructionShapeKind.Assembly) {
+                            "MathAssemblyOrthogonalAdvanceAllPartRecords"
+                        } else {
+                            "MeasuredMathRunLogicalWidthIndependentOfBoundsSource"
+                        },
+                        geometry.details["radicalLogicalAdvancePolicy"],
+                    )
+                    assertTrue(result.diagnostics.none {
+                        it.code == DiagnosticCode.MissingConstructionOutlineEvidence
+                    }, result.debugDump)
+                    assertNear(
+                        geometry.float("ruleTop"),
+                        geometry.float("radicalPaintOriginY") + geometry.float("radicalTopStrokeTopPx"),
+                    )
+                    assertNear(
+                        geometry.float("ruleLeft"),
+                        geometry.float("radicalX") + geometry.float("radicalTopStrokeRightPx"),
+                    )
                     val seam = face.radicalSeamGeometry(result.box, group)
                     assertEquals("ActualGlyphOutlineSeamCrossSection", seam.policy)
                     assertTrue(
@@ -98,6 +163,49 @@ class MathRadicalSeamGeometryTest {
                     println("SEAM-GEOMETRY face=$label kind=${case.label} size=$fontSizePx $seam")
                 }
             }
+        }
+
+    @Test
+    fun layoutConsumesLocalTopStrokeEvidenceWithoutChangingLogicalAdvance() =
+        withSeamFaces { label, face ->
+            val source = "\\sqrt[3]{x}"
+            val size = 32f
+            val range = SourceRange(0, 5)
+            val normalRun = face.shapeConstructionBase("√", size, range)
+            val outlined = face.shapeOutlineConstructionBase("√", size, range)
+            assertNear(normalRun.width, outlined.run.width)
+
+            val baseline = MathLayoutEngine(face).layout(source, MathLayoutOptions(MathMode.Display, size))
+            val delta = face.mathFont.scaleDesignUnits(
+                face.mathFont.constants.radicalRuleThickness,
+                size,
+            )
+            val shiftedFace = TopStrokeOverrideFace(face, topDeltaPx = delta, rightDeltaPx = delta)
+            val shifted = MathLayoutEngine(shiftedFace).layout(source, MathLayoutOptions(MathMode.Display, size))
+            val before = baseline.radicalGeometryDecision()
+            val after = shifted.radicalGeometryDecision()
+            assertEquals("GlyphOutlineCrossSection", before.details["radicalTopStrokeEvidenceSource"])
+            assertEquals(
+                "SyntheticShiftedGlyphOutlineCrossSection",
+                after.details["radicalTopStrokeEvidenceSource"],
+            )
+            assertNear(baseline.box.width, shifted.box.width)
+            assertNear(before.float("radicalBoxAdvancePx"), after.float("radicalBoxAdvancePx"))
+            assertEquals(before.details["radicalGlyphBoundsSources"], after.details["radicalGlyphBoundsSources"])
+            assertEquals(
+                "MeasuredMathRunLogicalWidthIndependentOfBoundsSource",
+                after.details["radicalLogicalAdvancePolicy"],
+            )
+            assertNear(
+                before.float("radicalPaintOriginY") - delta,
+                after.float("radicalPaintOriginY"),
+                "$label local top anchor moves only paint origin",
+            )
+            assertNear(
+                before.float("ruleLeft") + delta,
+                after.float("ruleLeft"),
+                "$label local right anchor moves only overbar start",
+            )
         }
 
     @Test
@@ -161,6 +269,55 @@ class MathRadicalSeamGeometryTest {
                 }
             }
         }
+
+    @Test
+    fun finalUnionAtOneAndTwoXHasStableAlphaProfilesAcrossTheSeam() =
+        withSeamFaces { label, face ->
+            radicalCases().forEach { case ->
+                val result = MathLayoutEngine(face).layout(
+                    case.source,
+                    MathLayoutOptions(MathMode.Display, 32f),
+                )
+                val group = result.outerRadicalGroup()
+                listOf(1, 2).forEach { deviceScale ->
+                    listOf(0f, .25f, .5f, .75f).forEach { devicePhasePx ->
+                        val sample = sampleFinalUnionAlphaProfiles(
+                            face = face,
+                            box = result.box,
+                            group = group,
+                            devicePhasePx = devicePhasePx,
+                            deviceScale = deviceScale,
+                        )
+                        val alphaQuantizationPx = 4f / (255f * deviceScale)
+                        val overbarUniformityTolerancePx = alphaQuantizationPx
+                        assertTrue(
+                            sample.atSeam.coveragePx >=
+                                minOf(sample.left.coveragePx, sample.right.coveragePx) - alphaQuantizationPx &&
+                                sample.atSeam.coveragePx <=
+                                maxOf(sample.left.coveragePx, sample.right.coveragePx) + alphaQuantizationPx,
+                            "$label/${case.label}/${deviceScale}x/phase=$devicePhasePx " +
+                                "seam coverage has a gap or local darkening: $sample",
+                        )
+                        assertTrue(
+                            sample.atSeam.values.indices.all { row ->
+                                val lower = minOf(sample.left.values[row], sample.right.values[row]) -
+                                    4f / 255f
+                                val upper = maxOf(sample.left.values[row], sample.right.values[row]) +
+                                    4f / 255f
+                                sample.atSeam.values[row] in lower..upper
+                            },
+                            "$label/${case.label}/${deviceScale}x/phase=$devicePhasePx " +
+                                "row alpha jumps outside the two-sided seam envelope: $sample",
+                        )
+                        assertTrue(
+                            sample.nearOverbar.l1DistancePx(sample.right) <= overbarUniformityTolerancePx,
+                            "$label/${case.label}/${deviceScale}x/phase=$devicePhasePx " +
+                                "overlap locally thickens final union: $sample",
+                        )
+                    }
+                }
+            }
+        }
 }
 
 private data class RadicalCase(
@@ -200,6 +357,28 @@ private data class RasterBand(val top: Int, val bottom: Int) {
 }
 
 private data class RasterSeamSample(val left: RasterBand, val right: RasterBand)
+
+private data class AlphaProfile(
+    val values: List<Float>,
+    val deviceScale: Int,
+) {
+    val coveragePx: Float = values.sum() / deviceScale
+
+    fun l1DistancePx(other: AlphaProfile): Float =
+        values.zip(other.values).sumOf { (left, right) -> abs(left - right).toDouble() }.toFloat() /
+            deviceScale
+}
+
+private data class AlphaProfileSeamSample(
+    val left: AlphaProfile,
+    val atSeam: AlphaProfile,
+    val nearOverbar: AlphaProfile,
+    val right: AlphaProfile,
+    val leftWorldX: Float,
+    val seamWorldX: Float,
+    val nearOverbarWorldX: Float,
+    val rightWorldX: Float,
+)
 
 private fun sampleFinalUnion(
     face: SkiaMathFontFace,
@@ -253,6 +432,79 @@ private fun sampleFinalUnion(
     }
 }
 
+private fun sampleFinalUnionAlphaProfiles(
+    face: SkiaMathFontFace,
+    box: MathBox,
+    group: MathConstructionPaintGroup,
+    devicePhasePx: Float,
+    deviceScale: Int,
+): AlphaProfileSeamSample {
+    val seam = face.radicalSeamGeometry(box, group)
+    val outline = assertIs<MathConstructionOutlineResult.Available>(face.constructionOutline(box, group)).path
+    val bounds = outline.bounds
+    val fontSizePx = box.glyphs.first { it.constructionGroupId == group.id }.fontSizePx
+    val designUnitPx = fontSizePx / face.mathFont.unitsPerEm
+    val ruleThicknessPx = seam.overbar.thicknessPx
+    val phasePx = devicePhasePx / deviceScale
+    val paddingPx = 2f * ruleThicknessPx
+    val originX = floor(bounds.left - paddingPx).toInt()
+    val originY = floor(bounds.top - paddingPx).toInt()
+    val width = ceil((bounds.right - originX + paddingPx) * deviceScale).toInt()
+    val height = ceil((bounds.bottom - originY + paddingPx) * deviceScale).toInt()
+    val surface = Surface.makeRasterN32Premul(width, height)
+    val bitmap = Bitmap().apply { allocN32Pixels(width, height) }
+    val paint = Paint().apply { color = Color.BLACK }
+    try {
+        surface.canvas.clear(Color.TRANSPARENT)
+        surface.canvas.save().also {
+            surface.canvas.scale(deviceScale.toFloat(), deviceScale.toFloat())
+            surface.canvas.translate(-originX + phasePx, -originY + phasePx)
+            surface.canvas.drawPath(outline, paint)
+            surface.canvas.restoreToCount(it)
+        }
+        assertTrue(surface.readPixels(bitmap, 0, 0))
+        val leftWorldX = seam.glyphStrokeRightPx - 4f * designUnitPx
+        val seamWorldX = seam.overbarLeftPx
+        val nearOverbarWorldX = seam.overbarLeftPx + ruleThicknessPx / 2f
+        val rightWorldX = seam.overbarLeftPx + 2f * ruleThicknessPx
+        val searchTop = floor(
+            (minOf(seam.glyphStroke.topPx, seam.overbar.topPx) - originY + phasePx - paddingPx) *
+                deviceScale,
+        ).toInt().coerceIn(0, height - 1)
+        val searchBottom = ceil(
+            (maxOf(seam.glyphStroke.bottomPx, seam.overbar.bottomPx) - originY + phasePx + paddingPx) *
+                deviceScale,
+        ).toInt().coerceIn(0, height - 1)
+        fun profileAt(worldX: Float): AlphaProfile {
+            val deviceX = (worldX - originX + phasePx) * deviceScale - .5f
+            val leftColumn = floor(deviceX).toInt().coerceIn(0, width - 1)
+            val rightColumn = (leftColumn + 1).coerceIn(0, width - 1)
+            val rightWeight = (deviceX - floor(deviceX)).coerceIn(0f, 1f)
+            return AlphaProfile(
+                values = (searchTop..searchBottom).map { y ->
+                    bitmap.getAlphaf(leftColumn, y) * (1f - rightWeight) +
+                        bitmap.getAlphaf(rightColumn, y) * rightWeight
+                },
+                deviceScale = deviceScale,
+            )
+        }
+        return AlphaProfileSeamSample(
+            left = profileAt(leftWorldX),
+            atSeam = profileAt(seamWorldX),
+            nearOverbar = profileAt(nearOverbarWorldX),
+            right = profileAt(rightWorldX),
+            leftWorldX = leftWorldX,
+            seamWorldX = seamWorldX,
+            nearOverbarWorldX = nearOverbarWorldX,
+            rightWorldX = rightWorldX,
+        )
+    } finally {
+        paint.close()
+        bitmap.close()
+        surface.close()
+    }
+}
+
 private fun Bitmap.alphaBand(x: Int, searchTop: Int, searchBottom: Int): RasterBand {
     val rows = (searchTop..searchBottom).filter { y -> getAlphaf(x, y) >= .1f }
     require(rows.isNotEmpty()) { "No final union coverage at x=$x in $searchTop..$searchBottom" }
@@ -295,12 +547,6 @@ private class LegacyFontReportedConstructionFace(
         sourceRange: SourceRange,
     ): MeasuredMathRun = delegate.shape(text, fontSizePx, MathStyle.Text, sourceRange)
 
-    override fun shapeOutlineConstructionBase(
-        text: String,
-        fontSizePx: Float,
-        sourceRange: SourceRange,
-    ): MeasuredMathRun = shapeConstructionBase(text, fontSizePx, sourceRange)
-
     override fun measureGlyph(
         glyphId: UShort,
         fontSizePx: Float,
@@ -327,10 +573,56 @@ private class LegacyFontReportedConstructionFace(
         )
     }
 
+}
+
+private class TopStrokeOverrideFace(
+    private val delegate: SkiaMathFontFace,
+    private val topDeltaPx: Float,
+    private val rightDeltaPx: Float,
+) : MathFontFace by delegate {
+    override fun shapeOutlineConstructionBase(
+        text: String,
+        fontSizePx: Float,
+        sourceRange: SourceRange,
+    ): MeasuredOutlineConstructionRun = delegate
+        .shapeOutlineConstructionBase(text, fontSizePx, sourceRange)
+        .shiftedTopStroke()
+
     override fun measureOutlineConstructionGlyph(
         glyphId: UShort,
         fontSizePx: Float,
         style: MathStyle,
         sourceRange: SourceRange,
-    ): MeasuredMathRun = measureGlyph(glyphId, fontSizePx, style, sourceRange)
+    ): MeasuredOutlineConstructionRun = delegate
+        .measureOutlineConstructionGlyph(glyphId, fontSizePx, style, sourceRange)
+        .shiftedTopStroke()
+
+    private fun MeasuredOutlineConstructionRun.shiftedTopStroke(): MeasuredOutlineConstructionRun = copy(
+        evidence = when (val current = evidence) {
+            is MathConstructionOutlineEvidence.Available -> current.copy(
+                topStroke = current.topStroke.copy(
+                    topPx = current.topStroke.topPx + topDeltaPx,
+                    bottomPx = current.topStroke.bottomPx + topDeltaPx,
+                    rightPx = current.topStroke.rightPx + rightDeltaPx,
+                ),
+                source = "SyntheticShiftedGlyphOutlineCrossSection",
+            )
+            is MathConstructionOutlineEvidence.Unavailable -> current
+        },
+    )
 }
+
+private fun MathLayoutResult.radicalGeometryDecision(): MathLayoutDecision =
+    decisions.first { it.name == "OpenTypeMathRadical" && it.range.start == 0 }
+
+private fun MathLayoutDecision.float(key: String): Float = details.getValue(key).toFloat()
+
+private fun assertNear(
+    expected: Float,
+    actual: Float,
+    label: String = "",
+    epsilon: Float = .02f,
+) = assertTrue(
+    abs(expected - actual) <= epsilon,
+    "$label expected=$expected actual=$actual epsilon=$epsilon",
+)

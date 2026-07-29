@@ -26,6 +26,7 @@ data class MathRadicalSeamBand(
 data class MathRadicalSeamGeometry(
     val glyphStroke: MathRadicalSeamBand,
     val overbar: MathRadicalSeamBand,
+    val glyphStrokeLeftPx: Float,
     val glyphStrokeRightPx: Float,
     val overbarLeftPx: Float,
     val horizontalOverlapPx: Float,
@@ -93,7 +94,9 @@ fun SkiaMathFontFace.radicalSeamGeometry(
         )
         topZone.use { zone ->
             require(!zone.isEmpty) { "Radical top-stroke zone is empty" }
-            val glyphStrokeRight = zone.computeTightBounds().right
+            val glyphStrokeBounds = zone.computeTightBounds()
+            val glyphStrokeLeft = glyphStrokeBounds.left
+            val glyphStrokeRight = glyphStrokeBounds.right
             val sampleX = min(glyphStrokeRight, overbarPlacement.left) - 4f * designUnitPx
             val crossSection = intersect(
                 glyphOutline,
@@ -112,6 +115,7 @@ fun SkiaMathFontFace.radicalSeamGeometry(
                 return MathRadicalSeamGeometry(
                     glyphStroke = glyphBand,
                     overbar = overbarBand,
+                    glyphStrokeLeftPx = glyphStrokeLeft,
                     glyphStrokeRightPx = glyphStrokeRight,
                     overbarLeftPx = overbarPlacement.left,
                     horizontalOverlapPx = glyphStrokeRight - overbarPlacement.left,

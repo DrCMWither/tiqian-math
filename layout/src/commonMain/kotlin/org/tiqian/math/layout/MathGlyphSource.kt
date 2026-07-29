@@ -27,6 +27,41 @@ data class MeasuredMathRun(
     val boundsSource: MathGlyphBoundsSource = MathGlyphBoundsSource.FontReported,
 )
 
+/** Local glyph coordinates for the radical's built-in top horizontal stroke. */
+data class MathConstructionTopStroke(
+    val topPx: Float,
+    val bottomPx: Float,
+    val rightPx: Float,
+) {
+    init {
+        require(bottomPx >= topPx)
+    }
+}
+
+sealed interface MathConstructionOutlineEvidence {
+    data class Available(
+        val topStroke: MathConstructionTopStroke,
+        val source: String = "GlyphOutlineCrossSection",
+    ) : MathConstructionOutlineEvidence
+
+    data class Unavailable(
+        val reason: MathConstructionOutlineUnavailableReason,
+    ) : MathConstructionOutlineEvidence
+}
+
+enum class MathConstructionOutlineUnavailableReason {
+    AdapterDoesNotProvideOutlineEvidence,
+    GlyphOutlineUnavailable,
+    TopStrokeUnavailable,
+    ExpectedSingleGlyphRun,
+}
+
+/** Logical shaping result and orthogonal outline evidence are deliberately independent. */
+data class MeasuredOutlineConstructionRun(
+    val run: MeasuredMathRun,
+    val evidence: MathConstructionOutlineEvidence,
+)
+
 enum class MathGlyphBoundsSource {
     FontReported,
     Outline,
@@ -117,16 +152,21 @@ interface MathFontFace {
     ): MeasuredMathRun
 
     /**
-     * Measures a glyph from the same outline geometry required by semantic construction
-     * painting. Backends without replayable outlines retain [measureGlyph]'s reported bounds;
-     * [MeasuredMathRun.boundsSource] exposes that capability difference.
+     * Returns logical measurement plus independent outline evidence for semantic construction
+     * painting. Backends without replayable outlines retain [measureGlyph]'s measurement and
+     * explicitly return [MathConstructionOutlineEvidence.Unavailable].
      */
     fun measureOutlineConstructionGlyph(
         glyphId: UShort,
         fontSizePx: Float,
         style: MathStyle,
         sourceRange: SourceRange,
-    ): MeasuredMathRun = measureGlyph(glyphId, fontSizePx, style, sourceRange)
+    ): MeasuredOutlineConstructionRun = MeasuredOutlineConstructionRun(
+        run = measureGlyph(glyphId, fontSizePx, style, sourceRange),
+        evidence = MathConstructionOutlineEvidence.Unavailable(
+            MathConstructionOutlineUnavailableReason.AdapterDoesNotProvideOutlineEvidence,
+        ),
+    )
 
     /**
      * Resolves the Unicode base glyph used as the key in MathVariants coverage.
@@ -143,5 +183,10 @@ interface MathFontFace {
         text: String,
         fontSizePx: Float,
         sourceRange: SourceRange,
-    ): MeasuredMathRun = shapeConstructionBase(text, fontSizePx, sourceRange)
+    ): MeasuredOutlineConstructionRun = MeasuredOutlineConstructionRun(
+        run = shapeConstructionBase(text, fontSizePx, sourceRange),
+        evidence = MathConstructionOutlineEvidence.Unavailable(
+            MathConstructionOutlineUnavailableReason.AdapterDoesNotProvideOutlineEvidence,
+        ),
+    )
 }

@@ -171,7 +171,16 @@ class GeometryGoldenTest {
                                         "B=${decision.details.getValue("unindexedAscentPx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("unindexedDescentPx").toFloat().fmt()}/" +
                                         "degreeBaseline=${decision.details["degreeBaselineY"]}/" +
-                                        "${decision.details.getValue("logicalWidthPx").toFloat().fmt()}"
+                                        "${decision.details.getValue("logicalWidthPx").toFloat().fmt()}/" +
+                                        "seam=${decision.details["radicalTopStrokeEvidence"]}/" +
+                                        "${decision.details["radicalTopStrokeEvidenceSource"]}/" +
+                                        "${decision.details.getValue("radicalTopStrokeTopPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("radicalTopStrokeBottomPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("radicalTopStrokeRightPx").toFloat().fmt()}->" +
+                                        "${decision.details.getValue("ruleLeft").toFloat().fmt()}/" +
+                                        "advance=${decision.details.getValue("radicalBoxAdvancePx").toFloat().fmt()}/" +
+                                        "bounds=${decision.details["radicalGlyphBoundsSources"]}/" +
+                                        "logical=${decision.details["radicalLogicalAdvancePolicy"]}"
                             }
                         },
                     )

@@ -56,6 +56,7 @@ enum class DiagnosticCode {
     UnsupportedMathDeviceAdjustment,
     MissingMathConstruction,
     MathVariantTooShort,
+    MissingConstructionOutlineEvidence,
 }
 
 data class MathDiagnostic(

@@ -219,6 +219,9 @@ private fun auditRadicalPreviewTiers() {
                 val construction = result.decisions.first {
                     it.name == "OpenTypeRadicalConstruction" && it.range.start == 0
                 }
+                val geometry = result.decisions.first {
+                    it.name == "OpenTypeMathRadical" && it.range.start == 0
+                }
                 val group = result.box.constructionPaintGroups.first {
                     it.kind == MathConstructionPaintKind.Radical && it.sourceRange.start == 0
                 }
@@ -236,6 +239,14 @@ private fun auditRadicalPreviewTiers() {
                         "overlap=${seam.horizontalOverlapPx} " +
                         "coordinateTolerance=${seam.coordinateAlignmentTolerancePx} " +
                         "thicknessTolerance=${seam.strokeThicknessTolerancePx} " +
+                        "evidence=${geometry.details["radicalTopStrokeEvidence"]} " +
+                        "anchor=${geometry.details["radicalTopStrokeTopPx"]}.." +
+                        "${geometry.details["radicalTopStrokeBottomPx"]}/" +
+                        "${geometry.details["radicalTopStrokeRightPx"]}->" +
+                        "${geometry.details["ruleLeft"]} logicalAdvance=" +
+                        "${geometry.details["radicalBoxAdvancePx"]} " +
+                        "bounds=${geometry.details["radicalGlyphBoundsSources"]} " +
+                        "advancePolicy=${geometry.details["radicalLogicalAdvancePolicy"]} " +
                         "achievedAdvance=${construction.details["achievedAdvancePx"]} source=$source",
                 )
             }
@@ -274,6 +285,9 @@ private fun renderRadicalSeamReport() {
                         it.kind == MathConstructionPaintKind.Radical && it.sourceRange.start == 0
                     }
                     val seam = face.radicalSeamGeometry(result.box, group)
+                    val geometry = result.decisions.first {
+                        it.name == "OpenTypeMathRadical" && it.range.start == 0
+                    }
                     val outline = (face.constructionOutline(
                         result.box,
                         group,
@@ -306,8 +320,28 @@ private fun renderRadicalSeamReport() {
                             detailFont,
                             text,
                         )
+                        report.canvas.drawString(
+                            "evidence=${geometry.details["radicalTopStrokeEvidenceSource"]} " +
+                                "anchor=${geometry.details.getValue("radicalTopStrokeTopPx").toFloat().fmt()}.." +
+                                "${geometry.details.getValue("radicalTopStrokeBottomPx").toFloat().fmt()}/" +
+                                "${geometry.details.getValue("radicalTopStrokeRightPx").toFloat().fmt()} -> " +
+                                "rule=${geometry.details.getValue("ruleLeft").toFloat().fmt()} " +
+                                "logical=${geometry.details.getValue("radicalBoxAdvancePx").toFloat().fmt()}",
+                            panelX,
+                            panelY + 70f,
+                            detailFont,
+                            text,
+                        )
+                        report.canvas.drawString(
+                            "bounds=${geometry.details["radicalGlyphBoundsSources"]} · " +
+                                "advance=${geometry.details["radicalLogicalAdvancePolicy"]}",
+                            panelX,
+                            panelY + 86f,
+                            detailFont,
+                            text,
+                        )
                         val imageX = panelX
-                        val imageY = panelY + 68f
+                        val imageY = panelY + 100f
                         drawNearestNeighbor(report, bitmap, imageX, imageY, 12f)
                         val seamPixelX = (SEAM_CROP_LEFT_OF_SEAM_PX * 12f)
                         report.canvas.drawRect(
