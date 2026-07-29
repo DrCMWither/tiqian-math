@@ -420,6 +420,8 @@ private class MathLayoutPass(
         } else {
             null
         }
+        val assemblyValidation = construction?.assemblyValidation
+            ?: resolved.constructionBaseGlyphId?.let(glyphSource.mathFont::verticalAssemblyValidation)
         val rawBox = if (construction != null) {
             operatorConstructionBox(construction, node, style, size)
         } else {
@@ -486,6 +488,13 @@ private class MathLayoutPass(
             "constructionBaseGlyphId" to resolved.constructionBaseGlyphId,
             "glyphIds" to box.glyphs.joinToString(",") { it.glyphId.toString() },
             "construction" to (construction?.kind ?: "BaseGlyph"),
+            "constructionPolicy" to (construction?.constructionPolicy ?: if (assemblyValidation?.valid == false) {
+                "MathMLCore5.3.2FailureAfterInvalidAssembly"
+            } else null),
+            "assemblyValid" to assemblyValidation?.valid,
+            "assemblyInvalidReasons" to assemblyValidation?.invalidReasons,
+            "assemblyConnectorValidationPolicy" to assemblyValidation?.connectorValidationPolicy,
+            "assemblyCheckedConnectionCount" to assemblyValidation?.checkedConnectionCount,
             "displayOperatorMinHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
             "reachesTarget" to if (display) achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight else true,
@@ -564,19 +573,26 @@ private class MathLayoutPass(
             "extenderRepetitions" to construction.extenderRepetitions,
             "connectorOverlapsDesignUnits" to construction.connectorOverlaps,
             "assemblyItalicCorrectionDesignUnits" to construction.assemblyItalicCorrection,
+            "constructionPolicy" to construction.constructionPolicy,
+            "assemblyValid" to construction.assemblyValidation?.valid,
+            "assemblyInvalidReasons" to construction.assemblyValidation?.invalidReasons,
+            "assemblyConnectorValidationPolicy" to construction.assemblyValidation?.connectorValidationPolicy,
+            "assemblyCheckedConnectionCount" to construction.assemblyValidation?.checkedConnectionCount,
+            "uniformConnectorOverlapDesignUnits" to construction.uniformConnectorOverlap,
+            "componentHorizontalOriginsPx" to placed.componentHorizontalOriginsPx.joinToString(","),
             "componentBottomOriginsPx" to placed.componentBottomOriginsPx.joinToString(","),
             "componentBaselineOriginsPx" to placed.componentBaselineOriginsPx.joinToString(","),
             "placementOrigin" to placed.placementOrigin,
-            "placementPolicy" to "MathMLCore5.3.1LeftBottom",
+            "placementPolicy" to placed.placementPolicy,
         )
         return geometryExtents(placed.width, placed.glyphs, emptyList(), node.range)
     }
 
     /**
-     * MathML Core 5.3.1 places a vertical assembly part by its glyph-bounds (left, bottom),
-     * while a ready-made variant retains normal baseline shaping. OpenType part offsets are
-     * bottom-to-top advance coordinates; converting each bottom to a baseline preserves the
-     * connector distances even when component glyph bottoms differ.
+     * A vertical assembly keeps one font-space x origin for every part, as required by the
+     * OpenType orthogonal alignment contract. MathML Core's bottom-to-top advance coordinate
+     * is converted independently to each glyph baseline; no per-part LSB cancellation is
+     * allowed. A ready-made variant retains normal baseline shaping.
      */
     private fun placeVerticalConstruction(
         construction: MathVerticalConstruction,
@@ -588,6 +604,7 @@ private class MathLayoutPass(
     ): PlacedVerticalConstruction {
         val width = componentRuns.maxOfOrNull { it.second.width } ?: 0f
         val assembly = construction.kind == MathConstructionKind.Assembly
+        val horizontalOrigins = mutableListOf<Float>()
         val bottomOrigins = mutableListOf<Float>()
         val baselineOrigins = mutableListOf<Float>()
         val placements = componentRuns.flatMap { (component, run) ->
@@ -595,7 +612,7 @@ private class MathLayoutPass(
             if (assembly) bottomOrigins += componentBottomY
             run.glyphs.map { glyph ->
                 val componentX = when {
-                    assembly -> -glyph.inkBounds.left
+                    assembly -> glyph.x
                     centerComponentsHorizontally -> (width - run.width) / 2f + glyph.x
                     else -> glyph.x
                 }
@@ -604,6 +621,7 @@ private class MathLayoutPass(
                 } else {
                     0f
                 }
+                horizontalOrigins += componentX
                 baselineOrigins += baselineY
                 MathGlyphPlacement(
                     glyphId = glyph.glyphId,
@@ -620,9 +638,15 @@ private class MathLayoutPass(
         return PlacedVerticalConstruction(
             width = width,
             glyphs = placements,
+            componentHorizontalOriginsPx = horizontalOrigins,
             componentBottomOriginsPx = bottomOrigins,
             componentBaselineOriginsPx = baselineOrigins,
-            placementOrigin = if (assembly) "shared-left/bottom" else "normal-glyph-baseline",
+            placementOrigin = if (assembly) "shared-font-x/bottom" else "normal-glyph-baseline",
+            placementPolicy = if (assembly) {
+                "MathMLCore5.3.1SharedFontOriginBottom"
+            } else {
+                "NormalGlyphShaping"
+            },
         )
     }
 
@@ -682,6 +706,8 @@ private class MathLayoutPass(
                 centerComponentsHorizontally = false,
             )
         }
+        val assemblyValidation = construction?.assemblyValidation
+            ?: baseGlyphId?.let(glyphSource.mathFont::verticalAssemblyValidation)
         val achievedAdvance = construction?.let {
             glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
         } ?: baseGlyphHeight
@@ -842,6 +868,14 @@ private class MathLayoutPass(
             "componentOffsetsDesignUnits" to construction?.components?.joinToString(",") { it.offset.toString() },
             "connectorOverlapsDesignUnits" to construction?.connectorOverlaps,
             "extenderRepetitions" to construction?.extenderRepetitions,
+            "constructionPolicy" to (construction?.constructionPolicy ?: if (assemblyValidation?.valid == false) {
+                "MathMLCore5.3.2FailureAfterInvalidAssembly"
+            } else null),
+            "assemblyValid" to assemblyValidation?.valid,
+            "assemblyInvalidReasons" to assemblyValidation?.invalidReasons,
+            "assemblyConnectorValidationPolicy" to assemblyValidation?.connectorValidationPolicy,
+            "assemblyCheckedConnectionCount" to assemblyValidation?.checkedConnectionCount,
+            "uniformConnectorOverlapDesignUnits" to construction?.uniformConnectorOverlap,
             "selectionStep" to selectionStep,
             "selectionPolicy" to "MathMLCore5.3.2NormalGlyphFirst",
             "targetMetric" to "RadicandInkHeightPlusGapAndRule",
@@ -854,10 +888,9 @@ private class MathLayoutPass(
             "reachesTarget" to (achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight),
             "componentBottomOriginsPx" to placedConstruction?.componentBottomOriginsPx?.joinToString(","),
             "componentBaselineOriginsPx" to placedConstruction?.componentBaselineOriginsPx?.joinToString(","),
+            "componentHorizontalOriginsPx" to placedConstruction?.componentHorizontalOriginsPx?.joinToString(","),
             "placementOrigin" to (placedConstruction?.placementOrigin ?: "normal-glyph-baseline"),
-            "placementPolicy" to if (
-                construction?.kind == MathConstructionKind.Assembly
-            ) "MathMLCore5.3.1LeftBottom" else "NormalGlyphShaping",
+            "placementPolicy" to (placedConstruction?.placementPolicy ?: "NormalGlyphShaping"),
         )
         decision(
             "OpenTypeMathRadical",
@@ -1428,6 +1461,9 @@ private class MathLayoutPass(
             construction: MathVerticalConstruction?,
             baseRun: MeasuredMathRun,
         ): MathBox {
+            val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
+            val assemblyValidation = construction?.assemblyValidation
+                ?: baseGlyphId?.let(glyphSource.mathFont::verticalAssemblyValidation)
             val placedConstruction = construction?.let {
                 val componentRuns = it.components.map { component ->
                     component to glyphSource.measureGlyph(component.glyphId, size, style, node.range)
@@ -1492,7 +1528,7 @@ private class MathLayoutPass(
                 node.range,
                 "side" to side,
                 "style" to style,
-                "baseGlyphId" to baseRun.glyphs.singleOrNull()?.glyphId,
+                "baseGlyphId" to baseGlyphId,
                 "construction" to (construction?.kind ?: "BaseGlyph"),
                 "targetPolicy" to "TeXFractionNoadFixedWithAxisInkSafety",
                 "fixedTargetPx" to fixedTargetHeight,
@@ -1509,6 +1545,15 @@ private class MathLayoutPass(
                 "extenderRepetitions" to construction?.extenderRepetitions,
                 "connectorOverlaps" to construction?.connectorOverlaps,
                 "placementOrigin" to (placedConstruction?.placementOrigin ?: "normal-glyph-baseline"),
+                "placementPolicy" to (placedConstruction?.placementPolicy ?: "NormalGlyphShaping"),
+                "constructionPolicy" to (construction?.constructionPolicy ?: if (assemblyValidation?.valid == false) {
+                    "MathMLCore5.3.2FailureAfterInvalidAssembly"
+                } else null),
+                "assemblyValid" to assemblyValidation?.valid,
+                "assemblyInvalidReasons" to assemblyValidation?.invalidReasons,
+                "assemblyConnectorValidationPolicy" to assemblyValidation?.connectorValidationPolicy,
+                "assemblyCheckedConnectionCount" to assemblyValidation?.checkedConnectionCount,
+                "uniformConnectorOverlapDesignUnits" to construction?.uniformConnectorOverlap,
             )
             return box
         }
@@ -1963,9 +2008,11 @@ private class MathLayoutPass(
     private data class PlacedVerticalConstruction(
         val width: Float,
         val glyphs: List<MathGlyphPlacement>,
+        val componentHorizontalOriginsPx: List<Float>,
         val componentBottomOriginsPx: List<Float>,
         val componentBaselineOriginsPx: List<Float>,
         val placementOrigin: String,
+        val placementPolicy: String,
     )
 
     private data class HorizontalItem(

@@ -1,6 +1,7 @@
 package org.tiqian.math.font.opentype
 
 import org.tiqian.math.core.DiagnosticCode
+import kotlin.math.ceil
 
 data class OpenTypeMathConstants(
     val scriptPercentScaleDown: Int,
@@ -135,6 +136,28 @@ data class MathVerticalConstruction(
     val extenderRepetitions: Int = 0,
     /** Present only for a GlyphAssembly; variants use their glyph correction record. */
     val assemblyItalicCorrection: Int? = null,
+    /** Validation evidence is retained when an assembly is selected or rejected. */
+    val assemblyValidation: MathGlyphAssemblyValidation? = null,
+    /** Named selection/construction algorithm for structured layout decisions. */
+    val constructionPolicy: String = "OpenTypeMathVariants",
+    /** MathML Core 5.3.1 uses one overlap value for every assembly connection. */
+    val uniformConnectorOverlap: Float? = null,
+)
+
+enum class MathGlyphAssemblyInvalidReason {
+    NoExtender,
+    NonPositiveExtenderGrowth,
+    ConnectorShorterThanMinimumOverlap,
+}
+
+data class MathGlyphAssemblyValidation(
+    val valid: Boolean,
+    val invalidReasons: Set<MathGlyphAssemblyInvalidReason>,
+    val extenderCount: Int,
+    val nonExtenderCount: Int,
+    val extenderNonOverlappingAdvance: Long,
+    val checkedConnectionCount: Int,
+    val connectorValidationPolicy: String,
 )
 
 data class OpenTypeMathFont(
@@ -196,11 +219,13 @@ data class OpenTypeMathFont(
                 listOf(MathGlyphComponent(variant.glyphId, 0f)),
                 variant.advanceMeasurement.toFloat(),
                 reachesTarget = true,
+                constructionPolicy = "MathMLCore5.3.2Variant",
             )
         }
         val assembly = construction.assembly
-        if (assembly != null && assembly.parts.isNotEmpty()) {
-            return assemble(assembly, target)
+        val assemblyValidation = assembly?.let(::validateAssembly)
+        if (assembly != null && assemblyValidation?.valid == true) {
+            return assemble(assembly, assemblyValidation, target)
         }
         val last = construction.variants.lastOrNull() ?: return null
         return MathVerticalConstruction(
@@ -208,51 +233,96 @@ data class OpenTypeMathFont(
             listOf(MathGlyphComponent(last.glyphId, 0f)),
             last.advanceMeasurement.toFloat(),
             reachesTarget = last.advanceMeasurement >= target,
+            assemblyValidation = assemblyValidation,
+            constructionPolicy = if (assemblyValidation?.valid == false) {
+                "MathMLCore5.3.2LastVariantAfterInvalidAssembly"
+            } else {
+                "MathMLCore5.3.2LastVariant"
+            },
         )
     }
 
-    private fun assemble(assembly: MathGlyphAssembly, target: Float): MathVerticalConstruction {
-        // OpenType MATH starts with every extender removed, then inserts one of
-        // each extender per growth round.
-        var extenderRepetitions = 0
-        var sequence: List<MathGlyphAssemblyPart>
-        var bounds: List<Pair<Int, Int>>
-        while (true) {
-            sequence = buildList {
-                assembly.parts.forEach { part ->
-                    if (!part.extender) add(part) else repeat(extenderRepetitions) { add(part) }
-                }
-            }
-            if (sequence.isEmpty()) {
-                extenderRepetitions++
-                continue
-            }
-            bounds = connectorBounds(sequence, assembly.minimumConnectorOverlap)
-            val largestSize = sequence.sumOf { it.fullAdvance }.toFloat() - bounds.sumOf { it.first }
-            if (largestSize >= target || assembly.parts.none { it.extender }) break
-            extenderRepetitions++
-        }
+    fun verticalAssemblyValidation(baseGlyphId: UShort): MathGlyphAssemblyValidation? =
+        verticalConstructions[baseGlyphId]?.assembly?.let(::validateAssembly)
 
-        val overlaps = bounds.map { it.second.toFloat() }.toMutableList()
-        val smallestSize = sequence.sumOf { it.fullAdvance }.toFloat() - overlaps.sum()
-        var growthNeeded = (target - smallestSize).coerceAtLeast(0f)
-        val active = overlaps.indices.toMutableSet()
-        while (growthNeeded > ASSEMBLY_REACH_EPSILON_DESIGN_UNITS && active.isNotEmpty()) {
-            val equalGrowth = growthNeeded / active.size
-            var applied = 0f
-            val saturated = mutableListOf<Int>()
-            active.forEach { connection ->
-                val minimumOverlap = bounds[connection].first.toFloat()
-                val capacity = overlaps[connection] - minimumOverlap
-                val growth = minOf(equalGrowth, capacity)
-                overlaps[connection] -= growth
-                applied += growth
-                if (capacity - growth <= ASSEMBLY_REACH_EPSILON_DESIGN_UNITS) saturated += connection
-            }
-            if (applied <= ASSEMBLY_REACH_EPSILON_DESIGN_UNITS) break
-            growthNeeded -= applied
-            active.removeAll(saturated)
+    private fun validateAssembly(assembly: MathGlyphAssembly): MathGlyphAssemblyValidation {
+        val extenders = assembly.parts.filter { it.extender }
+        val extenderAdvance = extenders.sumOf { it.fullAdvance.toLong() }
+        val nonOverlappingAdvance = extenderAdvance -
+            assembly.minimumConnectorOverlap.toLong() * extenders.size
+        // Only connector ends that can meet another part are constrained. The bottom
+        // non-extender's outer start and top non-extender's outer end are not connections;
+        // real Lete/STIX constructions intentionally store zero there.
+        val adjacentConnections = assembly.parts.zipWithNext()
+        val shortAdjacentConnector = adjacentConnections.any { (lower, upper) ->
+            lower.endConnectorLength < assembly.minimumConnectorOverlap ||
+                upper.startConnectorLength < assembly.minimumConnectorOverlap
         }
+        // An extender can be repeated next to itself even when it appears only once in the
+        // source part list, so both of its connector ends participate in a possible join.
+        val shortExtenderSelfConnector = extenders.any {
+            it.startConnectorLength < assembly.minimumConnectorOverlap ||
+                it.endConnectorLength < assembly.minimumConnectorOverlap
+        }
+        val reasons = buildSet {
+            if (extenders.isEmpty()) add(MathGlyphAssemblyInvalidReason.NoExtender)
+            if (nonOverlappingAdvance <= 0L) {
+                add(MathGlyphAssemblyInvalidReason.NonPositiveExtenderGrowth)
+            }
+            if (shortAdjacentConnector || shortExtenderSelfConnector) {
+                add(MathGlyphAssemblyInvalidReason.ConnectorShorterThanMinimumOverlap)
+            }
+        }
+        return MathGlyphAssemblyValidation(
+            valid = reasons.isEmpty(),
+            invalidReasons = reasons,
+            extenderCount = extenders.size,
+            nonExtenderCount = assembly.parts.size - extenders.size,
+            extenderNonOverlappingAdvance = nonOverlappingAdvance,
+            checkedConnectionCount = adjacentConnections.size + extenders.size,
+            connectorValidationPolicy = "MathMLCore5.3.1ParticipatingConnections",
+        )
+    }
+
+    private fun assemble(
+        assembly: MathGlyphAssembly,
+        validation: MathGlyphAssemblyValidation,
+        target: Float,
+    ): MathVerticalConstruction {
+        check(validation.valid)
+        val extenders = assembly.parts.filter { it.extender }
+        val nonExtenders = assembly.parts.filterNot { it.extender }
+        val extenderAdvance = extenders.sumOf { it.fullAdvance }.toFloat()
+        val nonExtenderAdvance = nonExtenders.sumOf { it.fullAdvance }.toFloat()
+        val minimumOverlap = assembly.minimumConnectorOverlap.toFloat()
+        val extenderGrowth = validation.extenderNonOverlappingAdvance.toFloat()
+        // MathML Core 5.3.1 r_min: the smallest whole extender repetition count whose
+        // assembly reaches T when every connection uses the minimum overlap.
+        val repetitionsNumerator = target - nonExtenderAdvance +
+            minimumOverlap * (validation.nonExtenderCount - 1)
+        val rMin = ceil(repetitionsNumerator / extenderGrowth)
+            .toInt()
+            .coerceAtLeast(if (validation.nonExtenderCount == 0) 1 else 0)
+        val sequence = buildList {
+            assembly.parts.forEach { part ->
+                if (!part.extender) add(part) else repeat(rMin) { add(part) }
+            }
+        }
+        check(sequence.isNotEmpty())
+
+        val connectionMaxima = sequence.zipWithNext { lower, upper ->
+            minOf(lower.endConnectorLength, upper.startConnectorLength).toFloat()
+        }
+        val zeroOverlapSize = sequence.sumOf { it.fullAdvance }.toFloat()
+        // MathML Core 5.3.1 o_max: one overlap for all connections, bounded by both
+        // the target-derived theoretical value and every participating connector pair.
+        val oMax = if (sequence.size <= 1) {
+            0f
+        } else {
+            val oMaxTheoretical = (zeroOverlapSize - target) / (sequence.size - 1)
+            minOf(oMaxTheoretical, connectionMaxima.min()).coerceAtLeast(minimumOverlap)
+        }
+        val overlaps = List(connectionMaxima.size) { oMax }
 
         var offset = 0f
         val components = sequence.mapIndexed { index, part ->
@@ -269,19 +339,13 @@ data class OpenTypeMathFont(
             actualAdvance,
             reachesTarget = actualAdvance + ASSEMBLY_REACH_EPSILON_DESIGN_UNITS >= target,
             connectorOverlaps = overlaps,
-            extenderRepetitions = extenderRepetitions,
+            extenderRepetitions = rMin,
             assemblyItalicCorrection = assembly.italicCorrection,
+            assemblyValidation = validation,
+            constructionPolicy = "MathMLCore5.3.1UniformOverlap",
+            uniformConnectorOverlap = oMax,
         )
     }
-
-    private fun connectorBounds(
-        parts: List<MathGlyphAssemblyPart>,
-        minimumConnectorOverlap: Int,
-    ): List<Pair<Int, Int>> =
-        parts.zipWithNext { lower, upper ->
-            val maximum = minOf(lower.endConnectorLength, upper.startConnectorLength)
-            minOf(maximum, minimumConnectorOverlap) to maximum
-        }
 
     private companion object {
         const val ASSEMBLY_REACH_EPSILON_DESIGN_UNITS = 0.01f

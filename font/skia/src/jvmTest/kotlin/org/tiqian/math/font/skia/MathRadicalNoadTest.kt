@@ -1,14 +1,25 @@
 package org.tiqian.math.font.skia
 
+import java.util.ArrayDeque
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import org.jetbrains.skia.Bitmap
+import org.jetbrains.skia.Color
+import org.jetbrains.skia.Paint
+import org.jetbrains.skia.Point
+import org.jetbrains.skia.Rect
+import org.jetbrains.skia.Surface
+import org.jetbrains.skia.TextBlobBuilder
 import org.tiqian.math.core.DiagnosticCode
+import org.tiqian.math.core.MathGlyphPlacement
 import org.tiqian.math.core.MathLayoutDecision
 import org.tiqian.math.core.MathLayoutResult
 import org.tiqian.math.core.MathMode
+import org.tiqian.math.core.MathRulePlacement
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
@@ -161,11 +172,22 @@ class MathRadicalNoadTest {
                     break
                 }
             }
-            val result = assertNotNull(assemblyResult, "$label reaches its real radical assembly")
+            val rootGlyph = face.shapeConstructionBase("√", size, SourceRange(0, 5)).glyphs.single().glyphId
+            val validation = face.mathFont.verticalAssemblyValidation(rootGlyph)
+            val result = assertNotNull(
+                assemblyResult,
+                "$label reaches its real radical assembly; validation=$validation",
+            )
             val construction = result.radicalConstructionDecision()
             assertEquals("Assembly", construction.details["construction"])
-            assertEquals("shared-left/bottom", construction.details["placementOrigin"])
-            assertEquals("MathMLCore5.3.1LeftBottom", construction.details["placementPolicy"])
+            assertEquals("shared-font-x/bottom", construction.details["placementOrigin"])
+            assertEquals("MathMLCore5.3.1SharedFontOriginBottom", construction.details["placementPolicy"])
+            assertEquals("MathMLCore5.3.1UniformOverlap", construction.details["constructionPolicy"])
+            assertEquals("true", construction.details["assemblyValid"])
+            assertEquals(
+                "MathMLCore5.3.1ParticipatingConnections",
+                construction.details["assemblyConnectorValidationPolicy"],
+            )
             assertTrue(construction.details["componentGlyphIds"].orEmpty().contains(','), construction.toString())
             assertTrue(construction.details["componentOffsetsDesignUnits"].orEmpty().contains(','), construction.toString())
             assertTrue(construction.float("achievedAdvancePx") + EPSILON >= construction.float("targetHeightPx"))
@@ -185,6 +207,70 @@ class MathRadicalNoadTest {
                 "$label tall indexed assembly positions the degree from completed box B",
             )
         }
+
+    @Test
+    fun stixTallRadicalAssemblyConnectorsAndOverbarAreOneRasterContour() {
+        SkiaMathFontFace(StixTwoMath.load()).use { face ->
+            val size = 52f
+            var source = "x"
+            var result: MathLayoutResult? = null
+            for (depth in 1..10) {
+                source = "\\frac{$source}{y}"
+                val candidate = MathLayoutEngine(face).layout(
+                    "\\sqrt{$source}",
+                    MathLayoutOptions(MathMode.Display, size),
+                )
+                if (candidate.radicalConstructionDecision().details["construction"] == "Assembly") {
+                    result = candidate
+                    break
+                }
+            }
+            val assembled = assertNotNull(result, "STIX fixture reaches a real radical assembly")
+            val commandRange = SourceRange(0, 5)
+            val construction = assembled.radicalConstructionDecision()
+            assertEquals("shared-font-x/bottom", construction.details["placementOrigin"])
+            val horizontalOrigins = construction.details.getValue("componentHorizontalOriginsPx")
+                .split(',')
+                .map(String::toFloat)
+            assertTrue(
+                horizontalOrigins.max() - horizontalOrigins.min() <= EPSILON,
+                "all STIX parts retain one font x origin: $horizontalOrigins",
+            )
+
+            val components = assembled.box.glyphs.filter { it.sourceRange == commandRange }
+            assertTrue(components.size >= 3, "STIX fixture uses multiple real assembly parts")
+            components.sortedBy { it.inkBounds.top }.zipWithNext().forEach { (upper, lower) ->
+                val horizontalIntersection = minOf(upper.inkBounds.right, lower.inkBounds.right) -
+                    maxOf(upper.inkBounds.left, lower.inkBounds.left)
+                val verticalIntersection = minOf(upper.inkBounds.bottom, lower.inkBounds.bottom) -
+                    maxOf(upper.inkBounds.top, lower.inkBounds.top)
+                assertTrue(
+                    horizontalIntersection > EPSILON && verticalIntersection >= -EPSILON,
+                    "STIX connector must intersect in two dimensions: upper=${upper.inkBounds}, " +
+                        "lower=${lower.inkBounds}",
+                )
+            }
+
+            val overbar = assembled.box.rules.single { it.sourceRange == commandRange }
+            val top = components.minBy { it.inkBounds.top }
+            val topBarHorizontalIntersection = minOf(top.inkBounds.right, overbar.right) -
+                maxOf(top.inkBounds.left, overbar.left)
+            val topBarVerticalIntersection = minOf(top.inkBounds.bottom, overbar.bottom) -
+                maxOf(top.inkBounds.top, overbar.top)
+            assertTrue(
+                topBarHorizontalIntersection > EPSILON && topBarVerticalIntersection >= -EPSILON,
+                "STIX top part must join the overbar: top=${top.inkBounds}, bar=$overbar",
+            )
+
+            val rasterComponents = rasterConnectedComponentSizes(face, components, overbar, scale = 3)
+            assertEquals(
+                1,
+                rasterComponents.size,
+                "STIX radical sign and overbar must rasterize as one connected contour; " +
+                    "component sizes=$rasterComponents",
+            )
+        }
+    }
 
     @Test
     fun baseVariantHeterogeneousAssemblyAndInsufficientConstructionAreDistinctPaths() {
@@ -243,8 +329,8 @@ class MathRadicalNoadTest {
 
             val assembly = MathGlyphAssembly(
                 parts = listOf(
-                    MathGlyphAssemblyPart(rootGlyph, 0, 300, 1_000, false),
-                    MathGlyphAssemblyPart(otherGlyph, 300, 0, 1_100, false),
+                    MathGlyphAssemblyPart(rootGlyph, 100, 300, 1_000, false),
+                    MathGlyphAssemblyPart(otherGlyph, 300, 100, 1_100, true),
                 ),
                 minimumConnectorOverlap = 100,
             )
@@ -282,7 +368,7 @@ class MathRadicalNoadTest {
                 "component bottoms, not baselines, are the assembly placement origins",
             )
             assertTrue(assembled.radicalConstructionDecision().details["connectorOverlapsDesignUnits"].orEmpty() != "[]")
-            assertEquals("shared-left/bottom", assembled.radicalConstructionDecision().details["placementOrigin"])
+            assertEquals("shared-font-x/bottom", assembled.radicalConstructionDecision().details["placementOrigin"])
 
             val insufficientFont = delegate.mathFont.copy(
                 constants = zeroGeometry.copy(radicalVerticalGap = 2_000),
@@ -293,6 +379,34 @@ class MathRadicalNoadTest {
             val insufficient = layout(delegate, insufficientFont, "\\sqrt{x}", size)
             assertTrue(insufficient.diagnostics.any { it.code == DiagnosticCode.MathVariantTooShort })
             assertEquals("false", insufficient.radicalConstructionDecision().details["reachesTarget"])
+
+            val invalidAssemblyFont = delegate.mathFont.copy(
+                constants = zeroGeometry.copy(radicalVerticalGap = 2_000),
+                verticalConstructions = delegate.mathFont.verticalConstructions + (
+                    rootGlyph to MathGlyphConstruction(
+                        emptyList(),
+                        MathGlyphAssembly(
+                            parts = listOf(
+                                MathGlyphAssemblyPart(rootGlyph, 100, 100, 100, true),
+                            ),
+                            minimumConnectorOverlap = 100,
+                        ),
+                    )
+                ),
+            )
+            val invalid = layout(delegate, invalidAssemblyFont, "\\sqrt{x}", size)
+            val invalidDecision = invalid.radicalConstructionDecision()
+            assertEquals("false", invalidDecision.details["assemblyValid"])
+            assertTrue(
+                invalidDecision.details["assemblyInvalidReasons"].orEmpty()
+                    .contains("NonPositiveExtenderGrowth"),
+                invalidDecision.toString(),
+            )
+            assertEquals(
+                "MathMLCore5.3.2FailureAfterInvalidAssembly",
+                invalidDecision.details["constructionPolicy"],
+            )
+            assertTrue(invalid.diagnostics.any { it.code == DiagnosticCode.MissingMathConstruction })
         }
     }
 
@@ -591,6 +705,93 @@ private inline fun withRadicalFaces(block: (String, SkiaMathFontFace) -> Unit) {
         "Lete Sans Math" to LeteSansMath.load(),
         "STIX Two Math" to StixTwoMath.load(),
     ).forEach { (label, font) -> SkiaMathFontFace(font).use { block(label, it) } }
+}
+
+private fun rasterConnectedComponentSizes(
+    face: SkiaMathFontFace,
+    glyphs: List<MathGlyphPlacement>,
+    rule: MathRulePlacement,
+    scale: Int,
+): List<Int> {
+    require(glyphs.isNotEmpty())
+    val scalePx = scale.toFloat()
+    val left = minOf(glyphs.minOf { it.inkBounds.left }, rule.left)
+    val top = minOf(glyphs.minOf { it.inkBounds.top }, rule.top)
+    val right = maxOf(glyphs.maxOf { it.inkBounds.right }, rule.right)
+    val bottom = maxOf(glyphs.maxOf { it.inkBounds.bottom }, rule.bottom)
+    val padding = 8
+    val width = ceil((right - left) * scalePx).toInt() + 2 * padding
+    val height = ceil((bottom - top) * scalePx).toInt() + 2 * padding
+    val originX = padding - left * scalePx
+    val originY = padding - top * scalePx
+    val surface = Surface.makeRasterN32Premul(width, height)
+    val paint = Paint().apply { color = Color.BLACK }
+    val font = face.font(glyphs.first().fontSizePx * scalePx)
+    val builder = TextBlobBuilder()
+    try {
+        surface.canvas.clear(Color.TRANSPARENT)
+        builder.appendRunPos(
+            font,
+            glyphs.map { it.glyphId.toShort() }.toShortArray(),
+            glyphs.map {
+                Point(originX + it.x * scalePx, originY + it.baselineY * scalePx)
+            }.toTypedArray(),
+        )
+        builder.build()?.use { surface.canvas.drawTextBlob(it, 0f, 0f, paint) }
+        surface.canvas.drawRect(
+            Rect.makeLTRB(
+                originX + rule.left * scalePx,
+                originY + rule.top * scalePx,
+                originX + rule.right * scalePx,
+                originY + rule.bottom * scalePx,
+            ),
+            paint,
+        )
+        val bitmap = Bitmap().apply { allocN32Pixels(width, height) }
+        try {
+            assertTrue(surface.readPixels(bitmap, 0, 0))
+            val filled = BooleanArray(width * height)
+            for (y in 0 until height) for (x in 0 until width) {
+                filled[y * width + x] = bitmap.getAlphaf(x, y) > 0.08f
+            }
+            val visited = BooleanArray(filled.size)
+            val sizes = mutableListOf<Int>()
+            for (start in filled.indices) {
+                if (!filled[start] || visited[start]) continue
+                visited[start] = true
+                val queue = ArrayDeque<Int>()
+                queue.add(start)
+                var componentSize = 0
+                while (queue.isNotEmpty()) {
+                    val current = queue.removeFirst()
+                    componentSize++
+                    val currentX = current % width
+                    val currentY = current / width
+                    for (dy in -1..1) for (dx in -1..1) {
+                        if (dx == 0 && dy == 0) continue
+                        val nextX = currentX + dx
+                        val nextY = currentY + dy
+                        if (nextX !in 0 until width || nextY !in 0 until height) continue
+                        val next = nextY * width + nextX
+                        if (filled[next] && !visited[next]) {
+                            visited[next] = true
+                            queue.add(next)
+                        }
+                    }
+                }
+                sizes += componentSize
+            }
+            assertTrue(sizes.isNotEmpty(), "STIX radical raster must contain visible pixels")
+            return sizes.sortedDescending()
+        } finally {
+            bitmap.close()
+        }
+    } finally {
+        builder.close()
+        font.close()
+        paint.close()
+        surface.close()
+    }
 }
 
 private fun assertNear(expected: Float, actual: Float, message: String) {

@@ -4,7 +4,11 @@ import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MathAssemblyAndKernTest {
     @Test
@@ -41,21 +45,115 @@ class MathAssemblyAndKernTest {
     }
 
     @Test
-    fun assemblyWithoutExtendersReportsWhetherItsFiniteCoverageIsEnough() {
+    fun assemblyWithoutExtendersIsInvalidAndCannotBeSelected() {
         val font = LeteSansMath.load().copy(
             verticalConstructions = mapOf(TEST_GLYPH to construction(withExtender = false)),
         )
-        assertTrue(font.verticalConstruction(TEST_GLYPH, 170f, 1000f)!!.reachesTarget)
-        assertFalse(font.verticalConstruction(TEST_GLYPH, 250f, 1000f)!!.reachesTarget)
+        val validation = assertNotNull(font.verticalAssemblyValidation(TEST_GLYPH))
+        assertFalse(validation.valid)
+        assertTrue(MathGlyphAssemblyInvalidReason.NoExtender in validation.invalidReasons)
+        assertNull(font.verticalConstruction(TEST_GLYPH, 170f, 1000f))
+    }
+
+    @Test
+    fun invalidAssembliesCompletePromptlyAndFallbackToTheLastVariant() {
+        val invalidFixtures = listOf(
+            MathGlyphAssemblyInvalidReason.NoExtender to MathGlyphAssembly(
+                parts = listOf(
+                    MathGlyphAssemblyPart(10u, 10, 20, 100, false),
+                    MathGlyphAssemblyPart(12u, 20, 10, 100, false),
+                ),
+                minimumConnectorOverlap = 10,
+            ),
+            MathGlyphAssemblyInvalidReason.NonPositiveExtenderGrowth to MathGlyphAssembly(
+                parts = listOf(MathGlyphAssemblyPart(11u, 10, 10, 10, true)),
+                minimumConnectorOverlap = 10,
+            ),
+            MathGlyphAssemblyInvalidReason.ConnectorShorterThanMinimumOverlap to MathGlyphAssembly(
+                parts = listOf(
+                    MathGlyphAssemblyPart(10u, 10, 20, 100, false),
+                    MathGlyphAssemblyPart(11u, 5, 20, 60, true),
+                    MathGlyphAssemblyPart(12u, 20, 10, 100, false),
+                ),
+                minimumConnectorOverlap = 10,
+            ),
+        )
+        invalidFixtures.forEach { (reason, assembly) ->
+            val font = LeteSansMath.load().copy(
+                verticalConstructions = mapOf(
+                    TEST_GLYPH to MathGlyphConstruction(
+                        variants = listOf(MathGlyphVariant(FALLBACK_GLYPH, 120)),
+                        assembly = assembly,
+                    ),
+                ),
+            )
+            val selected = assertCompletesWithinOneSecond {
+                assertNotNull(font.verticalConstruction(TEST_GLYPH, 250f, 1000f))
+            }
+            assertEquals(MathConstructionKind.Variant, selected.kind, reason.toString())
+            assertEquals(FALLBACK_GLYPH, selected.components.single().glyphId, reason.toString())
+            assertFalse(selected.reachesTarget, reason.toString())
+            assertEquals("MathMLCore5.3.2LastVariantAfterInvalidAssembly", selected.constructionPolicy)
+            assertEquals(false, selected.assemblyValidation?.valid)
+            assertTrue(reason in selected.assemblyValidation!!.invalidReasons)
+        }
+    }
+
+    @Test
+    fun unusedTerminalConnectorsMayBeZeroButEveryParticipatingConnectionIsValidated() {
+        val assembly = MathGlyphAssembly(
+            parts = listOf(
+                MathGlyphAssemblyPart(10u, 0, 40, 100, false),
+                MathGlyphAssemblyPart(11u, 30, 30, 60, true),
+                MathGlyphAssemblyPart(12u, 40, 0, 100, false),
+            ),
+            minimumConnectorOverlap = 10,
+        )
+        val font = LeteSansMath.load().copy(
+            verticalConstructions = mapOf(
+                TEST_GLYPH to MathGlyphConstruction(emptyList(), assembly),
+            ),
+        )
+
+        val validation = assertNotNull(font.verticalAssemblyValidation(TEST_GLYPH))
+        assertTrue(validation.valid, validation.toString())
+        assertEquals("MathMLCore5.3.1ParticipatingConnections", validation.connectorValidationPolicy)
+        assertEquals(3, validation.checkedConnectionCount)
+        assertEquals(MathConstructionKind.Assembly, font.verticalConstruction(TEST_GLYPH, 220f, 1000f)?.kind)
+    }
+
+    @Test
+    fun heterogeneousConnectorMaximaStillUseOneStandardOverlap() {
+        val assembly = MathGlyphAssembly(
+            parts = listOf(
+                MathGlyphAssemblyPart(10u, 10, 80, 100, false),
+                MathGlyphAssemblyPart(11u, 60, 40, 100, true),
+                MathGlyphAssemblyPart(12u, 30, 10, 100, false),
+            ),
+            minimumConnectorOverlap = 10,
+        )
+        val font = LeteSansMath.load().copy(
+            verticalConstructions = mapOf(
+                TEST_GLYPH to MathGlyphConstruction(emptyList(), assembly),
+            ),
+        )
+        val selected = assertNotNull(font.verticalConstruction(TEST_GLYPH, 220f, 1000f))
+        assertEquals(MathConstructionKind.Assembly, selected.kind)
+        assertEquals("MathMLCore5.3.1UniformOverlap", selected.constructionPolicy)
+        assertEquals(true, selected.assemblyValidation?.valid)
+        assertEquals(listOf(30f, 30f), selected.connectorOverlaps)
+        assertNear(30f, assertNotNull(selected.uniformConnectorOverlap))
+        assertEquals(listOf(0f, 70f, 140f), selected.components.map { it.offset })
+        assertNear(240f, selected.advanceMeasurement)
     }
 
     private fun construction(withExtender: Boolean): MathGlyphConstruction = MathGlyphConstruction(
         variants = emptyList(),
         assembly = MathGlyphAssembly(
             parts = buildList {
-                add(MathGlyphAssemblyPart(10u, 0, 40, 100, false))
+                add(MathGlyphAssemblyPart(10u, 10, 40, 100, false))
                 if (withExtender) add(MathGlyphAssemblyPart(11u, 30, 30, 60, true))
-                add(MathGlyphAssemblyPart(12u, 40, 0, 100, false))
+                add(MathGlyphAssemblyPart(12u, 40, 10, 100, false))
             },
             minimumConnectorOverlap = 10,
             italicCorrection = 73,
@@ -73,5 +171,17 @@ class MathAssemblyAndKernTest {
 
     private companion object {
         val TEST_GLYPH: UShort = 1u
+        val FALLBACK_GLYPH: UShort = 2u
+    }
+}
+
+private fun <T> assertCompletesWithinOneSecond(block: () -> T): T {
+    val executor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "math-assembly-timeout").apply { isDaemon = true }
+    }
+    return try {
+        executor.submit<T> { block() }.get(1, TimeUnit.SECONDS)
+    } finally {
+        executor.shutdownNow()
     }
 }

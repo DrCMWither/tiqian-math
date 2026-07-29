@@ -162,9 +162,9 @@ class MathOperatorNoadTest {
                 variants = emptyList(),
                 assembly = MathGlyphAssembly(
                     parts = listOf(
-                        MathGlyphAssemblyPart(baseGlyph, 0, 200, 900, false),
+                        MathGlyphAssemblyPart(baseGlyph, 100, 200, 900, false),
                         MathGlyphAssemblyPart(baseGlyph, 200, 200, 900, true),
-                        MathGlyphAssemblyPart(baseGlyph, 200, 0, 900, false),
+                        MathGlyphAssemblyPart(baseGlyph, 200, 100, 900, false),
                     ),
                     minimumConnectorOverlap = 100,
                     italicCorrection = assemblyCorrection,
@@ -269,8 +269,8 @@ class MathOperatorNoadTest {
 
             val assembly = MathGlyphAssembly(
                 parts = listOf(
-                    MathGlyphAssemblyPart(operatorGlyph, 0, 300, 1_000, false),
-                    MathGlyphAssemblyPart(parenthesisGlyph, 300, 0, 1_000, false),
+                    MathGlyphAssemblyPart(operatorGlyph, 100, 300, 1_000, false),
+                    MathGlyphAssemblyPart(parenthesisGlyph, 300, 100, 1_000, true),
                 ),
                 minimumConnectorOverlap = 100,
                 italicCorrection = 0,
@@ -319,8 +319,14 @@ class MathOperatorNoadTest {
                 "reported construction advance stays tied to the assembly offsets",
             )
             val constructionDecision = result.decisions.first { it.name == "OpenTypeOperatorConstruction" }
-            assertEquals("shared-left/bottom", constructionDecision.details["placementOrigin"])
-            assertEquals("MathMLCore5.3.1LeftBottom", constructionDecision.details["placementPolicy"])
+            assertEquals("shared-font-x/bottom", constructionDecision.details["placementOrigin"])
+            assertEquals(
+                "MathMLCore5.3.1SharedFontOriginBottom",
+                constructionDecision.details["placementPolicy"],
+            )
+            assertEquals("MathMLCore5.3.1UniformOverlap", constructionDecision.details["constructionPolicy"])
+            assertEquals("true", constructionDecision.details["assemblyValid"])
+            assertEquals("0.0,0.0", constructionDecision.details["componentHorizontalOriginsPx"])
             assertTrue(constructionDecision.details["componentBottomOriginsPx"].orEmpty().contains(','))
         }
     }
