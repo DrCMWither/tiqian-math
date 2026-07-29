@@ -38,6 +38,18 @@ class StixTwoMathTest {
         assertEquals(68, font.constants.fractionRuleThickness)
         assertEquals(150, font.constants.fractionNumDisplayStyleGapMin)
         assertEquals(150, font.constants.fractionDenomDisplayStyleGapMin)
+        assertEquals(
+            listOf(85, 170, 68, 78, 65, -335, 55),
+            listOf(
+                font.constants.radicalVerticalGap,
+                font.constants.radicalDisplayStyleVerticalGap,
+                font.constants.radicalRuleThickness,
+                font.constants.radicalExtraAscender,
+                font.constants.radicalKernBeforeDegree,
+                font.constants.radicalKernAfterDegree,
+                font.constants.radicalDegreeBottomRaisePercent,
+            ),
+        )
         assertTrue(font.verticalVariants.values.any { it.size > 1 })
         assertEquals(889, font.italicCorrections.size)
         assertEquals(setOf(4010.toUShort()), font.unsupportedItalicCorrectionAdjustments)

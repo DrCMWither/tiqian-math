@@ -38,6 +38,13 @@ data class OpenTypeMathConstants(
     val fractionRuleThickness: Int,
     val fractionDenominatorGapMin: Int,
     val fractionDenomDisplayStyleGapMin: Int,
+    val radicalVerticalGap: Int,
+    val radicalDisplayStyleVerticalGap: Int,
+    val radicalRuleThickness: Int,
+    val radicalExtraAscender: Int,
+    val radicalKernBeforeDegree: Int,
+    val radicalKernAfterDegree: Int,
+    val radicalDegreeBottomRaisePercent: Int,
 )
 
 data class MathGlyphVariant(
@@ -405,6 +412,13 @@ class OpenTypeMathReader {
             fractionRuleThickness = value(34),
             fractionDenominatorGapMin = value(35),
             fractionDenomDisplayStyleGapMin = value(36),
+            radicalVerticalGap = value(45),
+            radicalDisplayStyleVerticalGap = value(46),
+            radicalRuleThickness = value(47),
+            radicalExtraAscender = value(48),
+            radicalKernBeforeDegree = value(49),
+            radicalKernAfterDegree = value(50),
+            radicalDegreeBottomRaisePercent = reader.s16(base + 8 + MATH_VALUE_COUNT * 4),
         )
     }
 

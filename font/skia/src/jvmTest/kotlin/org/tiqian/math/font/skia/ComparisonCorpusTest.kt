@@ -41,6 +41,7 @@ class ComparisonCorpusTest {
                 "assembly",
                 "operator-auto",
                 "operator-integral",
+                "radical-noad",
             ),
             corpus.map { it.id }.toSet(),
         )
@@ -133,6 +134,26 @@ class ComparisonCorpusTest {
                                     .details["effectivePolicy"],
                             )
                         }
+                        ComparisonInvariant.RadicalCrampedDegreeAndMathGeometry -> {
+                            assertEquals(ComparisonOracle.TeXMakeRadicalAndOpenTypeMath, case.oracle)
+                            val noad = result.decisions.first { it.name == "TeXRadicalNoad" }
+                            val geometry = result.decisions.first { it.name == "OpenTypeMathRadical" }
+                            assertEquals("TextCramped", noad.details["radicandStyle"], case.toString())
+                            assertEquals("ScriptScript", noad.details["degreeStyle"], case.toString())
+                            assertEquals("Ordinary", noad.details["atomClass"], case.toString())
+                            assertNear(
+                                geometry.details.getValue("radicalRuleThicknessPx").toFloat(),
+                                geometry.details.getValue("ruleBottom").toFloat() -
+                                    geometry.details.getValue("ruleTop").toFloat(),
+                                case,
+                            )
+                            assertTrue(
+                                geometry.details.getValue("actualRadicalGapPx").toFloat() + 0.03f >=
+                                    geometry.details.getValue("radicalVerticalGapPx").toFloat(),
+                                case.toString(),
+                            )
+                            assertTrue(result.decisions.any { it.name == "OpenTypeRadicalConstruction" })
+                        }
                     }
                 }
             }
@@ -156,6 +177,7 @@ private enum class ComparisonOracle(val corpusText: String) {
     OpenTypeGlyphAssembly("OpenType MATH GlyphAssembly"),
     TeXMakeOpAndOpenTypeNary("TeX make_op displaylimits; OpenType MATH n-ary variants"),
     PlainTeXIntegralNoLimits("plain.tex integral nolimits; TeX op noad"),
+    TeXMakeRadicalAndOpenTypeMath("TeX make_radical; LaTeX2e root; OpenType MATH radicals"),
     ;
 
     companion object {
@@ -173,6 +195,9 @@ private enum class ComparisonInvariant(val corpusText: String) {
     AssemblyCoversTarget("extenders repeat and connector overlap covers the target"),
     OperatorAutoDisplayLimits("Auto uses stacked limits only in display style and the operator follows the math axis"),
     IntegralDefaultNoLimits("integrals default to side scripts while an explicit limits modifier overrides"),
+    RadicalCrampedDegreeAndMathGeometry(
+        "radicand is cramped, degree is scriptscript, and named MATH radical geometry is used",
+    ),
     ;
 
     companion object {

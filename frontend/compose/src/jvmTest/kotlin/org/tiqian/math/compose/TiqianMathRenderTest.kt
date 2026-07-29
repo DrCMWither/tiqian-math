@@ -30,6 +30,8 @@ import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.breakIntoLines
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertEquals
@@ -192,6 +194,52 @@ class TiqianMathRenderTest {
             }
         }
     }
+
+    @Test
+    fun indexedNestedRadicalRulesReachActualComposeMeasureBaselineAndRaster() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var measured: MeasureSnapshot? = null
+            var observed: MathLayoutResult? = null
+            ImageComposeScene(width = 440, height = 360, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    CompositionLocalProvider(
+                        LocalTextStyle provides TextStyle(fontSize = 42.sp, lineHeight = 50.sp, color = Color.Black),
+                    ) {
+                        MeasureProbe(onMeasured = { measured = it }) {
+                            TiqianMath(
+                                source = "\\sqrt[3]{\\frac{a+b}{\\sqrt{x}}}",
+                                modifier = Modifier.padding(12.dp),
+                                mode = MathMode.Display,
+                                fontFace = face,
+                                onMathLayout = { observed = it },
+                            )
+                        }
+                    }
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                val snapshot = assertNotNull(measured)
+                val layout = assertNotNull(observed)
+                assertEquals(2, layout.decisions.count { it.name == "TeXRadicalNoad" })
+                assertEquals(2, layout.decisions.count { it.name == "OpenTypeRadicalConstruction" })
+                assertEquals(3, layout.box.rules.size, "two radical rules and one fraction rule are replayed")
+                assertTrue(snapshot.firstBaseline in 12 until snapshot.height - 12)
+                assertTrue(snapshot.height > 50, "nested radical expands actual Compose height")
+
+                val ink = darkPixelBounds(pixels)
+                assertTrue(ink.left >= 12 && ink.right < snapshot.width - 12, "radical ink is not horizontally cropped")
+                assertTrue(ink.top >= 12 && ink.bottom < snapshot.height - 12, "radical ink is not vertically cropped")
+                val outerRule = layout.box.rules.minBy { it.top }
+                assertRuleRasterMatchesPlacement(
+                    pixels = pixels,
+                    ruleLeft = 12f - layout.box.visualLeft + outerRule.left,
+                    ruleRight = 12f - layout.box.visualLeft + outerRule.right,
+                    ruleTop = snapshot.firstBaseline + outerRule.top,
+                    ruleBottom = snapshot.firstBaseline + outerRule.bottom,
+                )
+            }
+        }
+    }
 }
 
 private data class MeasureSnapshot(val width: Int, val height: Int, val firstBaseline: Int)
@@ -315,6 +363,29 @@ private fun darkRowBands(pixels: androidx.compose.ui.graphics.PixelMap, width: I
     }
     bands += start..previous
     return bands
+}
+
+private fun assertRuleRasterMatchesPlacement(
+    pixels: androidx.compose.ui.graphics.PixelMap,
+    ruleLeft: Float,
+    ruleRight: Float,
+    ruleTop: Float,
+    ruleBottom: Float,
+) {
+    val left = floor(ruleLeft).toInt().coerceAtLeast(0)
+    val right = ceil(ruleRight).toInt().coerceAtMost(pixels.width - 1)
+    val top = floor(ruleTop).toInt().coerceAtLeast(0)
+    val bottom = ceil(ruleBottom).toInt().coerceAtMost(pixels.height - 1)
+    val dark = (top..bottom).sumOf { y ->
+        (left..right).count { x ->
+            val color = pixels[x, y]
+            color.red < 0.35f && color.green < 0.35f && color.blue < 0.35f
+        }
+    }
+    assertTrue(
+        dark >= (right - left).coerceAtLeast(1),
+        "rendered radical rule follows engine placement: dark=$dark rect=$left,$top..$right,$bottom",
+    )
 }
 
 private fun assertNear(expected: Float, actual: Float) {

@@ -46,6 +46,13 @@ class GeometryGoldenTest {
                     MathMode.Display,
                     40f,
                 ),
+                GoldenCase("radical-inline", "\\sqrt[3]{x^2+1}", MathMode.Inline, 40f),
+                GoldenCase(
+                    "radical-display",
+                    "\\sqrt{\\frac{a+b}{\\sqrt{x}}}",
+                    MathMode.Display,
+                    40f,
+                ),
                 GoldenCase("adjustment", "a,b=c+d", MathMode.Inline, 40f),
             ).forEach { case ->
                 val result = engine.layout(case.source, MathLayoutOptions(case.mode, case.size))
@@ -132,6 +139,34 @@ class GeometryGoldenTest {
                                 "ic=${limits.details.getValue("operatorItalicCorrectionPx").toFloat().fmt()}",
                         )
                     }
+                    "radical-inline", "radical-display" -> appendLine(
+                        "  evidence=" + result.decisions.filter {
+                            it.name == "TeXRadicalNoad" ||
+                                it.name == "OpenTypeRadicalConstruction" ||
+                                it.name == "OpenTypeMathRadical"
+                        }.joinToString(",") { decision ->
+                            when (decision.name) {
+                                "TeXRadicalNoad" ->
+                                    "noad:${decision.range.start}..${decision.range.endExclusive}/" +
+                                        "${decision.details["style"]}/${decision.details["radicandStyle"]}/" +
+                                        "${decision.details["degreeStyle"]}/${decision.details["scriptBaseKind"]}"
+                                "OpenTypeRadicalConstruction" ->
+                                    "construction:${decision.details["construction"]}/" +
+                                        "${decision.details.getValue("targetHeightPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("achievedAdvancePx").toFloat().fmt()}/" +
+                                        "${decision.details["componentGlyphIds"]}/${decision.details["componentOffsetsDesignUnits"]}"
+                                else ->
+                                    "geometry:${decision.details.getValue("radicalVerticalGapPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("actualRadicalGapPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("radicalRuleThicknessPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("radicalExtraAscenderPx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("radicalKernBeforeDegreePx").toFloat().fmt()}/" +
+                                        "${decision.details.getValue("radicalKernAfterDegreePx").toFloat().fmt()}/" +
+                                        "${decision.details["radicalDegreeBottomRaisePercent"]}/" +
+                                        "${decision.details.getValue("logicalWidthPx").toFloat().fmt()}"
+                            }
+                        },
+                    )
                     "adjustment" -> appendLine(
                         "  evidence=" + result.fragments.joinToString(",") {
                             "${it.sourceRange.start}:ic=${it.trailingItalicCorrectionPx.fmt()}/" +

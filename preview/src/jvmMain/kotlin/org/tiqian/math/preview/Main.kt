@@ -68,6 +68,9 @@ private fun PreviewScreen() {
                 VariantControlSample("STIX Two Math", stix)
                 FontSample("Lete Sans Math · display", lete, MathMode.Display)
                 FontSample("STIX Two Math · display", stix, MathMode.Display)
+                Text("Indexed, nested, fraction and stretched radicals", fontSize = 13.sp)
+                RadicalSample("Lete Sans Math", lete)
+                RadicalSample("STIX Two Math", stix)
                 Text("Script-style binomial coverage · real base glyph variants", fontSize = 13.sp)
                 ScriptBinomialSample("Lete Sans Math", lete)
                 ScriptBinomialSample("STIX Two Math", stix)
@@ -81,6 +84,22 @@ private fun PreviewScreen() {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun RadicalSample(label: String, face: SkiaMathFontFace) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+        TiqianMath(
+            source = "\\sqrt[3]{x^2+1}+\\sqrt{\\frac{a+b}{\\sqrt{x}}}+" +
+                "\\sqrt{\\frac{\\frac{\\frac{a}{b}}{c}}{d}}",
+            modifier = Modifier.background(Color.White).padding(7.dp),
+            mode = MathMode.Display,
+            fontFace = face,
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 32.sp, lineHeight = 44.sp),
+            softWrap = false,
+        )
     }
 }
 
@@ -145,7 +164,7 @@ private fun FontSample(label: String, face: SkiaMathFontFace, mode: MathMode) {
 
 @OptIn(ExperimentalComposeUiApi::class)
 private fun renderSnapshot() {
-    ImageComposeScene(width = 900, height = 1280) { PreviewScreen() }.use { scene ->
+    ImageComposeScene(width = 900, height = 2400) { PreviewScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/math-preview.png")
         output.parentFile.mkdirs()

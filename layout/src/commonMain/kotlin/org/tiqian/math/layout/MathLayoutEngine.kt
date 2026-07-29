@@ -143,6 +143,7 @@ private class MathLayoutPass(
             layoutScripts(node, style, alphabetOverride)
         }
         is MathFraction -> layoutFraction(node, style, alphabetOverride)
+        is MathRadical -> layoutRadical(node, style, alphabetOverride)
         is MathStyleDeclaration -> LaidNode(
             node,
             emptyBox(node.range),
@@ -607,6 +608,212 @@ private class MathLayoutPass(
         return PlacedVerticalConstruction(width, placements)
     }
 
+    private fun layoutRadical(
+        node: MathRadical,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val radicandStyle = style.cramped()
+        val radicand = layoutNode(node.radicand, radicandStyle, alphabetOverride).box
+        val degreeStyle = MathStyle.ScriptScript
+        val degree = node.degree?.let { layoutNode(it, degreeStyle, alphabetOverride).box }
+        val size = fontSize(style)
+        val baseRun = glyphSource.shapeConstructionBase(RADICAL_SIGN, size, node.commandRange)
+        val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
+        if (baseRun.missingGlyph || baseGlyphId == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingGlyph,
+                "The selected formula-wide math face has no radical sign glyph",
+                node.commandRange,
+            )
+        }
+
+        val gapMin = scale(
+            if (style.level == MathStyleLevel.Display) {
+                constants.radicalDisplayStyleVerticalGap
+            } else {
+                constants.radicalVerticalGap
+            },
+            style,
+        )
+        val ruleThickness = scale(constants.radicalRuleThickness, style)
+        val extraAscender = scale(constants.radicalExtraAscender, style)
+        val targetHeight = radicand.height + gapMin + ruleThickness
+        val construction = baseGlyphId?.let {
+            glyphSource.mathFont.verticalConstruction(it, targetHeight, size)
+        }
+        val rawRadical = if (construction == null) {
+            measuredRunBox(baseRun, node.commandRange, style, size)
+        } else {
+            val componentRuns = construction.components.map { component ->
+                component to glyphSource.measureGlyph(component.glyphId, size, style, node.commandRange)
+            }
+            val placed = placeVerticalConstruction(
+                construction = construction,
+                componentRuns = componentRuns,
+                size = size,
+                style = style,
+                sourceRange = node.commandRange,
+                centerComponentsHorizontally = false,
+            )
+            geometryExtents(placed.width, placed.glyphs, emptyList(), node.commandRange)
+        }
+        val achievedAdvance = construction?.let {
+            glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
+        } ?: rawRadical.height
+        val constructionLabel = when {
+            construction == null -> "BaseGlyph"
+            construction.kind == MathConstructionKind.Variant &&
+                construction.components.singleOrNull()?.glyphId == baseGlyphId -> "BaseGlyph"
+            else -> construction.kind.toString()
+        }
+        if (construction == null && achievedAdvance + GEOMETRY_EPSILON_PX < targetHeight) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingMathConstruction,
+                "The radical sign has no MATH construction covering ${targetHeight}px",
+                node.commandRange,
+            )
+        } else if (construction != null && !construction.reachesTarget) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MathVariantTooShort,
+                "The radical MATH construction does not cover the required radicand height",
+                node.commandRange,
+                DiagnosticSeverity.Warning,
+            )
+        }
+
+        val excess = (achievedAdvance - targetHeight).coerceAtLeast(0f)
+        val actualGap = gapMin + excess / 2f
+        val ruleBottom = radicand.inkBounds.top - actualGap
+        val ruleTop = ruleBottom - ruleThickness
+        val radicalBaselineShift = ruleTop - rawRadical.inkBounds.top
+
+        val kernBeforeDegree = if (degree == null) 0f else scale(constants.radicalKernBeforeDegree, style)
+        val kernAfterDegree = if (degree == null) 0f else scale(constants.radicalKernAfterDegree, style)
+        val degreeX = if (degree == null) null else kernBeforeDegree
+        val radicalX = if (degree == null) 0f else kernBeforeDegree + degree.width + kernAfterDegree
+        val radicandX = radicalX + rawRadical.width
+        val logicalWidth = radicandX + radicand.width
+
+        val shiftedRadical = rawRadical.translated(radicalX, radicalBaselineShift)
+        val shiftedRadicand = radicand.translated(radicandX, 0f)
+        val degreeRaisePercent = constants.radicalDegreeBottomRaisePercent
+        val degreeBottomY = if (degree == null) {
+            null
+        } else {
+            shiftedRadical.inkBounds.bottom - rawRadical.height * degreeRaisePercent / 100f
+        }
+        val shiftedDegree = degree?.translated(
+            degreeX!!,
+            degreeBottomY!! - degree.inkBounds.bottom,
+        )
+        val coversRadicandBottom =
+            shiftedRadical.inkBounds.bottom + GEOMETRY_EPSILON_PX >= shiftedRadicand.inkBounds.bottom
+        if (!coversRadicandBottom) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MathVariantTooShort,
+                "The radical construction does not visually cover the radicand depth",
+                node.commandRange,
+                DiagnosticSeverity.Warning,
+            )
+        }
+        val rule = MathRulePlacement(
+            left = radicandX,
+            top = ruleTop,
+            right = radicandX + radicand.width,
+            bottom = ruleBottom,
+            sourceRange = node.commandRange,
+        )
+        val degreeBaselineShift = if (degree == null) null else degreeBottomY!! - degree.inkBounds.bottom
+        val inkBox = geometryExtentsPreservingLogicalChildren(
+            width = logicalWidth,
+            glyphs = shiftedRadical.glyphs + shiftedRadicand.glyphs + shiftedDegree?.glyphs.orEmpty(),
+            rules = shiftedRadical.rules + shiftedRadicand.rules + shiftedDegree?.rules.orEmpty() + rule,
+            range = node.range,
+            children = buildList {
+                add(rawRadical to radicalBaselineShift)
+                add(radicand to 0f)
+                degree?.let { add(it to degreeBaselineShift!!) }
+            },
+        )
+        val reservedTop = ruleTop - extraAscender
+        val box = inkBox.copy(ascent = max(inkBox.ascent, -reservedTop))
+
+        decision(
+            "TeXRadicalNoad",
+            node.range,
+            "sourceText" to node.sourceText,
+            "commandRange" to node.commandRange,
+            "degreeRange" to node.degreeRange,
+            "radicandRange" to node.radicand.range,
+            "atomClass" to node.atomClass,
+            "style" to style,
+            "radicandStyle" to radicandStyle,
+            "degreeStyle" to if (degree == null) null else degreeStyle,
+            "scriptBaseKind" to ScriptBaseKind.CompoundBox,
+            "italicCorrectionPx" to 0f,
+        )
+        decision(
+            "OpenTypeRadicalConstruction",
+            node.commandRange,
+            "baseGlyphId" to baseGlyphId,
+            "construction" to constructionLabel,
+            "componentGlyphIds" to construction?.components?.joinToString(",") { it.glyphId.toString() },
+            "componentOffsetsDesignUnits" to construction?.components?.joinToString(",") { it.offset.toString() },
+            "connectorOverlapsDesignUnits" to construction?.connectorOverlaps,
+            "extenderRepetitions" to construction?.extenderRepetitions,
+            "targetHeightPx" to targetHeight,
+            "achievedAdvancePx" to achievedAdvance,
+            "reachesTarget" to (achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight),
+            "placementOrigin" to "shared-left/advance-offset",
+        )
+        decision(
+            "OpenTypeMathRadical",
+            node.range,
+            "style" to style,
+            "radicandStyle" to radicandStyle,
+            "degreeStyle" to if (degree == null) null else degreeStyle,
+            "radicalVerticalGapPx" to gapMin,
+            "actualRadicalGapPx" to actualGap,
+            "radicalRuleThicknessPx" to ruleThickness,
+            "radicalExtraAscenderPx" to extraAscender,
+            "radicalKernBeforeDegreePx" to kernBeforeDegree,
+            "radicalKernAfterDegreePx" to kernAfterDegree,
+            "radicalDegreeBottomRaisePercent" to degreeRaisePercent,
+            "radicalHeightPx" to rawRadical.height,
+            "targetHeightPx" to targetHeight,
+            "achievedAdvancePx" to achievedAdvance,
+            "degreeWidthPx" to degree?.width,
+            "degreeInkBottomBeforePx" to degree?.inkBounds?.bottom,
+            "degreeBottomY" to degreeBottomY,
+            "degreeX" to degreeX,
+            "radicalX" to radicalX,
+            "radicandX" to radicandX,
+            "radicandWidthPx" to radicand.width,
+            "radicalInkTopPx" to shiftedRadical.inkBounds.top,
+            "radicalInkBottomPx" to shiftedRadical.inkBounds.bottom,
+            "radicandInkTopPx" to shiftedRadicand.inkBounds.top,
+            "radicandInkBottomPx" to shiftedRadicand.inkBounds.bottom,
+            "coversRadicandBottom" to coversRadicandBottom,
+            "ruleLeft" to rule.left,
+            "ruleTop" to rule.top,
+            "ruleRight" to rule.right,
+            "ruleBottom" to rule.bottom,
+            "logicalWidthPx" to logicalWidth,
+            "visualLeftPx" to box.visualLeft,
+            "visualRightPx" to box.visualRight,
+            "reservedTopPx" to reservedTop,
+        )
+        return LaidNode(
+            node = node,
+            box = box,
+            atomClass = MathAtomClass.Ordinary,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
     private fun layoutOperatorScripts(
         node: MathScripts,
         operator: MathOperator,
@@ -720,11 +927,16 @@ private class MathLayoutPass(
         )
         return LaidNode(
             node = node,
-            box = geometryExtents(
+            box = geometryExtentsPreservingLogicalChildren(
                 logicalWidth,
                 shiftedBase.glyphs + shiftedUpper?.glyphs.orEmpty() + shiftedLower?.glyphs.orEmpty(),
                 shiftedBase.rules + shiftedUpper?.rules.orEmpty() + shiftedLower?.rules.orEmpty(),
                 node.range,
+                buildList {
+                    add(base.box to 0f)
+                    upper?.let { add(it.box to -upperShift!!) }
+                    lower?.let { add(it.box to lowerShift!!) }
+                },
             ),
             atomClass = MathAtomClass.Operator,
             italicCorrectionPx = 0f,
@@ -820,7 +1032,17 @@ private class MathLayoutPass(
         )
         return LaidNode(
             node = node,
-            box = geometryExtents(width, glyphs, rules, node.range),
+            box = geometryExtentsPreservingLogicalChildren(
+                width,
+                glyphs,
+                rules,
+                node.range,
+                buildList {
+                    add(base.box to 0f)
+                    superscript?.let { add(it.box to -superscriptShift) }
+                    subscript?.let { add(it.box to subscriptShift) }
+                },
+            ),
             atomClass = base.atomClass,
             italicCorrectionPx = 0f,
             style = style,
@@ -960,11 +1182,12 @@ private class MathLayoutPass(
             "parameter" to "nullDelimiterSpacePx",
             "styleInvariant" to true,
         )
-        return geometryExtents(
+        return geometryExtentsPreservingLogicalChildren(
             width = stack.width + 2f * nullDelimiterSpacePx,
             glyphs = shiftedStack.glyphs,
             rules = shiftedStack.rules,
             range = node.range,
+            children = listOf(stack to 0f),
         )
     }
 
@@ -1051,11 +1274,15 @@ private class MathLayoutPass(
 
         val shiftedNumerator = numerator.translated(numeratorX, -numeratorShift)
         val shiftedDenominator = denominator.translated(denominatorX, denominatorShift)
-        return geometryExtents(
+        return geometryExtentsPreservingLogicalChildren(
             width = contentWidth,
             glyphs = shiftedNumerator.glyphs + shiftedDenominator.glyphs,
             rules = shiftedNumerator.rules + shiftedDenominator.rules + rules,
             range = node.range,
+            children = listOf(
+                numerator to -numeratorShift,
+                denominator to denominatorShift,
+            ),
         )
     }
 
@@ -1197,11 +1424,16 @@ private class MathLayoutPass(
             "rightPx" to rightCollisionKern,
             "policy" to "logical-advance-preserved-ink-collision-only",
         )
-        return geometryExtents(
+        return geometryExtentsPreservingLogicalChildren(
             rightX + rightBox.width,
             leftBox.glyphs + shiftedStack.glyphs + shiftedRight.glyphs,
             leftBox.rules + shiftedStack.rules + shiftedRight.rules,
             node.range,
+            listOf(
+                leftBox to 0f,
+                stack to 0f,
+                rightBox to 0f,
+            ),
         )
     }
 
@@ -1275,7 +1507,13 @@ private class MathLayoutPass(
             rules += shifted.rules
             x += item.laid.box.width + item.trailingItalicCorrectionPx
         }
-        val box = geometryExtents(x, glyphs, rules, list.range)
+        val box = geometryExtentsPreservingLogicalChildren(
+            x,
+            glyphs,
+            rules,
+            list.range,
+            items.map { it.laid.box to 0f },
+        )
         val atomClass = items.singleOrNull()?.atomClass ?: MathAtomClass.Ordinary
         return HorizontalLayout(
             LaidNode(
@@ -1498,6 +1736,30 @@ private class MathLayoutPass(
         )
     }
 
+    /**
+     * Compose visual bounds come from glyph/rule ink, while recursive TeX layout must retain
+     * logical box extents such as RadicalExtraAscender even when no ink occupies that reserve.
+     */
+    private fun geometryExtentsPreservingLogicalChildren(
+        width: Float,
+        glyphs: List<MathGlyphPlacement>,
+        rules: List<MathRulePlacement>,
+        range: SourceRange,
+        children: List<Pair<MathBox, Float>>,
+    ): MathBox {
+        val inkBox = geometryExtents(width, glyphs, rules, range)
+        val logicalAscent = children.maxOfOrNull { (box, baselineY) ->
+            (box.ascent - baselineY).coerceAtLeast(0f)
+        } ?: 0f
+        val logicalDescent = children.maxOfOrNull { (box, baselineY) ->
+            (box.descent + baselineY).coerceAtLeast(0f)
+        } ?: 0f
+        return inkBox.copy(
+            ascent = max(inkBox.ascent, logicalAscent),
+            descent = max(inkBox.descent, logicalDescent),
+        )
+    }
+
     private fun emptyBox(range: SourceRange): MathBox = MathBox(
         0f,
         0f,
@@ -1645,6 +1907,7 @@ private class MathLayoutPass(
 private fun unicodeLabel(scalar: Int): String = "U+${scalar.toString(16).uppercase().padStart(4, '0')}"
 
 private const val DEFAULT_NULL_DELIMITER_SPACE_EM = 0.12f
+private const val RADICAL_SIGN = "\u221A"
 
 private enum class ScriptBaseKind {
     Character,

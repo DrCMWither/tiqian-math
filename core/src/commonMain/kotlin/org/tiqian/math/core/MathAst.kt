@@ -208,6 +208,19 @@ data class MathFraction(
     override val range: SourceRange,
 ) : MathNode
 
+/** A TeX radical noad, with LaTeX's optional root degree retained as its own math list. */
+data class MathRadical(
+    val sourceText: String,
+    val commandRange: SourceRange,
+    val degree: MathNode?,
+    /** Includes the optional square brackets when they were present. */
+    val degreeRange: SourceRange?,
+    val radicand: MathNode,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = MathAtomClass.Ordinary
+}
+
 /** A TeX style declaration. It changes the remainder of the containing mlist. */
 data class MathStyleDeclaration(
     val requestedLevel: MathStyleLevel,

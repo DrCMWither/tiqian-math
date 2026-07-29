@@ -40,7 +40,7 @@ data class MathRulePlacement(
 data class MathBox(
     /** TeX logical advance. Ink may overhang either horizontal edge. */
     val width: Float,
-    /** Ink ascent/descent used by recursive math layout, not host line height. */
+    /** TeX box ascent/descent used by recursive math layout; ink may occupy a smaller extent. */
     val ascent: Float,
     val descent: Float,
     val inkBounds: MathRect,

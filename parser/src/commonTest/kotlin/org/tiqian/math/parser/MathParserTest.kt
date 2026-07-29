@@ -51,6 +51,60 @@ class MathParserTest {
     }
 
     @Test
+    fun parsesRadicalNoadDegreeAndUtf16SourceRangesWithoutRewritingSource() {
+        val source = "𝑥+\\sqrt[3]{x^2+1}+\\sqrt{\\frac{a}{b}}"
+        val result = MathParser().parse(source)
+
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val radicals = result.root.children.filterIsInstance<MathRadical>()
+        assertEquals(2, radicals.size)
+        val indexed = radicals[0]
+        assertEquals("\\sqrt", indexed.sourceText)
+        assertEquals(SourceRange(3, 8), indexed.commandRange)
+        assertEquals(SourceRange(8, 11), indexed.degreeRange)
+        assertEquals(SourceRange(3, 18), indexed.range)
+        val degree = assertIs<MathList>(indexed.degree)
+        assertEquals(SourceRange(9, 10), degree.range)
+        assertEquals("3", assertIs<MathSymbol>(degree.children.single()).sourceText)
+        assertEquals(SourceRange(11, 18), indexed.radicand.range)
+        assertIs<MathGroup>(indexed.radicand)
+        assertIs<MathFraction>(assertIs<MathGroup>(radicals[1].radicand).body.children.single())
+
+        val unbraced = MathParser().parse("\\sqrt[3]x+y")
+        assertTrue(unbraced.diagnostics.isEmpty(), unbraced.diagnostics.toString())
+        assertEquals(3, unbraced.root.children.size)
+        assertIs<MathSymbol>(assertIs<MathRadical>(unbraced.root.children.first()).radicand)
+
+        val ordinaryBrackets = MathParser().parse("[x]").root.children.filterIsInstance<MathSymbol>()
+        assertEquals(3, ordinaryBrackets.size)
+        assertEquals(MathNamedSymbol.LeftBracket, assertIs<MathSymbolIdentity.Named>(ordinaryBrackets.first().identity).symbol)
+
+        val generalDelimiters = MathParser().parse("\\left(x\\right)")
+        assertEquals(2, generalDelimiters.diagnostics.count { it.code == DiagnosticCode.UnsupportedCommand })
+    }
+
+    @Test
+    fun radicalSyntaxErrorsRecoverWithStructuredDiagnostics() {
+        val missingDegree = MathParser().parse("\\sqrt[]{x}+y")
+        assertTrue(missingDegree.diagnostics.any { it.code == DiagnosticCode.MissingRadicalDegree })
+        assertIs<MathRadical>(missingDegree.root.children.first())
+        assertIs<MathSymbol>(missingDegree.root.children.last())
+
+        val unclosedDegree = MathParser().parse("\\sqrt[3+x")
+        assertTrue(unclosedDegree.diagnostics.any { it.code == DiagnosticCode.UnclosedRadicalDegree })
+        assertTrue(unclosedDegree.diagnostics.any { it.code == DiagnosticCode.MissingRadicalRadicand })
+        assertIs<MathRadical>(unclosedDegree.root.children.single())
+
+        val missingRadicand = MathParser().parse("x+\\sqrt")
+        assertTrue(missingRadicand.diagnostics.any { it.code == DiagnosticCode.MissingRadicalRadicand })
+        assertIs<MathRadical>(missingRadicand.root.children.last())
+
+        val unclosedRadicand = MathParser().parse("\\sqrt{x+1")
+        assertTrue(unclosedRadicand.diagnostics.any { it.code == DiagnosticCode.UnclosedRadicalRadicand })
+        assertIs<MathRadical>(unclosedRadicand.root.children.single())
+    }
+
+    @Test
     fun parsesLargeOperatorsWithPlainTexDefaultsAndExplicitLimitPolicies() {
         val source = "\\sum_{i=1}^n+\\prod\\nolimits_k+\\int_0^1+\\oint\\limits_C"
         val result = MathParser().parse(source)
