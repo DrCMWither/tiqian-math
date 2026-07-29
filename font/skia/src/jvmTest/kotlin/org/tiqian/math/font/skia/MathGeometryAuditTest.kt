@@ -1,0 +1,329 @@
+package org.tiqian.math.font.skia
+
+import org.tiqian.math.core.DiagnosticCode
+import org.tiqian.math.core.MathAdjustmentPriority
+import org.tiqian.math.core.MathBreakKind
+import org.tiqian.math.core.MathGlueKind
+import org.tiqian.math.core.MathLayoutDecision
+import org.tiqian.math.core.MathLayoutResult
+import org.tiqian.math.core.MathLineAdjustmentMode
+import org.tiqian.math.core.MathMode
+import org.tiqian.math.core.MathStyle
+import org.tiqian.math.core.SourceRange
+import org.tiqian.math.font.opentype.LeteSansMath
+import org.tiqian.math.font.opentype.MathGlyphKernInfo
+import org.tiqian.math.font.opentype.MathKernTable
+import org.tiqian.math.font.opentype.OpenTypeMathFont
+import org.tiqian.math.font.stix.StixTwoMath
+import org.tiqian.math.layout.MathFontFace
+import org.tiqian.math.layout.MathLayoutEngine
+import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.layout.breakIntoLines
+import kotlin.math.abs
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class MathGeometryAuditTest {
+    @Test
+    fun groupsAreTransparentToAtomSpacingGeometryAndBreaksForBothFonts() = withAuditFaces { label, face ->
+        val engine = MathLayoutEngine(face)
+        val plain = engine.layout("abc", MathLayoutOptions(fontSizePx = 40f))
+        val grouped = engine.layout("a{b}c", MathLayoutOptions(fontSizePx = 40f))
+
+        assertNear(plain.box.width, grouped.box.width, "$label group logical width")
+        assertEquals(plain.box.glyphs.map { it.glyphId }, grouped.box.glyphs.map { it.glyphId })
+        plain.box.glyphs.zip(grouped.box.glyphs).forEachIndexed { index, (expected, actual) ->
+            assertNear(expected.x, actual.x, "$label transparent group glyph x[$index]")
+        }
+        assertTrue(grouped.decisions.any { it.name == "TransparentMathGroup" })
+
+        val parenthesized = engine.layout("(\\frac{a}{b})", MathLayoutOptions(fontSizePx = 40f))
+        assertEquals(3, parenthesized.fragments.size, "$label opening/fraction/closing atoms")
+        assertEquals(MathGlueKind.None, parenthesized.fragments[0].trailingGlue.kind, "$label open-inner has no glue")
+        assertEquals(MathGlueKind.None, parenthesized.fragments[1].trailingGlue.kind, "$label inner-close has no glue")
+
+        val insideGroup = engine.layout("a{b+c}d", MathLayoutOptions(fontSizePx = 40f))
+        val plusIndex = insideGroup.fragments.indexOfFirst { it.sourceRange == SourceRange(3, 4) }
+        assertTrue(plusIndex >= 0, "$label group children remain public fragments")
+        assertEquals(MathBreakKind.BinaryOperatorTrailing, insideGroup.fragments[plusIndex].breakAfter?.kind)
+        val prefixWidth = insideGroup.fragments.take(plusIndex + 1).sumOf { it.box.width.toDouble() }.toFloat() +
+            insideGroup.fragments.take(plusIndex).sumOf { it.trailingGlue.naturalPx.toDouble() }.toFloat()
+        val broken = insideGroup.breakIntoLines(prefixWidth + 2f)
+        assertEquals(plusIndex, broken.lines.first().fragments.last().fragmentIndex, "$label takes group-internal break")
+    }
+
+    @Test
+    fun tightSpacingAndCrampedSuperscriptsReachFinalGlyphGeometryForBothFonts() = withAuditFaces { label, face ->
+        val engine = MathLayoutEngine(face)
+        val tight = engine.layout("x_{k-1}", MathLayoutOptions(fontSizePx = 40f))
+        listOf(SourceRange(4, 5), SourceRange(5, 6)).forEach { range ->
+            val spacing = tight.spacingDecision(range)
+            assertEquals("tight", spacing.details["table"], "$label tight table at $range")
+            assertEquals("None", spacing.details["kind"], "$label no binary glue in scripts at $range")
+        }
+        val normal = engine.layout("k-1", MathLayoutOptions(fontSizePx = 40f))
+        listOf(SourceRange(1, 2), SourceRange(2, 3)).forEach { range ->
+            assertEquals("Medium", normal.spacingDecision(range).details["kind"], "$label normal binary glue")
+        }
+
+        val source = "\\frac{a}{x^{y^z}}"
+        val nested = engine.layout(source, MathLayoutOptions(MathMode.Inline, 48f))
+        val x = nested.glyphAt(source.indexOf('x'))
+        val y = nested.glyphAt(source.indexOf('y'))
+        val z = nested.glyphAt(source.indexOf('z'))
+        assertEquals(MathStyle.ScriptCramped, x.style, "$label fraction denominator is cramped")
+        assertEquals(MathStyle.ScriptScriptCramped, y.style, "$label cramped superscript maps to SSc")
+        assertEquals(MathStyle.ScriptScriptCramped, z.style, "$label nested superscript remains SSc")
+        assertTrue(y.baselineY < x.baselineY && z.baselineY < y.baselineY, "$label nested superscript baselines rise")
+        assertTrue(nested.debugDump.contains("superscriptStyle=ScriptScriptCramped"))
+    }
+
+    @Test
+    fun scriptAndScriptScriptBinomialsUseBaseGlyphMathCoverageForBothFonts() = withAuditFaces { label, face ->
+        val size = 40f
+        val cases = listOf(
+            "inline-denominator" to "\\frac{a}{\\binom{n}{k}}",
+            "script" to "\\scriptstyle{\\binom{n}{k}}",
+            "scriptscript" to "\\scriptscriptstyle{\\binom{n}{k}}",
+        )
+        cases.forEach { (case, source) ->
+            val result = MathLayoutEngine(face).layout(source, MathLayoutOptions(MathMode.Inline, size))
+            assertFalse(
+                result.diagnostics.any {
+                    it.code == DiagnosticCode.MissingMathConstruction || it.code == DiagnosticCode.MathVariantTooShort
+                },
+                "$label/$case delimiter diagnostics: ${result.diagnostics}",
+            )
+            val delimiters = result.decisions.filter { it.name == "BinomialDelimiter" }
+            assertEquals(2, delimiters.size, "$label/$case has two delimiter decisions")
+            delimiters.forEach { decision ->
+                assertTrue(decision.details["construction"] != "BaseGlyph", "$label/$case stretches ${decision.details}")
+                assertAtLeast(
+                    decision.details.getValue("achievedAdvancePx").toFloat(),
+                    decision.details.getValue("targetPx").toFloat(),
+                    "$label/$case reaches target",
+                )
+                assertTrue(decision.details.getValue("baseGlyphId").toInt() > 0)
+            }
+            val delimiterGlyphs = result.box.glyphs.filter { it.sourceRange == delimiters.first().range }
+            val contentGlyphs = result.box.glyphs.filter {
+                it.sourceRange != delimiters.first().range &&
+                    it.sourceRange.start >= delimiters.first().range.start &&
+                    it.sourceRange.endExclusive <= delimiters.first().range.endExclusive
+            }
+            val left = delimiterGlyphs.filter { it.inkBounds.right <= result.box.width / 2f }
+            val right = delimiterGlyphs.filter { it.inkBounds.left >= result.box.width / 2f }
+            assertTrue(left.isNotEmpty() && right.isNotEmpty(), "$label/$case separates both delimiters")
+            val leftRight = left.maxOf { it.inkBounds.right }
+            val contentLeft = contentGlyphs.minOf { it.inkBounds.left }
+            val contentRight = contentGlyphs.maxOf { it.inkBounds.right }
+            val rightLeft = right.minOf { it.inkBounds.left }
+            assertTrue(leftRight <= contentLeft + 0.03f, "$label/$case left=$leftRight content=$contentLeft")
+            assertTrue(contentRight <= rightLeft + 0.03f, "$label/$case content=$contentRight right=$rightLeft")
+        }
+
+        if (label == "Lete Sans Math") {
+            val scriptSize = size * face.mathFont.constants.scriptPercentScaleDown / 100f
+            val styled = face.shape("(", scriptSize, MathStyle.ScriptCramped, SourceRange(0, 1)).glyphs.single().glyphId
+            val coverageBase = face.shapeConstructionBase("(", scriptSize, SourceRange(0, 1)).glyphs.single().glyphId
+            assertTrue(styled != coverageBase, "Lete regression fixture must exercise the ssty/base glyph distinction")
+            val inline = MathLayoutEngine(face).layout("\\frac{a}{\\binom{n}{k}}", MathLayoutOptions(fontSizePx = size))
+            val left = inline.decisions.first { it.name == "BinomialDelimiter" && it.details["side"] == "left" }
+            assertEquals(coverageBase.toString(), left.details["baseGlyphId"])
+        }
+    }
+
+    @Test
+    fun veryTallRealFontAssembliesReachTargetsWithNoGeometricSeam() = withAuditFaces { label, face ->
+        var tallNumerator = "a"
+        repeat(10) { tallNumerator = "\\frac{$tallNumerator}{b}" }
+        val source = "\\binom{$tallNumerator}{k}"
+        val result = MathLayoutEngine(face).layout(source, MathLayoutOptions(MathMode.Display, 54f))
+        val decisions = result.decisions.filter { it.name == "BinomialDelimiter" }
+        assertEquals(2, decisions.size)
+        decisions.forEach { decision ->
+            assertEquals("Assembly", decision.details["construction"], "$label tall delimiter uses assembly")
+            assertTrue(decision.details.getValue("extenderRepetitions").toInt() >= 1)
+            assertAtLeast(
+                decision.details.getValue("achievedAdvancePx").toFloat(),
+                decision.details.getValue("targetPx").toFloat(),
+                "$label tall assembly coverage",
+            )
+        }
+        assertFalse(result.diagnostics.any { it.code == DiagnosticCode.MathVariantTooShort }, "$label tall coverage")
+        val components = result.box.glyphs.filter { it.sourceRange == SourceRange(0, source.length) }
+        val bySide = listOf(
+            components.filter { it.inkBounds.right <= result.box.width / 2f },
+            components.filter { it.inkBounds.left >= result.box.width / 2f },
+        )
+        bySide.forEachIndexed { side, glyphs ->
+            assertTrue(glyphs.size >= 3, "$label side $side has an assembled delimiter")
+            glyphs.sortedBy { it.inkBounds.top }.zipWithNext().forEach { (upper, lower) ->
+                assertTrue(
+                    upper.inkBounds.bottom + 0.55f >= lower.inkBounds.top,
+                    "$label side $side has no raster-scale connector gap: ${upper.inkBounds} then ${lower.inkBounds}",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun delimiterCoverageFailureIsNeverSilent() {
+        SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
+            val font = delegate.mathFont.copy(
+                constants = delegate.mathFont.constants.copy(delimitedSubFormulaMinHeight = 4000),
+                verticalConstructions = emptyMap(),
+            )
+            val result = MathLayoutEngine(FontOverrideFace(delegate, font)).layout(
+                "\\binom{n}{k}",
+                MathLayoutOptions(MathMode.Inline, 40f),
+            )
+            assertEquals(2, result.diagnostics.count { it.code == DiagnosticCode.MissingMathConstruction })
+            assertEquals(2, result.diagnostics.count { it.code == DiagnosticCode.MathVariantTooShort })
+            assertTrue(result.debugDump.contains("diagnostic Error/MissingMathConstruction"))
+            assertTrue(result.debugDump.contains("construction=BaseGlyph"))
+        }
+    }
+
+    @Test
+    fun mathKernTablesAffectScriptPlacementWithoutFontBranches() = withAuditFaces { label, face ->
+        assertTrue(face.mathFont.mathKernInfo.isNotEmpty(), "$label exposes MATH MathKern")
+        if (label == "STIX Two Math") {
+            val uprightXGlyph = face.shape("x", 40f, MathStyle.Text, SourceRange(0, 1)).glyphs.single().glyphId
+            assertTrue(
+                face.mathFont.mathKernInfo[uprightXGlyph]?.bottomRight?.kernValues?.contains(35) == true,
+                "STIX upright cmap x retains the audited 35 design-unit table",
+            )
+            val italicXGlyph = MathLayoutEngine(face).layout("x", MathLayoutOptions(fontSizePx = 40f))
+                .box.glyphs.single().glyphId
+            assertFalse(italicXGlyph == uprightXGlyph, "layout must query the final italic glyph ID")
+        }
+
+        val exercised = ('a'..'z').firstNotNullOfOrNull { character ->
+            val source = "${character}_1^2"
+            val result = MathLayoutEngine(face).layout(source, MathLayoutOptions(MathMode.Display, 64f))
+            val nonZero = result.decisions.filter { it.name == "OpenTypeMathKern" }
+                .any { abs(it.details.getValue("kernPx").toFloat()) > 0.001f }
+            if (nonZero) source to result else null
+        }
+        val (source, withKern) = assertNotNull(exercised, "$label has a real glyph exercising MathKern")
+        val withoutKernFace = FontOverrideFace(face, face.mathFont.copy(mathKernInfo = emptyMap()))
+        val withoutKern = MathLayoutEngine(withoutKernFace).layout(source, MathLayoutOptions(MathMode.Display, 64f))
+        val supOffset = source.indexOf('2')
+        val subOffset = source.indexOf('1')
+        val changed = abs(withKern.glyphAt(supOffset).x - withoutKern.glyphAt(supOffset).x) > 0.001f ||
+            abs(withKern.glyphAt(subOffset).x - withoutKern.glyphAt(subOffset).x) > 0.001f
+        assertTrue(changed, "$label parsed MathKern changes replayed script x")
+        assertTrue(withKern.debugDump.contains("strategy=two-correction-heights"))
+    }
+
+    @Test
+    fun extremeSyntheticCornerKernsAreConsumedAtEachGlyphScale() {
+        SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
+            val size = 100f
+            val scriptSize = size * delegate.mathFont.constants.scriptPercentScaleDown / 100f
+            val xId = MathLayoutEngine(delegate).layout(
+                "x",
+                MathLayoutOptions(MathMode.Display, size),
+            ).box.glyphs.single().glyphId
+            val oneId = delegate.shape("1", scriptSize, MathStyle.ScriptCramped, SourceRange(0, 1)).glyphs.single().glyphId
+            val twoId = delegate.shape("2", scriptSize, MathStyle.Script, SourceRange(0, 1)).glyphs.single().glyphId
+            fun constant(value: Int) = MathKernTable(emptyList(), listOf(value))
+            val kernInfo = mapOf(
+                xId to MathGlyphKernInfo(constant(100), null, constant(200), null),
+                oneId to MathGlyphKernInfo(null, constant(40), null, null),
+                twoId to MathGlyphKernInfo(null, null, null, constant(30)),
+            )
+            val withFace = FontOverrideFace(delegate, delegate.mathFont.copy(mathKernInfo = kernInfo))
+            val zeroFace = FontOverrideFace(delegate, delegate.mathFont.copy(mathKernInfo = emptyMap()))
+            val with = MathLayoutEngine(withFace).layout("x_1^2", MathLayoutOptions(MathMode.Display, size))
+            val zero = MathLayoutEngine(zeroFace).layout("x_1^2", MathLayoutOptions(MathMode.Display, size))
+            assertNear(12.1f, with.glyphAt(4).x - zero.glyphAt(4).x, "TR base + BL superscript kern")
+            assertNear(22.8f, with.glyphAt(2).x - zero.glyphAt(2).x, "BR base + TL subscript kern")
+            assertTrue(with.debugDump.contains("superscriptKernPx=12.1"))
+            assertTrue(with.debugDump.contains("subscriptKernPx=22.8"))
+        }
+    }
+
+    @Test
+    fun lineMetricsAndGlueAdjustmentAreExplicitForBothFonts() = withAuditFaces { label, face ->
+        val equal = MathLayoutEngine(face).layout("=", MathLayoutOptions(fontSizePx = 40f))
+        val metrics = equal.lineMetrics
+        assertAtLeast(metrics.logicalAscentPx, metrics.fontAscentPx + metrics.fontLineGapPx, "$label safe ascent")
+        assertAtLeast(metrics.logicalDescentPx, metrics.fontDescentPx, "$label safe descent")
+        assertTrue(metrics.logicalDescentPx > equal.box.descent, "$label '=' line descent is not tight ink")
+        assertTrue(equal.debugDump.contains("Os2TypographicMathLineExtents"))
+
+        val result = MathLayoutEngine(face).layout("a,b=c+d+e+f", MathLayoutOptions(fontSizePx = 40f))
+        val comma = result.fragments.first { it.sourceRange == SourceRange(1, 2) }.trailingGlue
+        val relation = result.fragments.first { it.sourceRange == SourceRange(3, 4) }.trailingGlue
+        val binary = result.fragments.first { it.sourceRange == SourceRange(5, 6) }.trailingGlue
+        assertEquals(MathAdjustmentPriority.Punctuation, comma.priority)
+        assertTrue(comma.stretchPx > 0f && comma.shrinkPx == 0f, "$label comma-after stretch")
+        assertEquals(MathAdjustmentPriority.Relation, relation.priority)
+        assertTrue(relation.maximumPx > relation.naturalPx, "$label relation stretch")
+        assertEquals(MathAdjustmentPriority.BinaryOperator, binary.priority)
+        assertTrue(binary.minimumPx < binary.naturalPx && binary.maximumPx > binary.naturalPx)
+
+        val broken = result.breakIntoLines(result.box.visualWidth * 0.58f, MathLineAdjustmentMode.Justify)
+        assertTrue(broken.lines.size > 1, "$label adjustment fixture breaks")
+        broken.lines.forEach { line ->
+            assertNear(0f, line.fragments.first().x, "$label no leading visible glue")
+            assertNear(0f, line.fragments.last().resolvedTrailingAdvancePx, "$label no trailing visible glue")
+            line.fragments.dropLast(1).forEach { placement ->
+                val contract = result.fragments[placement.fragmentIndex].trailingGlue
+                assertTrue(
+                    placement.resolvedTrailingAdvancePx + 0.02f >= contract.minimumPx &&
+                        placement.resolvedTrailingAdvancePx <= contract.maximumPx + 0.02f,
+                    "$label resolved glue remains in contract",
+                )
+            }
+            val replay = line.fragments.sumOf {
+                val fragment = result.fragments[it.fragmentIndex]
+                (fragment.box.width + fragment.trailingItalicCorrectionPx).toDouble()
+            }.toFloat() +
+                line.fragments.sumOf { it.resolvedTrailingAdvancePx.toDouble() }.toFloat()
+            assertNear(replay, line.logicalWidth, "$label adjusted measure/draw source")
+        }
+    }
+}
+
+private class FontOverrideFace(
+    private val delegate: SkiaMathFontFace,
+    override val mathFont: OpenTypeMathFont,
+) : MathFontFace {
+    override fun shape(text: String, fontSizePx: Float, style: MathStyle, sourceRange: SourceRange): MeasuredMathRun =
+        delegate.shape(text, fontSizePx, style, sourceRange)
+
+    override fun measureGlyph(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = delegate.measureGlyph(glyphId, fontSizePx, style, sourceRange)
+}
+
+private inline fun withAuditFaces(block: (String, SkiaMathFontFace) -> Unit) {
+    listOf(
+        "Lete Sans Math" to LeteSansMath.load(),
+        "STIX Two Math" to StixTwoMath.load(),
+    ).forEach { (label, font) -> SkiaMathFontFace(font).use { block(label, it) } }
+}
+
+private fun MathLayoutResult.spacingDecision(range: SourceRange): MathLayoutDecision =
+    decisions.first { it.name == "TeXMathAtomSpacing" && it.range == range }
+
+private fun MathLayoutResult.glyphAt(sourceOffset: Int) =
+    box.glyphs.first { sourceOffset in it.sourceRange.start until it.sourceRange.endExclusive }
+
+private fun assertAtLeast(actual: Float, minimum: Float, message: String) {
+    assertTrue(actual + 0.03f >= minimum, "$message: expected >= $minimum, got $actual")
+}
+
+private fun assertNear(expected: Float, actual: Float, message: String) {
+    assertTrue(abs(expected - actual) <= 0.04f, "$message: expected $expected, got $actual")
+}

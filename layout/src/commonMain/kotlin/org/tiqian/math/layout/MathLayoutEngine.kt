@@ -1,0 +1,1016 @@
+package org.tiqian.math.layout
+
+import org.tiqian.math.core.*
+import org.tiqian.math.font.opentype.MathKernCorner
+import org.tiqian.math.font.opentype.MathVerticalConstruction
+import org.tiqian.math.font.opentype.OpenTypeMathConstants
+import org.tiqian.math.parser.MacroExpansionLimits
+import org.tiqian.math.parser.MathMacroDefinition
+import org.tiqian.math.parser.MathParser
+import kotlin.math.max
+
+data class MathLayoutOptions(
+    val mode: MathMode = MathMode.Inline,
+    val fontSizePx: Float = 24f,
+    /** Primarily for embedding in an existing TeX-style context; null derives from [mode]. */
+    val initialStyle: MathStyle? = null,
+) {
+    init {
+        require(fontSizePx > 0f) { "math font size must be positive" }
+    }
+}
+
+class MathLayoutEngine(
+    private val glyphSource: MathFontFace,
+    macros: List<MathMacroDefinition> = emptyList(),
+    expansionLimits: MacroExpansionLimits = MacroExpansionLimits(),
+) {
+    private val parser = MathParser(macros, expansionLimits)
+
+    fun layout(source: String, options: MathLayoutOptions = MathLayoutOptions()): MathLayoutResult =
+        MathLayoutPass(glyphSource, parser).layout(source, options)
+}
+
+/** Per-call mutable state; a public engine can safely serve concurrent layout requests. */
+private class MathLayoutPass(
+    private val glyphSource: MathFontFace,
+    private val parser: MathParser,
+) {
+    private val diagnostics = mutableListOf<MathDiagnostic>()
+    private val decisions = mutableListOf<MathLayoutDecision>()
+    private var baseFontSizePx: Float = 24f
+
+    fun layout(source: String, options: MathLayoutOptions): MathLayoutResult {
+        baseFontSizePx = options.fontSizePx
+        val parsed = parser.parse(source)
+        diagnostics += parsed.diagnostics
+        val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
+        val horizontal = layoutList(parsed.root, initialStyle)
+        val fragments = horizontal.items.mapIndexed { itemIndex, item ->
+            val trailingGlue = horizontal.items.getOrNull(itemIndex + 1)?.glueBefore ?: MathGlueAdjustment.Zero
+            val breakKind = when (item.atomClass) {
+                MathAtomClass.Punctuation -> MathBreakKind.PunctuationTrailing
+                MathAtomClass.Binary -> MathBreakKind.BinaryOperatorTrailing
+                MathAtomClass.Relation -> MathBreakKind.RelationTrailing
+                else -> null
+            }
+            val opportunity = breakKind?.let {
+                MathBreakOpportunity(
+                    afterFragmentIndex = itemIndex,
+                    sourceOffset = item.node.range.endExclusive,
+                    kind = it,
+                    discardedTrailingGlue = trailingGlue,
+                    priority = adjustmentPriority(item.atomClass, null),
+                )
+            }
+            MathInlineFragment(
+                index = itemIndex,
+                sourceRange = item.node.range,
+                box = item.laid.box,
+                trailingItalicCorrectionPx = item.trailingItalicCorrectionPx,
+                trailingGlue = trailingGlue,
+                breakAfter = opportunity,
+            )
+        }
+        val breaks = fragments.mapNotNull { it.breakAfter }
+        val lineMetrics = formulaLineMetrics(horizontal.laid.box, initialStyle)
+        decision(
+            "Os2TypographicMathLineExtents",
+            parsed.root.range,
+            "fontAscentPx" to lineMetrics.fontAscentPx,
+            "fontDescentPx" to lineMetrics.fontDescentPx,
+            "fontLineGapPx" to lineMetrics.fontLineGapPx,
+            "mathLeadingPx" to lineMetrics.mathLeadingPx,
+            "inkAscentPx" to lineMetrics.inkAscentPx,
+            "inkDescentPx" to lineMetrics.inkDescentPx,
+            "logicalAscentPx" to lineMetrics.logicalAscentPx,
+            "logicalDescentPx" to lineMetrics.logicalDescentPx,
+        )
+        val resultDiagnostics = diagnostics.toList()
+        val resultDecisions = decisions.toList()
+        val dump = buildDump(
+            source,
+            options.mode,
+            initialStyle,
+            horizontal.laid.box,
+            fragments,
+            breaks,
+            lineMetrics,
+            resultDiagnostics,
+            resultDecisions,
+        )
+        return MathLayoutResult(
+            source = source,
+            mode = options.mode,
+            initialStyle = initialStyle,
+            box = horizontal.laid.box,
+            fragments = fragments,
+            breakOpportunities = breaks,
+            diagnostics = resultDiagnostics,
+            lineMetrics = lineMetrics,
+            decisions = resultDecisions,
+            debugDump = dump,
+        )
+    }
+
+    private val constants: OpenTypeMathConstants get() = glyphSource.mathFont.constants
+
+    private fun layoutNode(
+        node: MathNode,
+        style: MathStyle,
+        variantOverride: MathVariant? = null,
+    ): LaidNode = when (node) {
+        is MathList -> layoutList(node, style, variantOverride).laid
+        is MathGroup -> {
+            val horizontal = layoutList(node.body, style, variantOverride)
+            horizontal.laid.copy(
+                node = node,
+                atomClass = horizontal.items.singleOrNull()?.atomClass ?: MathAtomClass.Ordinary,
+            )
+        }
+        is MathSymbol -> layoutSymbol(node, style, variantOverride)
+        is MathScripts -> layoutScripts(node, style, variantOverride)
+        is MathFraction -> layoutFraction(node, style, variantOverride)
+        is MathStyleScope -> layoutNode(node.body, styleForLevel(node.requestedLevel), variantOverride).copy(node = node)
+        is MathVariantScope -> layoutNode(node.body, style, node.variant).copy(node = node)
+        is MathErrorNode -> LaidNode(
+            node,
+            emptyBox(node.range),
+            MathAtomClass.Ordinary,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutSymbol(node: MathSymbol, style: MathStyle, variantOverride: MathVariant?): LaidNode {
+        val size = fontSize(style)
+        val selection = node.selectMathVariant(variantOverride)
+        val run = glyphSource.shape(selection.glyphText, size, style, node.range)
+        if (run.missingGlyph) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingGlyph,
+                "The selected formula-wide math face has no ${selection.variant} glyph for ${node.displayText}",
+                node.range,
+            )
+        }
+        val lastGlyph = run.glyphs.lastOrNull()?.glyphId
+        val italicCorrection = lastGlyph?.let { glyphSource.mathFont.italicCorrection(it, size) } ?: 0f
+        decision(
+            "MathVariantGlyphSelection",
+            node.range,
+            "semantic" to selection.semanticText,
+            "glyphText" to selection.glyphText,
+            "variant" to selection.variant,
+            "remapped" to selection.remapped,
+            "glyphIds" to run.glyphs.joinToString(",") { it.glyphId.toString() },
+            "italicCorrectionPx" to italicCorrection,
+        )
+        val placements = run.glyphs.map { glyph ->
+            MathGlyphPlacement(
+                glyphId = glyph.glyphId,
+                x = glyph.x,
+                baselineY = 0f,
+                advance = glyph.advance,
+                inkBounds = glyph.inkBounds.translated(glyph.x, 0f),
+                fontSizePx = size,
+                sourceRange = node.range,
+                style = style,
+            )
+        }
+        return LaidNode(
+            node = node,
+            box = geometryExtents(run.width, placements, emptyList(), node.range),
+            atomClass = node.atomClass,
+            italicCorrectionPx = italicCorrection,
+            style = style,
+            scriptBaseKind = when {
+                placements.size != 1 -> ScriptBaseKind.CompoundBox
+                placements.single().glyphId in glyphSource.mathFont.extendedShapeGlyphs -> ScriptBaseKind.ExtendedShape
+                else -> ScriptBaseKind.Character
+            },
+        )
+    }
+
+    private fun layoutScripts(node: MathScripts, style: MathStyle, variantOverride: MathVariant?): LaidNode {
+        val base = layoutNode(node.base, style, variantOverride)
+        val superscript = node.superscript?.let { layoutNode(it, style.superscript(), variantOverride) }
+        val subscript = node.subscript?.let { layoutNode(it, style.subscript(), variantOverride) }
+        var superscriptShift = scale(
+            if (style.cramped) constants.superscriptShiftUpCramped else constants.superscriptShiftUp,
+            style,
+        )
+        var subscriptShift = scale(constants.subscriptShiftDown, style)
+
+        val appliesBaselineDrop = base.scriptBaseKind != ScriptBaseKind.Character
+        superscript?.let { laid ->
+            superscriptShift = max(superscriptShift, laid.box.descent + scale(constants.superscriptBottomMin, style))
+            if (appliesBaselineDrop) {
+                superscriptShift = max(
+                    superscriptShift,
+                    base.box.ascent - scale(constants.superscriptBaselineDropMax, style),
+                )
+            }
+        }
+        subscript?.let { laid ->
+            subscriptShift = max(subscriptShift, laid.box.ascent - scale(constants.subscriptTopMax, style))
+            if (appliesBaselineDrop) {
+                subscriptShift = max(
+                    subscriptShift,
+                    base.box.descent + scale(constants.subscriptBaselineDropMin, style),
+                )
+            }
+        }
+        if (superscript != null && subscript != null) {
+            val currentGap = (subscriptShift - subscript.box.ascent) -
+                (-superscriptShift + superscript.box.descent)
+            val missingGap = scale(constants.subSuperscriptGapMin, style) - currentGap
+            if (missingGap > 0f) {
+                val superBottomHeight = superscriptShift - superscript.box.descent
+                val availableSuperMove = (
+                    scale(constants.superscriptBottomMaxWithSubscript, style) - superBottomHeight
+                    ).coerceAtLeast(0f)
+                val superMove = minOf(missingGap, availableSuperMove)
+                superscriptShift += superMove
+                subscriptShift += missingGap - superMove
+            }
+        }
+
+        val superscriptKern = superscript?.let { superscriptMathKern(base, it, superscriptShift, node.range) } ?: 0f
+        val subscriptKern = subscript?.let { subscriptMathKern(base, it, subscriptShift, node.range) } ?: 0f
+        val superscriptX = base.box.width + base.italicCorrectionPx + superscriptKern
+        val subscriptX = base.box.width + subscriptKern
+        val glyphs = buildList {
+            addAll(base.box.glyphs)
+            superscript?.let { addAll(it.box.translated(superscriptX, -superscriptShift).glyphs) }
+            subscript?.let { addAll(it.box.translated(subscriptX, subscriptShift).glyphs) }
+        }
+        val rules = buildList {
+            addAll(base.box.rules)
+            superscript?.let { addAll(it.box.translated(superscriptX, -superscriptShift).rules) }
+            subscript?.let { addAll(it.box.translated(subscriptX, subscriptShift).rules) }
+        }
+        val scriptRight = maxOf(
+            base.box.width,
+            superscript?.let { superscriptX + it.box.width } ?: base.box.width,
+            subscript?.let { subscriptX + it.box.width } ?: base.box.width,
+        )
+        val width = scriptRight + scale(constants.spaceAfterScript, style)
+        decision(
+            "OpenTypeMathScriptPlacement",
+            node.range,
+            "style" to style,
+            "superscriptStyle" to superscript?.style,
+            "subscriptStyle" to subscript?.style,
+            "superscriptShiftPx" to superscriptShift,
+            "subscriptShiftPx" to subscriptShift,
+            "superscriptKernPx" to superscriptKern,
+            "subscriptKernPx" to subscriptKern,
+            "baseKind" to base.scriptBaseKind,
+            "baselineDropApplied" to appliesBaselineDrop,
+            "boxKernPolicy" to "single-glyph-corners-else-zero",
+        )
+        return LaidNode(
+            node = node,
+            box = geometryExtents(width, glyphs, rules, node.range),
+            atomClass = base.atomClass,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun superscriptMathKern(
+        base: LaidNode,
+        script: LaidNode,
+        shift: Float,
+        range: SourceRange,
+    ): Float {
+        val baseGlyph = base.box.singleGlyphOrNull()
+        val scriptGlyph = script.box.singleGlyphOrNull()
+        if (baseGlyph == null || scriptGlyph == null) {
+            decision("OpenTypeMathKern", range, "kind" to "superscript", "strategy" to "box-zero", "kernPx" to 0f)
+            return 0f
+        }
+        val first = glyphSource.mathFont.mathKern(
+            baseGlyph.glyphId,
+            MathKernCorner.TopRight,
+            shift - script.box.inkBounds.bottom,
+            baseGlyph.fontSizePx,
+        ) + glyphSource.mathFont.mathKern(
+            scriptGlyph.glyphId,
+            MathKernCorner.BottomLeft,
+            -script.box.inkBounds.bottom,
+            scriptGlyph.fontSizePx,
+        )
+        val second = glyphSource.mathFont.mathKern(
+            baseGlyph.glyphId,
+            MathKernCorner.TopRight,
+            -base.box.inkBounds.top,
+            baseGlyph.fontSizePx,
+        ) + glyphSource.mathFont.mathKern(
+            scriptGlyph.glyphId,
+            MathKernCorner.BottomLeft,
+            -shift - base.box.inkBounds.top,
+            scriptGlyph.fontSizePx,
+        )
+        val kern = minOf(first, second)
+        decision(
+            "OpenTypeMathKern",
+            range,
+            "kind" to "superscript",
+            "strategy" to "two-correction-heights",
+            "candidate1Px" to first,
+            "candidate2Px" to second,
+            "kernPx" to kern,
+        )
+        return kern
+    }
+
+    private fun subscriptMathKern(
+        base: LaidNode,
+        script: LaidNode,
+        shift: Float,
+        range: SourceRange,
+    ): Float {
+        val baseGlyph = base.box.singleGlyphOrNull()
+        val scriptGlyph = script.box.singleGlyphOrNull()
+        if (baseGlyph == null || scriptGlyph == null) {
+            decision("OpenTypeMathKern", range, "kind" to "subscript", "strategy" to "box-zero", "kernPx" to 0f)
+            return 0f
+        }
+        val first = glyphSource.mathFont.mathKern(
+            baseGlyph.glyphId,
+            MathKernCorner.BottomRight,
+            -shift - script.box.inkBounds.top,
+            baseGlyph.fontSizePx,
+        ) + glyphSource.mathFont.mathKern(
+            scriptGlyph.glyphId,
+            MathKernCorner.TopLeft,
+            -script.box.inkBounds.top,
+            scriptGlyph.fontSizePx,
+        )
+        val second = glyphSource.mathFont.mathKern(
+            baseGlyph.glyphId,
+            MathKernCorner.BottomRight,
+            -base.box.inkBounds.bottom,
+            baseGlyph.fontSizePx,
+        ) + glyphSource.mathFont.mathKern(
+            scriptGlyph.glyphId,
+            MathKernCorner.TopLeft,
+            shift - base.box.inkBounds.bottom,
+            scriptGlyph.fontSizePx,
+        )
+        val kern = minOf(first, second)
+        decision(
+            "OpenTypeMathKern",
+            range,
+            "kind" to "subscript",
+            "strategy" to "two-correction-heights",
+            "candidate1Px" to first,
+            "candidate2Px" to second,
+            "kernPx" to kern,
+        )
+        return kern
+    }
+
+    private fun layoutFraction(node: MathFraction, style: MathStyle, variantOverride: MathVariant?): LaidNode {
+        val numerator = layoutNode(node.numerator, style.fractionNumerator(), variantOverride).box
+        val denominator = layoutNode(node.denominator, style.fractionDenominator(), variantOverride).box
+        val display = style.level == MathStyleLevel.Display
+        val stack = layoutFractionStack(node, style, numerator, denominator, display)
+        val withDelimiters = if (node.hasParentheses) addBinomialParentheses(stack, node, style) else stack
+        return LaidNode(
+            node,
+            withDelimiters,
+            MathAtomClass.Ordinary,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    /** Shared OpenType MATH vertical kernel for barred fractions and ruleless binomial stacks. */
+    private fun layoutFractionStack(
+        node: MathFraction,
+        style: MathStyle,
+        numerator: MathBox,
+        denominator: MathBox,
+        display: Boolean,
+    ): MathBox {
+        val contentWidth = max(numerator.width, denominator.width)
+        val numeratorX = (contentWidth - numerator.width) / 2f
+        val denominatorX = (contentWidth - denominator.width) / 2f
+        val axisY = -scale(constants.axisHeight, style)
+        var numeratorShift: Float
+        var denominatorShift: Float
+        val rules: List<MathRulePlacement>
+
+        if (node.kind == FractionKind.Barred) {
+            val thickness = scale(constants.fractionRuleThickness, style)
+            val ruleTop = axisY - thickness / 2f
+            val ruleBottom = axisY + thickness / 2f
+            numeratorShift = scale(
+                if (display) constants.fractionNumeratorDisplayStyleShiftUp else constants.fractionNumeratorShiftUp,
+                style,
+            )
+            denominatorShift = scale(
+                if (display) constants.fractionDenominatorDisplayStyleShiftDown else constants.fractionDenominatorShiftDown,
+                style,
+            )
+            val numeratorGap = scale(
+                if (display) constants.fractionNumDisplayStyleGapMin else constants.fractionNumeratorGapMin,
+                style,
+            )
+            val denominatorGap = scale(
+                if (display) constants.fractionDenomDisplayStyleGapMin else constants.fractionDenominatorGapMin,
+                style,
+            )
+            numeratorShift = max(numeratorShift, numerator.descent + numeratorGap - ruleTop)
+            denominatorShift = max(denominatorShift, denominator.ascent + denominatorGap + ruleBottom)
+            rules = listOf(MathRulePlacement(0f, ruleTop, contentWidth, ruleBottom, node.range))
+            decision(
+                "OpenTypeMathFractionStack",
+                node.range,
+                "kind" to "barred",
+                "style" to style,
+                "axisPx" to -axisY,
+                "ruleThicknessPx" to thickness,
+                "numeratorShiftPx" to numeratorShift,
+                "denominatorShiftPx" to denominatorShift,
+                "numeratorGapMinPx" to numeratorGap,
+                "denominatorGapMinPx" to denominatorGap,
+            )
+        } else {
+            numeratorShift = scale(
+                if (display) constants.stackTopDisplayStyleShiftUp else constants.stackTopShiftUp,
+                style,
+            )
+            denominatorShift = scale(
+                if (display) constants.stackBottomDisplayStyleShiftDown else constants.stackBottomShiftDown,
+                style,
+            )
+            val minimumGap = scale(
+                if (display) constants.stackDisplayStyleGapMin else constants.stackGapMin,
+                style,
+            )
+            val actualGap = (denominatorShift - denominator.ascent) - (-numeratorShift + numerator.descent)
+            val missingGap = (minimumGap - actualGap).coerceAtLeast(0f)
+            numeratorShift += missingGap / 2f
+            denominatorShift += missingGap / 2f
+            rules = emptyList()
+            decision(
+                "OpenTypeMathFractionStack",
+                node.range,
+                "kind" to "ruleless",
+                "style" to style,
+                "numeratorShiftPx" to numeratorShift,
+                "denominatorShiftPx" to denominatorShift,
+                "gapMinPx" to minimumGap,
+                "symmetricGapCorrectionPx" to missingGap / 2f,
+            )
+        }
+
+        val shiftedNumerator = numerator.translated(numeratorX, -numeratorShift)
+        val shiftedDenominator = denominator.translated(denominatorX, denominatorShift)
+        return geometryExtents(
+            width = contentWidth,
+            glyphs = shiftedNumerator.glyphs + shiftedDenominator.glyphs,
+            rules = shiftedNumerator.rules + shiftedDenominator.rules + rules,
+            range = node.range,
+        )
+    }
+
+    private fun addBinomialParentheses(stackInput: MathBox, node: MathFraction, style: MathStyle): MathBox {
+        val stack = stackInput
+        val size = fontSize(style)
+        val leftBase = glyphSource.shapeConstructionBase("(", size, node.range)
+        val rightBase = glyphSource.shapeConstructionBase(")", size, node.range)
+        val axisY = -scale(constants.axisHeight, style)
+        // TeX Rule 15e uses a style-selected fixed fraction-noad delimiter size. In this
+        // OpenType slice the font's named fixed subformula height is used directly; future
+        // \left/\right layout must use a separate content-driven policy.
+        val fixedTargetHeight = scale(constants.delimitedSubFormulaMinHeight, style)
+        val axisInkSafetyHeight = 2f * max(
+            axisY - stack.inkBounds.top,
+            stack.inkBounds.bottom - axisY,
+        )
+        val targetHeight = max(fixedTargetHeight, axisInkSafetyHeight)
+
+        fun construction(baseRun: MeasuredMathRun, side: String): MathVerticalConstruction? {
+            val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
+            val selected = baseGlyphId?.let { glyphSource.mathFont.verticalConstruction(it, targetHeight, size) }
+            if (selected == null && baseRun.ascent + baseRun.descent + GEOMETRY_EPSILON_PX < targetHeight) {
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.MissingMathConstruction,
+                    "The $side parenthesis has no MATH construction covering ${targetHeight}px",
+                    node.range,
+                )
+            }
+            return selected
+        }
+
+        val leftConstruction = construction(leftBase, "left")
+        val rightConstruction = construction(rightBase, "right")
+        fun delimiterBox(
+            side: String,
+            construction: MathVerticalConstruction?,
+            baseRun: MeasuredMathRun,
+        ): MathBox {
+            val rawPlacements = if (construction == null) {
+                baseRun.glyphs.map { glyph ->
+                    MathGlyphPlacement(
+                        glyphId = glyph.glyphId,
+                        x = glyph.x,
+                        baselineY = 0f,
+                        advance = glyph.advance,
+                        inkBounds = glyph.inkBounds.translated(glyph.x, 0f),
+                        fontSizePx = size,
+                        sourceRange = node.range,
+                        style = style,
+                    )
+                }
+            } else {
+                val componentRuns = construction.components.map { component ->
+                    component to glyphSource.measureGlyph(component.glyphId, size, style, node.range)
+                }
+                val width = componentRuns.maxOfOrNull { it.second.width } ?: 0f
+                componentRuns.flatMap { (component, run) ->
+                    val componentX = (width - run.width) / 2f
+                    val componentBaseline = -glyphSource.mathFont.scaleDesignUnits(component.offset, size)
+                    run.glyphs.map { glyph ->
+                        MathGlyphPlacement(
+                            glyphId = glyph.glyphId,
+                            x = componentX + glyph.x,
+                            baselineY = componentBaseline,
+                            advance = glyph.advance,
+                            inkBounds = glyph.inkBounds.translated(componentX + glyph.x, componentBaseline),
+                            fontSizePx = size,
+                            sourceRange = node.range,
+                            style = style,
+                        )
+                    }
+                }
+            }
+            val inkTop = rawPlacements.minOfOrNull { it.inkBounds.top } ?: 0f
+            val inkBottom = rawPlacements.maxOfOrNull { it.inkBounds.bottom } ?: 0f
+            val centerShift = axisY - (inkTop + inkBottom) / 2f
+            val placements = rawPlacements.map { placement ->
+                placement.copy(
+                    baselineY = placement.baselineY + centerShift,
+                    inkBounds = placement.inkBounds.translated(0f, centerShift),
+                )
+            }
+            val advance = placements.maxOfOrNull { it.x + it.advance } ?: baseRun.width
+            val box = geometryExtents(advance, placements, emptyList(), node.range)
+            val achievedAdvance = construction?.let {
+                glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
+            } ?: baseRun.ascent + baseRun.descent
+            val inkHeight = box.inkBounds.height
+            val coversTop = box.inkBounds.top <= stack.inkBounds.top + GEOMETRY_EPSILON_PX
+            val coversBottom = box.inkBounds.bottom + GEOMETRY_EPSILON_PX >= stack.inkBounds.bottom
+            if (
+                (construction != null && !construction.reachesTarget) ||
+                achievedAdvance + GEOMETRY_EPSILON_PX < targetHeight ||
+                !coversTop ||
+                !coversBottom
+            ) {
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.MathVariantTooShort,
+                    "$side parenthesis construction does not cover the binomial target",
+                    node.range,
+                    DiagnosticSeverity.Warning,
+                )
+            }
+            decision(
+                "BinomialDelimiter",
+                node.range,
+                "side" to side,
+                "style" to style,
+                "baseGlyphId" to baseRun.glyphs.singleOrNull()?.glyphId,
+                "construction" to (construction?.kind ?: "BaseGlyph"),
+                "targetPolicy" to "TeXFractionNoadFixedWithAxisInkSafety",
+                "fixedTargetPx" to fixedTargetHeight,
+                "axisInkSafetyTargetPx" to axisInkSafetyHeight,
+                "targetPx" to targetHeight,
+                "achievedAdvancePx" to achievedAdvance,
+                "inkHeightPx" to inkHeight,
+                "stackTopPx" to stack.inkBounds.top,
+                "stackBottomPx" to stack.inkBounds.bottom,
+                "delimiterTopPx" to box.inkBounds.top,
+                "delimiterBottomPx" to box.inkBounds.bottom,
+                "coversTop" to coversTop,
+                "coversBottom" to coversBottom,
+                "extenderRepetitions" to construction?.extenderRepetitions,
+                "connectorOverlaps" to construction?.connectorOverlaps,
+            )
+            return box
+        }
+
+        val leftBox = delimiterBox("left", leftConstruction, leftBase)
+        val rightBox = delimiterBox("right", rightConstruction, rightBase)
+        val initialStackX = leftBox.width
+        val leftCollisionKern = (
+            leftBox.inkBounds.right - (initialStackX + stack.inkBounds.left)
+            ).coerceAtLeast(0f)
+        val stackX = initialStackX + leftCollisionKern
+        val initialRightX = stackX + stack.width
+        val rightCollisionKern = (
+            stackX + stack.inkBounds.right - (initialRightX + rightBox.inkBounds.left)
+            ).coerceAtLeast(0f)
+        val rightX = initialRightX + rightCollisionKern
+        val shiftedStack = stack.translated(stackX, 0f)
+        val shiftedRight = rightBox.translated(rightX, 0f)
+        decision(
+            "BinomialHorizontalCollisionKern",
+            node.range,
+            "leftPx" to leftCollisionKern,
+            "rightPx" to rightCollisionKern,
+            "policy" to "logical-advance-preserved-ink-collision-only",
+        )
+        return geometryExtents(
+            rightX + rightBox.width,
+            leftBox.glyphs + shiftedStack.glyphs + shiftedRight.glyphs,
+            leftBox.rules + shiftedStack.rules + shiftedRight.rules,
+            node.range,
+        )
+    }
+
+    private fun layoutList(
+        list: MathList,
+        style: MathStyle,
+        variantOverride: MathVariant? = null,
+    ): HorizontalLayout {
+        val raw = list.children.flatMap { child -> flattenHorizontal(child, style, variantOverride) }
+        val classes = raw.map { it.laid.atomClass }.toMutableList()
+        for (index in classes.indices) {
+            val previous = classes.getOrNull(index - 1)
+            val current = classes[index]
+            if (previous == MathAtomClass.Binary && current in binaryRightCanceller) {
+                classes[index - 1] = MathAtomClass.Ordinary
+            }
+            val resolvedPrevious = classes.getOrNull(index - 1)
+            if (current == MathAtomClass.Binary && (resolvedPrevious == null || resolvedPrevious in binaryLeftCanceller)) {
+                classes[index] = MathAtomClass.Ordinary
+            }
+        }
+        if (classes.lastOrNull() == MathAtomClass.Binary) classes[classes.lastIndex] = MathAtomClass.Ordinary
+
+        val spacedItems = raw.mapIndexed { index, item ->
+            val leftClass = classes.getOrNull(index - 1)
+            val rightClass = classes[index]
+            val glue = if (leftClass == null) {
+                MathGlueAdjustment.Zero
+            } else {
+                atomGlue(leftClass, rightClass, item.laid.style, item.node.range)
+            }
+            item.copy(glueBefore = glue, atomClass = rightClass)
+        }
+        val items = spacedItems.mapIndexed { index, item ->
+            val rightClass = classes.getOrNull(index + 1)
+            val correction = if (
+                rightClass in uprightInteractionClasses &&
+                item.laid.italicCorrectionPx > 0f
+            ) {
+                item.laid.italicCorrectionPx
+            } else {
+                0f
+            }
+            if (correction > 0f) {
+                decision(
+                    "OpenTypeItalicCorrectionBoundary",
+                    item.node.range,
+                    "rightClass" to rightClass,
+                    "correctionPx" to correction,
+                    "policy" to "slanted-run-before-upright-atom",
+                )
+            }
+            item.copy(trailingItalicCorrectionPx = correction)
+        }
+        var x = 0f
+        val glyphs = mutableListOf<MathGlyphPlacement>()
+        val rules = mutableListOf<MathRulePlacement>()
+        items.forEach { item ->
+            x += item.glueBefore.naturalPx
+            val shifted = item.laid.box.translated(x, 0f)
+            glyphs += shifted.glyphs
+            rules += shifted.rules
+            x += item.laid.box.width + item.trailingItalicCorrectionPx
+        }
+        val box = geometryExtents(x, glyphs, rules, list.range)
+        val atomClass = items.singleOrNull()?.atomClass ?: MathAtomClass.Ordinary
+        return HorizontalLayout(
+            LaidNode(
+                list,
+                box,
+                atomClass,
+                items.lastOrNull()?.laid?.italicCorrectionPx ?: 0f,
+                style,
+                items.singleOrNull()?.laid?.scriptBaseKind ?: ScriptBaseKind.CompoundBox,
+            ),
+            items,
+        )
+    }
+
+    private fun flattenHorizontal(
+        node: MathNode,
+        style: MathStyle,
+        variantOverride: MathVariant?,
+    ): List<HorizontalItem> = when (node) {
+        is MathGroup -> {
+            decision("TransparentMathGroup", node.range, "children" to node.body.children.size)
+            node.body.children.flatMap { flattenHorizontal(it, style, variantOverride) }
+        }
+        is MathStyleScope -> {
+            val scoped = styleForLevel(node.requestedLevel)
+            decision("TransparentStyleScope", node.range, "style" to scoped)
+            when (val body = node.body) {
+                is MathGroup -> body.body.children.flatMap { flattenHorizontal(it, scoped, variantOverride) }
+                is MathList -> body.children.flatMap { flattenHorizontal(it, scoped, variantOverride) }
+                else -> listOf(HorizontalItem(node, layoutNode(body, scoped, variantOverride).copy(node = node), MathGlueAdjustment.Zero, MathAtomClass.Ordinary))
+            }
+        }
+        is MathVariantScope -> {
+            decision("TransparentMathVariantScope", node.range, "variant" to node.variant)
+            when (val body = node.body) {
+                is MathGroup -> body.body.children.flatMap { flattenHorizontal(it, style, node.variant) }
+                is MathList -> body.children.flatMap { flattenHorizontal(it, style, node.variant) }
+                else -> listOf(HorizontalItem(node, layoutNode(body, style, node.variant).copy(node = node), MathGlueAdjustment.Zero, MathAtomClass.Ordinary))
+            }
+        }
+        else -> listOf(HorizontalItem(node, layoutNode(node, style, variantOverride), MathGlueAdjustment.Zero, MathAtomClass.Ordinary))
+    }
+
+    private fun atomGlue(
+        left: MathAtomClass,
+        right: MathAtomClass,
+        rightStyle: MathStyle,
+        range: SourceRange,
+    ): MathGlueAdjustment {
+        val tight = rightStyle.level == MathStyleLevel.Script || rightStyle.level == MathStyleLevel.ScriptScript
+        val kind = TeXMathSpacing.kind(left, right, tight)
+        val priority = adjustmentPriority(left, right)
+        val mu = fontSize(rightStyle) / 18f
+        val glue = when (kind) {
+            MathGlueKind.None -> MathGlueAdjustment.Zero
+            MathGlueKind.Thin -> if (priority == MathAdjustmentPriority.Punctuation) {
+                glue(kind, 3f * mu, 3f * mu, 6f * mu, priority)
+            } else {
+                glue(kind, 3f * mu, 3f * mu, 3f * mu, priority)
+            }
+            MathGlueKind.Medium -> glue(kind, 4f * mu, 0f, 6f * mu, priority)
+            MathGlueKind.Thick -> glue(kind, 5f * mu, 5f * mu, 10f * mu, priority)
+        }
+        decision(
+            "TeXMathAtomSpacing",
+            range,
+            "left" to left,
+            "right" to right,
+            "style" to rightStyle,
+            "table" to if (tight) "tight" else "display-text",
+            "kind" to kind,
+            "naturalPx" to glue.naturalPx,
+            "minimumPx" to glue.minimumPx,
+            "maximumPx" to glue.maximumPx,
+            "priority" to glue.priority,
+        )
+        return glue
+    }
+
+    private fun glue(
+        kind: MathGlueKind,
+        natural: Float,
+        minimum: Float,
+        maximum: Float,
+        priority: MathAdjustmentPriority,
+    ): MathGlueAdjustment = MathGlueAdjustment(
+        kind,
+        natural,
+        minimum,
+        maximum,
+        natural - minimum,
+        maximum - natural,
+        priority,
+    )
+
+    private fun adjustmentPriority(left: MathAtomClass, right: MathAtomClass?): MathAdjustmentPriority = when {
+        left == MathAtomClass.Punctuation -> MathAdjustmentPriority.Punctuation
+        left == MathAtomClass.Relation || right == MathAtomClass.Relation -> MathAdjustmentPriority.Relation
+        left == MathAtomClass.Binary || right == MathAtomClass.Binary -> MathAdjustmentPriority.BinaryOperator
+        else -> MathAdjustmentPriority.Other
+    }
+
+    private fun fontSize(style: MathStyle): Float = when (style.level) {
+        MathStyleLevel.Display, MathStyleLevel.Text -> baseFontSizePx
+        MathStyleLevel.Script -> baseFontSizePx * constants.scriptPercentScaleDown / 100f
+        MathStyleLevel.ScriptScript -> baseFontSizePx * constants.scriptScriptPercentScaleDown / 100f
+    }
+
+    private fun scale(designUnits: Int, style: MathStyle): Float =
+        glyphSource.mathFont.scaleDesignUnits(designUnits, fontSize(style))
+
+    private fun styleForLevel(level: MathStyleLevel): MathStyle = when (level) {
+        MathStyleLevel.Display -> MathStyle.Display
+        MathStyleLevel.Text -> MathStyle.Text
+        MathStyleLevel.Script -> MathStyle.Script
+        MathStyleLevel.ScriptScript -> MathStyle.ScriptScript
+    }
+
+    private fun formulaLineMetrics(box: MathBox, style: MathStyle): MathFormulaLineMetrics {
+        val size = fontSize(style)
+        val metrics = glyphSource.mathFont.lineMetrics
+        val fontAscent = glyphSource.mathFont.scaleDesignUnits(metrics.typoAscender, size).coerceAtLeast(0f)
+        val fontDescent = (-glyphSource.mathFont.scaleDesignUnits(metrics.typoDescender, size)).coerceAtLeast(0f)
+        val lineGap = glyphSource.mathFont.scaleDesignUnits(metrics.typoLineGap, size).coerceAtLeast(0f)
+        val mathLeading = scale(constants.mathLeading, style).coerceAtLeast(0f)
+        return MathFormulaLineMetrics(
+            fontAscentPx = fontAscent,
+            fontDescentPx = fontDescent,
+            fontLineGapPx = lineGap,
+            mathLeadingPx = mathLeading,
+            inkAscentPx = box.ascent,
+            inkDescentPx = box.descent,
+            logicalAscentPx = max(fontAscent + lineGap, box.ascent + mathLeading),
+            logicalDescentPx = max(fontDescent, box.descent),
+        )
+    }
+
+    private fun geometryExtents(
+        width: Float,
+        glyphs: List<MathGlyphPlacement>,
+        rules: List<MathRulePlacement>,
+        range: SourceRange,
+    ): MathBox {
+        val left = minOf(glyphs.minOfOrNull { it.inkBounds.left } ?: 0f, rules.minOfOrNull { it.left } ?: 0f)
+        val top = minOf(glyphs.minOfOrNull { it.inkBounds.top } ?: 0f, rules.minOfOrNull { it.top } ?: 0f)
+        val right = maxOf(glyphs.maxOfOrNull { it.inkBounds.right } ?: 0f, rules.maxOfOrNull { it.right } ?: 0f)
+        val bottom = maxOf(glyphs.maxOfOrNull { it.inkBounds.bottom } ?: 0f, rules.maxOfOrNull { it.bottom } ?: 0f)
+        return MathBox(
+            width,
+            (-top).coerceAtLeast(0f),
+            bottom.coerceAtLeast(0f),
+            MathRect(left, top, right, bottom),
+            glyphs,
+            rules,
+            range,
+        )
+    }
+
+    private fun emptyBox(range: SourceRange): MathBox = MathBox(
+        0f,
+        0f,
+        0f,
+        MathRect(0f, 0f, 0f, 0f),
+        emptyList(),
+        emptyList(),
+        range,
+    )
+
+    private fun decision(name: String, range: SourceRange, vararg details: Pair<String, Any?>) {
+        decisions += MathLayoutDecision(name, range, details.associate { it.first to it.second.toString() })
+    }
+
+    private fun buildDump(
+        source: String,
+        mode: MathMode,
+        style: MathStyle,
+        box: MathBox,
+        fragments: List<MathInlineFragment>,
+        breaks: List<MathBreakOpportunity>,
+        lineMetrics: MathFormulaLineMetrics,
+        diagnostics: List<MathDiagnostic>,
+        decisions: List<MathLayoutDecision>,
+    ): String = buildString {
+        appendLine("source=$source")
+        appendLine("mode=$mode style=$style upm=${glyphSource.mathFont.unitsPerEm}")
+        appendLine(
+            "math axis=${constants.axisHeight} rule=${constants.fractionRuleThickness} " +
+                "script=${constants.scriptPercentScaleDown}/${constants.scriptScriptPercentScaleDown}",
+        )
+        appendLine(
+            "box advance=${box.width} ink=${box.inkBounds.left},${box.inkBounds.top}," +
+                "${box.inkBounds.right},${box.inkBounds.bottom} visual=${box.visualLeft}..${box.visualRight}",
+        )
+        appendLine(
+            "line font=${lineMetrics.fontAscentPx}/${lineMetrics.fontDescentPx}/${lineMetrics.fontLineGapPx} " +
+                "mathLeading=${lineMetrics.mathLeadingPx} ink=${lineMetrics.inkAscentPx}/${lineMetrics.inkDescentPx} " +
+                "logical=${lineMetrics.logicalAscentPx}/${lineMetrics.logicalDescentPx}",
+        )
+        decisions.forEach { decision ->
+            appendLine(
+                "decision ${decision.name} range=${decision.range.start}..${decision.range.endExclusive} " +
+                    decision.details.entries.joinToString(" ") { "${it.key}=${it.value}" },
+            )
+        }
+        box.glyphs.forEachIndexed { index, glyph ->
+            appendLine(
+                "glyph[$index] id=${glyph.glyphId} range=${glyph.sourceRange.start}..${glyph.sourceRange.endExclusive} " +
+                    "style=${glyph.style} size=${glyph.fontSizePx} x=${glyph.x} baseline=${glyph.baselineY} " +
+                    "ink=${glyph.inkBounds.left},${glyph.inkBounds.top},${glyph.inkBounds.right},${glyph.inkBounds.bottom}",
+            )
+        }
+        box.rules.forEachIndexed { index, rule ->
+            appendLine("rule[$index] ${rule.left},${rule.top},${rule.right},${rule.bottom}")
+        }
+        fragments.forEach { fragment ->
+            appendLine(
+                "fragment[${fragment.index}] range=${fragment.sourceRange.start}..${fragment.sourceRange.endExclusive} " +
+                    "advance=${fragment.box.width} ink=${fragment.box.inkBounds.left}..${fragment.box.inkBounds.right} " +
+                    "italicCorrection=${fragment.trailingItalicCorrectionPx} " +
+                    "glue=${fragment.trailingGlue.kind}/${fragment.trailingGlue.naturalPx}/" +
+                    "${fragment.trailingGlue.minimumPx}/${fragment.trailingGlue.maximumPx}/" +
+                    "${fragment.trailingGlue.priority}",
+            )
+        }
+        breaks.forEach { opportunity ->
+            appendLine(
+                "break after=${opportunity.afterFragmentIndex} offset=${opportunity.sourceOffset} " +
+                    "kind=${opportunity.kind} priority=${opportunity.priority} " +
+                    "discard=${opportunity.discardedTrailingGlue.naturalPx}",
+            )
+        }
+        diagnostics.forEach { diagnostic ->
+            appendLine(
+                "diagnostic ${diagnostic.severity}/${diagnostic.code} " +
+                    "range=${diagnostic.range.start}..${diagnostic.range.endExclusive}",
+            )
+        }
+    }
+
+    private data class LaidNode(
+        val node: MathNode,
+        val box: MathBox,
+        val atomClass: MathAtomClass,
+        val italicCorrectionPx: Float,
+        val style: MathStyle,
+        val scriptBaseKind: ScriptBaseKind,
+    )
+
+    private data class HorizontalItem(
+        val node: MathNode,
+        val laid: LaidNode,
+        val glueBefore: MathGlueAdjustment,
+        val atomClass: MathAtomClass,
+        val trailingItalicCorrectionPx: Float = 0f,
+    )
+
+    private data class HorizontalLayout(
+        val laid: LaidNode,
+        val items: List<HorizontalItem>,
+    )
+
+    private companion object {
+        const val GEOMETRY_EPSILON_PX = 0.02f
+
+        val binaryLeftCanceller = setOf(
+            MathAtomClass.Binary,
+            MathAtomClass.Opening,
+            MathAtomClass.Relation,
+            MathAtomClass.Operator,
+            MathAtomClass.Punctuation,
+        )
+        val binaryRightCanceller = setOf(
+            MathAtomClass.Relation,
+            MathAtomClass.Closing,
+            MathAtomClass.Punctuation,
+        )
+
+        val uprightInteractionClasses = setOf(
+            MathAtomClass.Operator,
+            MathAtomClass.Binary,
+            MathAtomClass.Relation,
+            MathAtomClass.Opening,
+            MathAtomClass.Closing,
+            MathAtomClass.Punctuation,
+        )
+
+    }
+}
+
+private enum class ScriptBaseKind {
+    Character,
+    CompoundBox,
+    ExtendedShape,
+}
+
+private fun MathBox.singleGlyphOrNull(): MathGlyphPlacement? =
+    if (rules.isEmpty() && glyphs.size == 1) glyphs.single() else null
+
+private fun MathBox.translated(dx: Float, dy: Float): MathBox = copy(
+    inkBounds = inkBounds.translated(dx, dy),
+    glyphs = glyphs.map { glyph ->
+        glyph.copy(
+            x = glyph.x + dx,
+            baselineY = glyph.baselineY + dy,
+            inkBounds = glyph.inkBounds.translated(dx, dy),
+        )
+    },
+    rules = rules.map { rule ->
+        rule.copy(
+            left = rule.left + dx,
+            right = rule.right + dx,
+            top = rule.top + dy,
+            bottom = rule.bottom + dy,
+        )
+    },
+)

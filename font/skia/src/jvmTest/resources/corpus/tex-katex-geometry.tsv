@@ -1,0 +1,8 @@
+# KaTeX comparison revision and MIT attribution: /THIRD_PARTY_NOTICES.md
+# id	source	oracle	invariant
+group-transparency	a{b}c	TeX ordinary group; KaTeX atom list	braces do not create an Inner atom or extra glue
+tight-spacing	x_{k-1}	KaTeX spacingData tight table	binary glue is suppressed in ScriptCramped
+cramped-superscript	\frac{a}{x^{y^z}}	KaTeX Style.sup [S,Sc,S,Sc,SS,SSc,SS,SSc]	nested denominator superscripts remain ScriptScriptCramped
+script-binomial	\frac{a}{\binom{n}{k}}	TeX style transitions; OpenType MATH variants	ScriptCramped delimiters use base-glyph construction coverage
+math-kern	x_1^2	OpenType MATH MathKern two-height algorithm	parsed corner kerns participate in final script x
+assembly	\binom{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{a}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{k}	OpenType MATH GlyphAssembly	extenders repeat and connector overlap covers the target

@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Tiqian MathML geometry oracle</title>
+<style>
+  @font-face {
+    font-family: "Oracle Lete Math";
+    src: url("/font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Regular.otf");
+  }
+  @font-face {
+    font-family: "Oracle STIX Two Math";
+    src: url("/font/stix/src/jvmMain/resources/org/tiqian/math/fonts/STIXTwoMath-Regular.otf");
+  }
+  :root { color-scheme: light; background: white; color: black; }
+  body { margin: 24px; font: 16px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  .font { margin-block: 24px; }
+  .row { display: flex; align-items: baseline; gap: 16px; min-height: 84px; }
+  .label { width: 180px; flex: 0 0 auto; color: #555; }
+  .sample { display: inline-block; white-space: nowrap; font-size: 40px; line-height: 1; }
+  math { font-size: 40px; }
+  .lete math { font-family: "Oracle Lete Math"; }
+  .stix math { font-family: "Oracle STIX Two Math"; }
+  .baseline { display: inline-block; width: 1px; height: 1px; background: #d00; vertical-align: baseline; }
+  .control { margin-left: 28px; color: #245; }
+</style>
+<h1>Native Chrome MathML, reviewed geometry oracle (40 CSS px)</h1>
+<div id="cases"></div>
+<canvas id="metrics" width="1" height="1" hidden></canvas>
+<script>
+  const fixtures = [
+    ["variable-pair", `<math><mrow><mi data-probe="x">x</mi><mo data-probe="plus">+</mo><mi data-probe="y">y</mi></mrow></math>`],
+    ["variable-run", `<math><mrow><mi data-probe="a">a</mi><mi data-probe="b">b</mi><mi data-probe="c">c</mi></mrow></math>`],
+    ["paired-scripts", `<math><msubsup><mi data-probe="base">x</mi><mn data-probe="sub">1</mn><mn data-probe="sup">2</mn></msubsup></math>`],
+    ["greek", `<math><mrow><mi data-probe="alpha">α</mi><mo data-probe="plus">+</mo><mi data-probe="beta">β</mi></mrow></math>`],
+    ["upright-controls", `<math><mrow><mn data-probe="digit">2</mn><mo data-probe="plus">+</mo><mo data-probe="open">(</mo><mo data-probe="close">)</mo><mo data-probe="equal">=</mo><mi mathvariant="normal" data-probe="gamma">Γ</mi></mrow></math>`],
+    ["fraction-adjacency", `<math><mrow><mi data-probe="left">a</mi><mfrac data-probe="frac"><mi>b</mi><mi>c</mi></mfrac><mi data-probe="right">d</mi></mrow></math>`],
+    ["ruleless-stack", `<math><mrow><mo data-probe="left-paren">(</mo><mfrac linethickness="0" data-probe="stack"><mi>n</mi><mi>k</mi></mfrac><mo data-probe="right-paren">)</mo></mrow></math>`],
+    ["italic-upright-control", `<math><mrow><mi data-probe="italic">x</mi><mspace width="1em"></mspace><mi mathvariant="normal" data-probe="upright">x</mi></mrow></math>`],
+  ];
+  const root = document.querySelector("#cases");
+  for (const [fontClass, fontLabel] of [["lete", "Lete Sans Math"], ["stix", "STIX Two Math"]]) {
+    const section = document.createElement("section");
+    section.className = `font ${fontClass}`;
+    section.dataset.font = fontLabel;
+    section.innerHTML = `<h2>${fontLabel}</h2>`;
+    for (const [id, markup] of fixtures) {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.dataset.case = id;
+      row.innerHTML = `<span class="label">${id}</span><span class="sample">${markup}<span class="baseline"></span></span>`;
+      section.append(row);
+    }
+    root.append(section);
+  }
+</script>

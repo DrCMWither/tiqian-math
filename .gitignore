@@ -1,0 +1,28 @@
+# Gradle 与 Kotlin 缓存
+.gradle/
+.kotlin/
+**/build/
+
+# 本地 JavaScript 依赖
+node_modules/
+
+# IDE 与本机配置
+.idea/
+*.iml
+out/
+local.properties
+.DS_Store
+Thumbs.db
+
+# Android 与 Native 中间产物
+.externalNativeBuild/
+.cxx/
+captures/
+
+# 崩溃转储与调试日志
+*.hprof
+hs_err_pid*
+replay_pid*
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*

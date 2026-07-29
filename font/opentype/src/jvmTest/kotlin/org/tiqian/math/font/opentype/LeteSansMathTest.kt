@@ -1,0 +1,48 @@
+package org.tiqian.math.font.opentype
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import java.security.MessageDigest
+
+class LeteSansMathTest {
+    @Test
+    fun bundledFontHasRealMathConstantsAndParenthesisVariants() {
+        val font = LeteSansMath.load()
+
+        assertEquals(1000, font.unitsPerEm)
+        assertEquals(OpenTypeLineMetrics(750, -250, 0), font.lineMetrics)
+        assertEquals(70, font.constants.scriptPercentScaleDown)
+        assertEquals(55, font.constants.scriptScriptPercentScaleDown)
+        assertEquals(280, font.constants.axisHeight)
+        assertEquals(250, font.constants.subscriptShiftDown)
+        assertEquals(420, font.constants.superscriptShiftUp)
+        assertEquals(370, font.constants.superscriptShiftUpCramped)
+        assertEquals(170, font.constants.subSuperscriptGapMin)
+        assertEquals(580, font.constants.fractionNumeratorDisplayStyleShiftUp)
+        assertEquals(700, font.constants.fractionDenominatorDisplayStyleShiftDown)
+        assertEquals(66, font.constants.fractionRuleThickness)
+        assertEquals(200, font.constants.fractionNumDisplayStyleGapMin)
+        assertEquals(200, font.constants.fractionDenomDisplayStyleGapMin)
+        assertTrue(font.verticalVariants.values.any { it.size > 1 })
+        assertEquals(828, font.italicCorrections.size)
+        assertTrue(font.unsupportedItalicCorrectionAdjustments.isEmpty())
+        assertEquals(89, font.verticalVariants.size)
+        assertTrue(font.extendedShapeGlyphs.isNotEmpty())
+        assertTrue(font.mathKernInfo.isNotEmpty())
+        assertEquals(
+            "ead643895be03f42f6fa201fb1176323f60dd330d4109387bac90bdf980fcf3e",
+            MessageDigest.getInstance("SHA-256").digest(LeteSansMath.loadBytes()).toHex(),
+        )
+    }
+
+    @Test
+    fun designUnitScalingIsExact() {
+        val font = LeteSansMath.load()
+        assertEquals(20f, font.scaleDesignUnits(font.unitsPerEm, 20f))
+    }
+}
+
+private fun ByteArray.toHex(): String = joinToString("") { byte ->
+    (byte.toInt() and 0xFF).toString(16).padStart(2, '0')
+}
