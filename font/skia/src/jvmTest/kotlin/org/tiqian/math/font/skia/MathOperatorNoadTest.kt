@@ -31,6 +31,62 @@ import org.tiqian.math.layout.ResolvedMathSymbolRun
 
 class MathOperatorNoadTest {
     @Test
+    fun sideScriptBaselineDropsUseTheAbsoluteTargetScriptStyleScale() =
+        withOperatorFaces { label, face ->
+            val size = 32f
+            listOf(MathStyle.Text, MathStyle.Script).forEach { style ->
+                val result = MathLayoutEngine(face).layout(
+                    "\\int_0^1",
+                    MathLayoutOptions(MathMode.Inline, size, initialStyle = style),
+                )
+                val placement = result.decisions.single { it.name == "OpenTypeMathScriptPlacement" }
+                val superscriptStyle = style.superscript()
+                val subscriptStyle = style.subscript()
+                val superscriptSize = when (superscriptStyle.level) {
+                    org.tiqian.math.core.MathStyleLevel.Script ->
+                        size * face.mathFont.constants.scriptPercentScaleDown / 100f
+                    org.tiqian.math.core.MathStyleLevel.ScriptScript ->
+                        size * face.mathFont.constants.scriptScriptPercentScaleDown / 100f
+                    else -> error("unexpected superscript style $superscriptStyle")
+                }
+                val subscriptSize = when (subscriptStyle.level) {
+                    org.tiqian.math.core.MathStyleLevel.Script ->
+                        size * face.mathFont.constants.scriptPercentScaleDown / 100f
+                    org.tiqian.math.core.MathStyleLevel.ScriptScript ->
+                        size * face.mathFont.constants.scriptScriptPercentScaleDown / 100f
+                    else -> error("unexpected subscript style $subscriptStyle")
+                }
+                val expectedSupDrop = face.mathFont.scaleDesignUnits(
+                    face.mathFont.constants.superscriptBaselineDropMax,
+                    superscriptSize,
+                )
+                val expectedSubDrop = face.mathFont.scaleDesignUnits(
+                    face.mathFont.constants.subscriptBaselineDropMin,
+                    subscriptSize,
+                )
+                val caseLabel = "$label/$style"
+
+                assertEquals(superscriptStyle.toString(), placement.details["superscriptBaselineDropStyle"], caseLabel)
+                assertEquals(subscriptStyle.toString(), placement.details["subscriptBaselineDropStyle"], caseLabel)
+                assertNear(expectedSupDrop, placement.float("superscriptBaselineDropMaxPx"), "$caseLabel sup_drop")
+                assertNear(expectedSubDrop, placement.float("subscriptBaselineDropMinPx"), "$caseLabel sub_drop")
+                val baselineDropApplied = placement.details.getValue("baselineDropApplied").toBoolean()
+                val expectedSupShift = buildList {
+                    add(placement.float("standardSuperscriptShiftUpPx"))
+                    add(placement.float("superscriptInkDescentPx") + placement.float("superscriptBottomMinPx"))
+                    if (baselineDropApplied) add(placement.float("baseInkAscentPx") - expectedSupDrop)
+                }.max()
+                val expectedSubShift = buildList {
+                    add(placement.float("standardSubscriptShiftDownPx"))
+                    add(placement.float("subscriptInkAscentPx") - placement.float("subscriptTopMaxPx"))
+                    if (baselineDropApplied) add(placement.float("baseInkDescentPx") + expectedSubDrop)
+                }.max()
+                assertNear(expectedSupShift, placement.float("superscriptShiftBeforePairGapPx"), "$caseLabel sup shift")
+                assertNear(expectedSubShift, placement.float("subscriptShiftBeforePairGapPx"), "$caseLabel sub shift")
+            }
+        }
+
+    @Test
     fun plainTexPoliciesDisplayVariantsAxisAndLimitGeometryHoldForBothRealFonts() =
         withOperatorFaces { label, face ->
             val engine = MathLayoutEngine(face)

@@ -1,0 +1,81 @@
+\documentclass{article}
+\usepackage{unicode-math}
+\usepackage[
+  paperwidth=675bp,
+  paperheight=570bp,
+  margin=0bp
+]{geometry}
+\pagestyle{empty}
+
+\newbox\leteUpperLower
+\newbox\leteInline
+\newbox\leteDisplay
+\newbox\leteSum
+\newbox\leteComplex
+\newbox\stixUpperLower
+\newbox\stixInline
+\newbox\stixDisplay
+\newbox\stixSum
+\newbox\stixComplex
+
+\newcommand{\oraclebox}[3]{%
+  \setbox#1=\hbox{\fontsize{#2bp}{#2bp}\selectfont$#3$}%
+}
+\newcommand{\oraclerow}[2]{%
+  \hbox{\fontsize{6.75bp}{8bp}\selectfont\ttfamily #1}%
+  \vskip1bp
+  \hbox{#2}%
+  \vskip7bp
+}
+\newcommand{\complexformula}{%
+  \sqrt[3]{\frac{\sum\limits_{i=1}^{n}\frac{i^2+\alpha_i}{1+\beta_i^2}
+    +\int_0^1\frac{x^2+1}{x^4+1}}
+    {\sqrt{\frac{a+b}{c+d}}+\binom{2n}{n}}}%
+}
+
+\begin{document}
+\setmathfont[
+  Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/
+]{LeteSansMath-Regular.otf}
+\oraclebox{\leteUpperLower}{24}{\int^1+\int_0+\int_0^1}
+\oraclebox{\leteInline}{24}{\int_0^1+\oint_0^1}
+\oraclebox{\leteDisplay}{24}{\displaystyle\int_0^1+\oint_0^1}
+\oraclebox{\leteSum}{24}{\displaystyle\sum\nolimits_0^1}
+\oraclebox{\leteComplex}{13.5}{\complexformula}
+
+\setmathfont[
+  Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/
+]{STIXTwoMath-Regular.otf}
+\oraclebox{\stixUpperLower}{24}{\int^1+\int_0+\int_0^1}
+\oraclebox{\stixInline}{24}{\int_0^1+\oint_0^1}
+\oraclebox{\stixDisplay}{24}{\displaystyle\int_0^1+\oint_0^1}
+\oraclebox{\stixSum}{24}{\displaystyle\sum\nolimits_0^1}
+\oraclebox{\stixComplex}{13.5}{\complexformula}
+
+\vspace*{13.5bp}
+\noindent\hspace*{13.5bp}\vbox{%
+  \hbox{\fontsize{9.75bp}{11bp}\selectfont Tectonic 0.17.0 / XeTeX · exact repository OTF}%
+  \vskip4bp
+  \hbox{\fontsize{7.5bp}{9bp}\selectfont nominal 24bp (32px) · inline/display · plain TeX 0.5pt scriptspace}%
+  \vskip8bp
+  \hbox to 648bp{%
+    \vtop{\hsize=310bp
+      \hbox{\fontsize{8.25bp}{10bp}\selectfont Lete Sans Math}\vskip6bp
+      \oraclerow{inline upper/lower/both}{\copy\leteUpperLower}
+      \oraclerow{inline int / oint}{\copy\leteInline}
+      \oraclerow{display int / oint}{\copy\leteDisplay}
+      \oraclerow{display sum nolimits}{\copy\leteSum}
+      \oraclerow{complex integral · 13.5bp}{\copy\leteComplex}
+    }%
+    \hfil
+    \vtop{\hsize=310bp
+      \hbox{\fontsize{8.25bp}{10bp}\selectfont STIX Two Math}\vskip6bp
+      \oraclerow{inline upper/lower/both}{\copy\stixUpperLower}
+      \oraclerow{inline int / oint}{\copy\stixInline}
+      \oraclerow{display int / oint}{\copy\stixDisplay}
+      \oraclerow{display sum nolimits}{\copy\stixSum}
+      \oraclerow{complex integral · 13.5bp}{\copy\stixComplex}
+    }%
+  }%
+}
+\end{document}

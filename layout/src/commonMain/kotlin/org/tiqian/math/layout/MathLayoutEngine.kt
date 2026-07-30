@@ -23,11 +23,19 @@ data class MathLayoutOptions(
      * Null keeps the plain-TeX 1.2pt-to-10pt proportion at the formula's text size.
      */
     val nullDelimiterSpacePx: Float? = null,
+    /**
+     * Formula-scoped equivalent of TeX's `\scriptspace`; fixed across math styles.
+     * Null keeps the selected OpenType MATH font's `SpaceAfterScript` constant.
+     */
+    val scriptSpacePx: Float? = null,
 ) {
     init {
         require(fontSizePx > 0f) { "math font size must be positive" }
         require(nullDelimiterSpacePx == null || nullDelimiterSpacePx >= 0f) {
             "null delimiter space must not be negative"
+        }
+        require(scriptSpacePx == null || scriptSpacePx >= 0f) {
+            "script space must not be negative"
         }
     }
 }
@@ -52,6 +60,7 @@ private class MathLayoutPass(
     private val decisions = mutableListOf<MathLayoutDecision>()
     private var baseFontSizePx: Float = 24f
     private var nullDelimiterSpacePx: Float = 2.88f
+    private var explicitScriptSpacePx: Float? = null
     private var nextConstructionPaintGroupId: Int = 1
 
     fun layout(source: String, options: MathLayoutOptions): MathLayoutResult {
@@ -59,6 +68,7 @@ private class MathLayoutPass(
         nextConstructionPaintGroupId = 1
         nullDelimiterSpacePx = options.nullDelimiterSpacePx
             ?: options.fontSizePx * DEFAULT_NULL_DELIMITER_SPACE_EM
+        explicitScriptSpacePx = options.scriptSpacePx
         val parsed = parser.parse(source)
         diagnostics += parsed.diagnostics
         val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
@@ -1356,9 +1366,18 @@ private class MathLayoutPass(
                 node.range,
                 "identity" to operator.identity.debugName,
                 "style" to style,
-                "geometry" to "operator-centered-base-plus-ordinary-side-script-kernel",
+                "geometry" to "XeTeXMakeOpWidthDeltaPlusSharedSideScriptKernel",
+                "italicCorrectionDeltaPx" to base.italicCorrectionPx,
+                "subscriptPresent" to (node.subscript != null),
+                "makeOpWidthReductionPx" to if (node.subscript != null) base.italicCorrectionPx else 0f,
             )
-            layoutScriptsWithBase(node, base, style, alphabetOverride)
+            layoutScriptsWithBase(
+                node,
+                base,
+                style,
+                alphabetOverride,
+                SideScriptHorizontalPolicy.XeTeXOperatorNoLimits,
+            )
         }
     }
 
@@ -1457,6 +1476,7 @@ private class MathLayoutPass(
         rawBase: LaidNode,
         style: MathStyle,
         alphabetOverride: MathAlphabetOverride?,
+        horizontalPolicy: SideScriptHorizontalPolicy = SideScriptHorizontalPolicy.OrdinaryNucleus,
     ): LaidNode {
         val base = rawBase.withNativeOutlineBoxForSideScriptPlacement()
         val superscript = node.superscript
@@ -1481,9 +1501,9 @@ private class MathLayoutPass(
             superscriptShiftUpPx = standardSuperscriptShift,
             subscriptShiftDownPx = standardSubscriptShift,
             superscriptBottomMinPx = scale(constants.superscriptBottomMin, style),
-            superscriptBaselineDropMaxPx = scale(constants.superscriptBaselineDropMax, style),
+            superscriptBaselineDropMaxPx = scale(constants.superscriptBaselineDropMax, style.superscript()),
             subscriptTopMaxPx = scale(constants.subscriptTopMax, style),
-            subscriptBaselineDropMinPx = scale(constants.subscriptBaselineDropMin, style),
+            subscriptBaselineDropMinPx = scale(constants.subscriptBaselineDropMin, style.subscript()),
             subSuperscriptGapMinPx = scale(constants.subSuperscriptGapMin, style),
             superscriptBottomMaxWithSubscriptPx = scale(constants.superscriptBottomMaxWithSubscript, style),
         )
@@ -1499,24 +1519,30 @@ private class MathLayoutPass(
 
         val superscriptKern = superscript?.let { superscriptMathKern(base, it, superscriptShift, node.range) } ?: 0f
         val subscriptKern = subscript?.let { subscriptMathKern(base, it, subscriptShift, node.range) } ?: 0f
-        val superscriptX = base.box.width + base.italicCorrectionPx + superscriptKern
-        val subscriptX = base.box.width + subscriptKern
+        val spaceAfterScript = explicitScriptSpacePx ?: scale(constants.spaceAfterScript, style)
+        val horizontalPlacement = resolveSideScriptHorizontalPlacement(
+            baseWidthPx = base.box.width,
+            italicCorrectionPx = base.italicCorrectionPx,
+            superscriptWidthPx = superscript?.box?.width,
+            subscriptWidthPx = subscript?.box?.width,
+            superscriptKernPx = superscriptKern,
+            subscriptKernPx = subscriptKern,
+            spaceAfterScriptPx = spaceAfterScript,
+            policy = horizontalPolicy,
+        )
+        val superscriptX = horizontalPlacement.superscriptXPx
+        val subscriptX = horizontalPlacement.subscriptXPx
         val glyphs = buildList {
             addAll(base.box.glyphs)
-            superscript?.let { addAll(it.box.translated(superscriptX, -superscriptShift).glyphs) }
-            subscript?.let { addAll(it.box.translated(subscriptX, subscriptShift).glyphs) }
+            superscript?.let { addAll(it.box.translated(checkNotNull(superscriptX), -superscriptShift).glyphs) }
+            subscript?.let { addAll(it.box.translated(checkNotNull(subscriptX), subscriptShift).glyphs) }
         }
         val rules = buildList {
             addAll(base.box.rules)
-            superscript?.let { addAll(it.box.translated(superscriptX, -superscriptShift).rules) }
-            subscript?.let { addAll(it.box.translated(subscriptX, subscriptShift).rules) }
+            superscript?.let { addAll(it.box.translated(checkNotNull(superscriptX), -superscriptShift).rules) }
+            subscript?.let { addAll(it.box.translated(checkNotNull(subscriptX), subscriptShift).rules) }
         }
-        val scriptRight = maxOf(
-            base.box.width,
-            superscript?.let { superscriptX + it.box.width } ?: base.box.width,
-            subscript?.let { subscriptX + it.box.width } ?: base.box.width,
-        )
-        val width = scriptRight + scale(constants.spaceAfterScript, style)
+        val width = horizontalPlacement.logicalWidthPx
         decision(
             "OpenTypeMathScriptPlacement",
             node.range,
@@ -1527,6 +1553,24 @@ private class MathLayoutPass(
             "subscriptShiftPx" to subscriptShift,
             "superscriptKernPx" to superscriptKern,
             "subscriptKernPx" to subscriptKern,
+            "horizontalPlacementPolicy" to horizontalPlacement.policy,
+            "baseOriginalLogicalWidthPx" to horizontalPlacement.originalBaseWidthPx,
+            "superscriptLogicalWidthPx" to superscript?.box?.width,
+            "subscriptLogicalWidthPx" to subscript?.box?.width,
+            "childLogicalAdvancePolicy" to "ReplayedGlyphAdvanceOrCompletedCompoundBox",
+            "italicCorrectionDeltaPx" to horizontalPlacement.italicCorrectionDeltaPx,
+            "operatorWidthReductionPx" to horizontalPlacement.operatorWidthReductionPx,
+            "nucleusLogicalWidthPx" to horizontalPlacement.nucleusLogicalWidthPx,
+            "superscriptItalicDeltaPx" to horizontalPlacement.superscriptItalicDeltaPx,
+            "superscriptXPx" to superscriptX,
+            "subscriptXPx" to subscriptX,
+            "logicalWidthPx" to width,
+            "spaceAfterScriptPx" to spaceAfterScript,
+            "spaceAfterScriptPolicy" to if (explicitScriptSpacePx != null) {
+                "ExplicitTeXScriptSpace"
+            } else {
+                "OpenTypeMATHSpaceAfterScript"
+            },
             "baseKind" to base.scriptBaseKind,
             "superscriptKind" to superscript?.scriptBaseKind,
             "subscriptKind" to subscript?.scriptBaseKind,
@@ -1562,8 +1606,10 @@ private class MathLayoutPass(
             "standardSubscriptShiftDownPx" to standardSubscriptShift,
             "superscriptBottomMinPx" to verticalConstraints.superscriptBottomMinPx,
             "superscriptBaselineDropMaxPx" to verticalConstraints.superscriptBaselineDropMaxPx,
+            "superscriptBaselineDropStyle" to style.superscript(),
             "subscriptTopMaxPx" to verticalConstraints.subscriptTopMaxPx,
             "subscriptBaselineDropMinPx" to verticalConstraints.subscriptBaselineDropMinPx,
+            "subscriptBaselineDropStyle" to style.subscript(),
             "subSuperscriptGapMinPx" to verticalConstraints.subSuperscriptGapMinPx,
             "superscriptBottomMaxWithSubscriptPx" to
                 verticalConstraints.superscriptBottomMaxWithSubscriptPx,
@@ -1636,10 +1682,12 @@ private class MathLayoutPass(
         val top = outlineGlyphs.minOfOrNull { it.inkBounds.top } ?: 0f
         val right = outlineGlyphs.maxOfOrNull { it.inkBounds.right } ?: 0f
         val bottom = outlineGlyphs.maxOfOrNull { it.inkBounds.bottom } ?: 0f
+        val logicalAdvance = outlineGlyphs.maxOfOrNull { it.x + it.advance } ?: box.width
         val ascent = (-top).coerceAtLeast(0f)
         val descent = bottom.coerceAtLeast(0f)
         return copy(
             box = box.copy(
+                width = logicalAdvance,
                 ascent = ascent,
                 descent = descent,
                 inkBounds = MathRect(left, top, right, bottom),

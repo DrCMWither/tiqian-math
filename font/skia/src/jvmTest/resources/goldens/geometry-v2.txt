@@ -10,11 +10,11 @@ case=tight logical=72.552 visual=0.000..72.552 ink=0.000,-20.240,69.912,11.000 s
   evidence=4..5:tight/None,5..6:tight/None
 case=cramped logical=52.774 visual=0.000..52.774 ink=4.800,-34.000,47.974,22.080 safe=40.000/22.080 fragments=1 breaks=0 diagnostics=[]
   evidence=x:ScriptCramped@22.080,y:ScriptScriptCramped@11.720,z:ScriptScriptCramped@3.580
-case=side-script-ink logical=84.212 visual=0.000..84.212 ink=0.640,-48.648,81.812,26.482 safe=56.776/26.482 fragments=1 breaks=0 diagnostics=[]
-  evidence=policy=XeTeXNativeGlyphOutlineOrCompletedChildBoxForOrdinarySideScripts/ExactOutlinePlacementWithCompletedChildBoxes kinds=CompoundBox/CompoundBox/CompoundBox base=39.640003/9.48:-39.640003/9.48 sup=27.776001/6.608:-27.776001/6.608 sub=25.382/9.002001:-25.382/9.002001 shifts=23.000004/17.48 gap=8.490004/8.490004
+case=side-script-ink logical=84.212 visual=0.000..84.212 ink=0.640,-53.640,81.812,24.082 safe=61.768/24.082 fragments=1 breaks=0 diagnostics=[]
+  evidence=policy=XeTeXNativeGlyphOutlineOrCompletedChildBoxForOrdinarySideScripts/ExactOutlinePlacementWithCompletedChildBoxes kinds=CompoundBox/CompoundBox/CompoundBox base=39.640003/9.48:-39.640003/9.48 sup=27.776001/6.608:-27.776001/6.608 sub=25.382/9.002001:-25.382/9.002001 shifts=27.992004/15.08 gap=11.082005/11.082005
 case=script-binomial logical=53.514 visual=0.000..53.514 ink=4.800,-34.000,48.714,41.000 safe=40.000/41.000 fragments=1 breaks=0 diagnostics=[]
   evidence=left:9/Variant/LaTeX2eXeTeXGenfracFixedStyleTarget/Text/1.45*28.000=40.600/46.040,right:10/Variant/LaTeX2eXeTeXGenfracFixedStyleTarget/Text/1.45*28.000=40.600/46.040 packing=15.280/28.634/43.914/TeXFractionNullDelimiterCancellationNoInkCollisionKern
-case=operator-inline logical=142.981 visual=0.000..142.981 ink=0.000,-37.520,138.677,19.424 safe=43.520/19.424 fragments=3 breaks=0 diagnostics=[]
+case=operator-inline logical=134.981 visual=0.000..134.981 ink=0.000,-42.512,130.677,17.024 safe=48.512/17.024 fragments=3 breaks=0 diagnostics=[]
   evidence=op:sum/Text/BaseGlyph/0.000/43.000/axis=-11.200/ic=0.000/MathItalicsCorrectionInfo,policy:sum/Auto->NoLimits/auto-non-display,side:sum/Text,op:integral/Text/BaseGlyph/0.000/48.000/axis=-11.200/ic=8.000/MathItalicsCorrectionInfo,policy:integral/NoLimits->NoLimits/plain-tex-operator-default,side:integral/Text
 case=operator-display logical=136.573 visual=0.000..136.573 ink=0.000,-84.080,136.453,61.608 safe=90.080/61.608 fragments=3 breaks=0 diagnostics=[]
   evidence=op:sum/Display/Variant/56.000/59.720/axis=-11.200/ic=0.000/MathItalicsCorrectionInfo,policy:sum/Auto->Limits/auto-display,limits:6.000/6.000/6.000/26.552,op:integral/Display/Variant/56.000/89.400/axis=-11.200/ic=16.000/MathItalicsCorrectionInfo,policy:integral/Limits->Limits/explicit-postfix-modifier,limits:6.000/6.000/6.000/26.328
@@ -37,11 +37,11 @@ case=tight logical=77.048 visual=0.000..77.048 ink=0.000,-19.160,75.196,10.400 s
   evidence=4..5:tight/None,5..6:tight/None
 case=cramped logical=59.294 visual=0.000..59.294 ink=4.800,-39.400,54.494,23.680 safe=45.400/23.680 fragments=1 breaks=0 diagnostics=[]
   evidence=x:ScriptCramped@23.400,y:ScriptScriptCramped@14.892,z:ScriptScriptCramped@9.348
-case=side-script-ink logical=95.684 visual=0.000..95.684 ink=0.720,-55.628,94.084,27.962 safe=63.532/27.962 fragments=1 breaks=0 diagnostics=[]
-  evidence=policy=XeTeXNativeGlyphOutlineOrCompletedChildBoxForOrdinarySideScripts/ExactOutlinePlacementWithCompletedChildBoxes kinds=CompoundBox/CompoundBox/CompoundBox base=38.9/11.299999:-38.9/11.299999 sup=27.832/7.3079987:-27.832/7.3079987 sub=24.877998/10.262001:-24.877998/10.262001 shifts=29.7/17.699999 gap=15.214003/15.214003
+case=side-script-ink logical=95.684 visual=0.000..95.684 ink=0.720,-58.388,94.084,26.042 safe=66.292/26.042 fragments=1 breaks=0 diagnostics=[]
+  evidence=policy=XeTeXNativeGlyphOutlineOrCompletedChildBoxForOrdinarySideScripts/ExactOutlinePlacementWithCompletedChildBoxes kinds=CompoundBox/CompoundBox/CompoundBox base=38.9/11.299999:-38.9/11.299999 sup=27.832/7.3079987:-27.832/7.3079987 sub=24.877998/10.262001:-24.877998/10.262001 shifts=32.460003/15.779999 gap=16.054005/16.054005
 case=script-binomial logical=55.942 visual=0.000..55.942 ink=4.800,-39.400,51.142,45.364 safe=45.400/45.364 fragments=1 breaks=0 diagnostics=[]
   evidence=left:1064/Variant/LaTeX2eXeTeXGenfracFixedStyleTarget/Text/1.45*28.000=40.600/47.480,right:1065/Variant/LaTeX2eXeTeXGenfracFixedStyleTarget/Text/1.45*28.000=40.600/47.480 packing=15.240/31.102/46.342/TeXFractionNullDelimiterCancellationNoInkCollisionKern
-case=operator-inline logical=151.897 visual=0.000..151.897 ink=0.000,-38.876,148.141,17.252 safe=44.876/17.252 fragments=3 breaks=0 diagnostics=[]
+case=operator-inline logical=142.697 visual=0.000..142.697 ink=0.000,-41.636,138.941,15.332 safe=47.636/15.332 fragments=3 breaks=0 diagnostics=[]
   evidence=op:sum/Text/BaseGlyph/0.000/44.000/axis=-10.320/ic=0.000/MathItalicsCorrectionInfo,policy:sum/Auto->NoLimits/auto-non-display,side:sum/Text,op:integral/Text/BaseGlyph/0.000/42.000/axis=-10.320/ic=9.200/MathItalicsCorrectionInfo,policy:integral/NoLimits->NoLimits/plain-tex-operator-default,side:integral/Text
 case=operator-display logical=127.893 visual=-1.000..127.893 ink=-1.000,-88.980,126.613,65.660 safe=94.980/65.660 fragments=3 breaks=0 diagnostics=[MathVariantTooShort]
   evidence=op:sum/Display/Variant/72.000/53.040/axis=-10.320/ic=0.000/MathItalicsCorrectionInfo,policy:sum/Auto->Limits/auto-display,limits:11.720/12.000/6.668/26.800,op:integral/Display/Variant/72.000/93.880/axis=-10.320/ic=21.600/MathItalicsCorrectionInfo,policy:integral/Limits->Limits/explicit-postfix-modifier,limits:12.000/12.000/8.068/26.800

@@ -1,0 +1,49 @@
+\documentclass{article}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=200
+\showboxdepth=200
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-OPERATOR-SIDE-SCRIPT-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-OPERATOR-SIDE-SCRIPT-ORACLE-#1-END}%
+}
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[
+  Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/
+]{STIXTwoMath-Regular.otf}
+\message{TIQIAN-OPERATOR-INT-MEANING=\meaning\int}
+\message{TIQIAN-OPERATOR-OINT-MEANING=\meaning\oint}
+\setbox0=\hbox{$x$}
+\traceformula{INLINE-INT-UPPER}{\int^1}
+\traceformula{INLINE-INT-LOWER}{\int_0}
+\traceformula{INLINE-INT-BOTH}{\int_0^1}
+\traceformula{INLINE-INT-BOTH-NEXT-X}{\int_0^1x}
+\traceformula{DISPLAY-INT-UPPER}{\displaystyle\int^1}
+\traceformula{DISPLAY-INT-LOWER}{\displaystyle\int_0}
+\traceformula{DISPLAY-INT-BOTH}{\displaystyle\int_0^1}
+\traceformula{DISPLAY-INT-BOTH-NEXT-X}{\displaystyle\int_0^1x}
+\traceformula{INLINE-OINT-UPPER}{\oint^1}
+\traceformula{INLINE-OINT-LOWER}{\oint_0}
+\traceformula{INLINE-OINT-BOTH}{\oint_0^1}
+\traceformula{DISPLAY-OINT-UPPER}{\displaystyle\oint^1}
+\traceformula{DISPLAY-OINT-LOWER}{\displaystyle\oint_0}
+\traceformula{DISPLAY-OINT-BOTH}{\displaystyle\oint_0^1}
+\traceformula{INLINE-SUM-NOLIMITS-UPPER}{\sum\nolimits^1}
+\traceformula{INLINE-SUM-NOLIMITS-LOWER}{\sum\nolimits_0}
+\traceformula{INLINE-SUM-NOLIMITS-BOTH}{\sum\nolimits_0^1}
+\traceformula{DISPLAY-SUM-NOLIMITS-UPPER}{\displaystyle\sum\nolimits^1}
+\traceformula{DISPLAY-SUM-NOLIMITS-LOWER}{\displaystyle\sum\nolimits_0}
+\traceformula{DISPLAY-SUM-NOLIMITS-BOTH}{\displaystyle\sum\nolimits_0^1}
+\traceformula{INLINE-ORDINARY-UPPER}{x^1}
+\traceformula{INLINE-ORDINARY-LOWER}{x_0}
+\traceformula{INLINE-ORDINARY-BOTH}{x_0^1}
+\traceformula{INLINE-COMPOUND-BOTH}{{\sqrt{x}}_0^1}
+\traceformula{INLINE-INT-LIMITS}{\int\limits_0^1}
+\traceformula{DISPLAY-SUM-AUTO}{\displaystyle\sum_0^1}
+\end{document}

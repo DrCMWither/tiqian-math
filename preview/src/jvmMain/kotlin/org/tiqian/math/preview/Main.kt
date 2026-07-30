@@ -87,6 +87,9 @@ private fun PreviewScreen() {
                 Text("Ordinary side scripts · ink-constrained placement", fontSize = 13.sp)
                 SideScriptSample("Lete Sans Math", lete)
                 SideScriptSample("STIX Two Math", stix)
+                Text("Operator side scripts · XeTeX make_op width/delta", fontSize = 13.sp)
+                OperatorSideScriptSample("Lete Sans Math", lete)
+                OperatorSideScriptSample("STIX Two Math", stix)
                 Text("TeX fraction noad · fixed-style binomial delimiters", fontSize = 13.sp)
                 ScriptBinomialSample("Lete Sans Math", lete)
                 ScriptBinomialSample("STIX Two Math", stix)
@@ -163,6 +166,39 @@ private fun SideScriptTier(label: String, source: String, face: SkiaMathFontFace
             mode = MathMode.Inline,
             fontFace = face,
             style = MaterialTheme.typography.bodyLarge.copy(fontSize = 30.sp, lineHeight = 42.sp),
+            softWrap = false,
+        )
+    }
+}
+
+@Composable
+private fun OperatorSideScriptSample(label: String, face: SkiaMathFontFace) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OperatorSideScriptTier("inline", "\\int_0^1+\\oint_0^1", MathMode.Inline, face)
+            OperatorSideScriptTier("display", "\\int_0^1+\\oint_0^1", MathMode.Display, face)
+            OperatorSideScriptTier("forced nolimits", "\\sum\\nolimits_0^1", MathMode.Display, face)
+        }
+    }
+}
+
+@Composable
+private fun OperatorSideScriptTier(
+    label: String,
+    source: String,
+    mode: MathMode,
+    face: SkiaMathFontFace,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, fontSize = 10.sp, color = Color(0xFF6B655E))
+        TiqianMath(
+            source = source,
+            modifier = Modifier.background(Color.White).padding(7.dp),
+            mode = mode,
+            fontFace = face,
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 28.sp, lineHeight = 52.sp),
+            scriptSpacePx = TECTONIC_SCRIPT_SPACE_PX,
             softWrap = false,
         )
     }
@@ -271,7 +307,7 @@ private fun FontSample(label: String, face: SkiaMathFontFace, mode: MathMode) {
 @OptIn(ExperimentalComposeUiApi::class)
 private fun renderSnapshot() {
     auditRadicalPreviewTiers()
-    ImageComposeScene(width = 900, height = 4300) { PreviewScreen() }.use { scene ->
+    ImageComposeScene(width = 900, height = 4700) { PreviewScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/math-preview.png")
         output.parentFile.mkdirs()
@@ -299,7 +335,67 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("radical-vertical-oracle=${output.absolutePath} bytes=${output.length()}")
     }
+    ImageComposeScene(width = 900, height = 760) { OperatorSideScriptOracleScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-operator-side-scripts.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("operator-side-script-oracle=${output.absolutePath} bytes=${output.length()}")
+    }
     renderRadicalSeamReport()
+}
+
+@Composable
+private fun OperatorSideScriptOracleScreen() {
+    val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
+    DisposableEffect(lete, stix) {
+        onDispose {
+            lete.close()
+            stix.close()
+        }
+    }
+    MaterialTheme {
+        Surface(color = Color.White) {
+            Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Tiqian · exact repository OTF · Tectonic 0.17.0 comparison settings", fontSize = 13.sp)
+                Text(
+                    "nominal 32 px · inline/display · TeX scriptspace 0.5pt · no visual offsets",
+                    fontSize = 10.sp,
+                    color = Color(0xFF55504A),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(26.dp)) {
+                    OperatorSideScriptFontColumn("Lete Sans Math", lete)
+                    OperatorSideScriptFontColumn("STIX Two Math", stix)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OperatorSideScriptFontColumn(label: String, face: SkiaMathFontFace) {
+    Column(Modifier.width(410.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+        OPERATOR_SIDE_SCRIPT_PREVIEW_CASES.forEach { case ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("${case.label} · ${case.source}", fontSize = 9.sp, color = Color(0xFF6B655E))
+                TiqianMath(
+                    source = case.source,
+                    modifier = Modifier.background(Color(0xFFF7F5F1)).padding(4.dp),
+                    mode = case.mode,
+                    fontFace = face,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = case.fontSizeSp.sp,
+                        lineHeight = case.lineHeightSp.sp,
+                    ),
+                    nullDelimiterSpacePx = TECTONIC_NULL_DELIMITER_SPACE_PX,
+                    scriptSpacePx = TECTONIC_SCRIPT_SPACE_PX,
+                    softWrap = false,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -709,6 +805,7 @@ private const val SEAM_CROP_LEFT_OF_SEAM_PX = 12
 private const val SEAM_CROP_WIDTH_PX = 30
 private const val SEAM_CROP_HEIGHT_PX = 12
 private const val TECTONIC_NULL_DELIMITER_SPACE_PX = 1.2f * 96f / 72.27f
+private const val TECTONIC_SCRIPT_SPACE_PX = 0.5f * 96f / 72.27f
 
 private val FRACTION_NOAD_PREVIEW_CASES = listOf(
     "inline fraction" to "\\frac{a}{b}",
@@ -742,4 +839,24 @@ private val RADICAL_VERTICAL_PREVIEW_CASES = listOf(
     RadicalVerticalPreviewCase("inline indexed fraction", "\\sqrt[3]{\\frac{a}{b}}", MathMode.Inline),
     RadicalVerticalPreviewCase("display fraction", "\\sqrt{\\frac{a}{b}}", MathMode.Display),
     RadicalVerticalPreviewCase("display assembly", RADICAL_ASSEMBLY_SOURCE, MathMode.Display),
+)
+
+private data class OperatorSideScriptPreviewCase(
+    val label: String,
+    val source: String,
+    val mode: MathMode,
+    val fontSizeSp: Int = 32,
+    val lineHeightSp: Int = 58,
+)
+
+private const val OPERATOR_COMPLEX_SOURCE =
+    "\\sqrt[3]{\\frac{\\sum\\limits_{i=1}^{n}\\frac{i^2+\\alpha_i}{1+\\beta_i^2}+" +
+        "\\int_0^1\\frac{x^2+1}{x^4+1}}{\\sqrt{\\frac{a+b}{c+d}}+\\binom{2n}{n}}}"
+
+private val OPERATOR_SIDE_SCRIPT_PREVIEW_CASES = listOf(
+    OperatorSideScriptPreviewCase("inline upper/lower/both", "\\int^1+\\int_0+\\int_0^1", MathMode.Inline),
+    OperatorSideScriptPreviewCase("inline int / oint", "\\int_0^1+\\oint_0^1", MathMode.Inline),
+    OperatorSideScriptPreviewCase("display int / oint", "\\int_0^1+\\oint_0^1", MathMode.Display),
+    OperatorSideScriptPreviewCase("display sum nolimits", "\\sum\\nolimits_0^1", MathMode.Display),
+    OperatorSideScriptPreviewCase("complex integral", OPERATOR_COMPLEX_SOURCE, MathMode.Inline, 18, 46),
 )

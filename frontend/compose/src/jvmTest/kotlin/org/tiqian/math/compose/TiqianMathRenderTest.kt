@@ -63,6 +63,29 @@ class TiqianMathRenderTest {
     }
 
     @Test
+    fun explicitTeXScriptSpaceReachesTheSharedSideScriptKernel() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var observed: MathLayoutResult? = null
+            ImageComposeScene(width = 180, height = 140, density = Density(1f)) {
+                TiqianMath(
+                    source = "\\int_0^1",
+                    fontSizePx = 32f,
+                    scriptSpacePx = 0.66417605f,
+                    fontFace = face,
+                    onMathLayout = { observed = it },
+                )
+            }.use { scene ->
+                scene.render()
+                val decision = assertNotNull(observed).decisions.single {
+                    it.name == "OpenTypeMathScriptPlacement"
+                }
+                assertNear(0.66417605f, decision.details.getValue("spaceAfterScriptPx").toFloat())
+                assertEquals("ExplicitTeXScriptSpace", decision.details["spaceAfterScriptPolicy"])
+            }
+        }
+    }
+
+    @Test
     fun actualRendererReplaysEachRadicalAsOneCachedConstructionPath() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             var observed: MathLayoutResult? = null
