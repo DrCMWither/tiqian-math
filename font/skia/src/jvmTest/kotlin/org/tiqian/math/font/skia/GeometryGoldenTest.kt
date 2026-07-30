@@ -7,6 +7,7 @@ import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import java.io.File
 import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -22,6 +23,9 @@ class GeometryGoldenTest {
                 "STIX Two Math" to StixTwoMath.load(),
             ).forEach { (label, font) -> appendFace(label, font) }
         }.trimEnd()
+        if (System.getenv("TIQIAN_UPDATE_GOLDEN") == "1") {
+            File("src/jvmTest/resources/goldens/geometry-v2.txt").writeText("$actual\n")
+        }
         val expected = checkNotNull(javaClass.getResourceAsStream("/goldens/geometry-v2.txt"))
             .bufferedReader().use { it.readText() }.trimEnd()
         assertEquals(expected, actual)
@@ -194,17 +198,26 @@ class GeometryGoldenTest {
                                     "construction:${decision.details["construction"]}/" +
                                         "${decision.details["selectionStep"]}/" +
                                         "${decision.details["targetMetric"]}/" +
+                                        "clean=${decision.details["cleanRadicandAscentPx"]}+" +
+                                        "${decision.details["cleanRadicandDescentPx"]}/" +
+                                        "ink=${decision.details["radicandInkHeightPx"]}/" +
                                         "base=${decision.details["baseGlyphCoversTarget"]}/" +
                                         "${decision.details.getValue("targetHeightPx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("achievedAdvancePx").toFloat().fmt()}/" +
                                         "${decision.details["componentGlyphIds"]}/${decision.details["componentOffsetsDesignUnits"]}"
                                 else ->
-                                    "geometry:${decision.details.getValue("radicalVerticalGapPx").toFloat().fmt()}/" +
+                                    "geometry:${decision.details["unindexedBoxPolicy"]}/" +
+                                        "${decision.details.getValue("radicalVerticalGapPx").toFloat().fmt()}/" +
                                         "excess=${decision.details.getValue("constructionExcessPx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("actualRadicalGapPx").toFloat().fmt()}/" +
                                         "${decision.details["clearancePolicy"]}/" +
                                         "${decision.details.getValue("radicalRuleThicknessPx").toFloat().fmt()}/" +
-                                        "${decision.details.getValue("radicalExtraAscenderPx").toFloat().fmt()}/" +
+                                        "extra=${decision.details.getValue("radicalExtraAscenderPx").toFloat().fmt()}/" +
+                                        "${decision.details["radicalExtraAscenderUsed"]}/" +
+                                        "delimiter=${decision.details["texDelimiterBoxHeightPx"]}+" +
+                                        "${decision.details["texDelimiterBoxDepthPx"]}@" +
+                                        "${decision.details["texDelimiterBoxShiftPx"]}/" +
+                                        "rule=${decision.details["ruleTop"]}..${decision.details["ruleBottom"]}/" +
                                         "${decision.details.getValue("radicalKernBeforeDegreePx").toFloat().fmt()}/" +
                                         "${decision.details.getValue("radicalKernAfterDegreePx").toFloat().fmt()}/" +
                                         "horizontal=${decision.details["degreeHorizontalPlacementPolicy"]}/" +

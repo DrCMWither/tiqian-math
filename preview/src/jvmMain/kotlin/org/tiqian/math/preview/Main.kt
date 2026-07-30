@@ -292,7 +292,62 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("fraction-noad-oracle=${output.absolutePath} bytes=${output.length()}")
     }
+    ImageComposeScene(width = 900, height = 1320) { RadicalVerticalOracleScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-radical-vertical.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("radical-vertical-oracle=${output.absolutePath} bytes=${output.length()}")
+    }
     renderRadicalSeamReport()
+}
+
+@Composable
+private fun RadicalVerticalOracleScreen() {
+    val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
+    DisposableEffect(lete, stix) {
+        onDispose {
+            lete.close()
+            stix.close()
+        }
+    }
+    MaterialTheme {
+        Surface(color = Color.White) {
+            Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Tiqian · nominal 32 px · exact repository OTF · Tectonic 0.17.0 trace sources", fontSize = 13.sp)
+                Text(
+                    "clean_box h+d → construction advance → TeX clearance/rule/outer box",
+                    fontSize = 10.sp,
+                    color = Color(0xFF55504A),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(26.dp)) {
+                    RadicalVerticalFontColumn("Lete Sans Math", lete)
+                    RadicalVerticalFontColumn("STIX Two Math", stix)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RadicalVerticalFontColumn(label: String, face: SkiaMathFontFace) {
+    Column(Modifier.width(410.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+        RADICAL_VERTICAL_PREVIEW_CASES.forEach { case ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("${case.label} · ${case.source}", fontSize = 9.sp, color = Color(0xFF6B655E))
+                TiqianMath(
+                    source = case.source,
+                    modifier = Modifier.background(Color(0xFFF7F5F1)).padding(4.dp),
+                    mode = case.mode,
+                    fontFace = face,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 32.sp, lineHeight = 44.sp),
+                    softWrap = false,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -665,3 +720,20 @@ private val RADICAL_ASSEMBLY_RADICAND =
     (1..12).fold("x") { radicand, _ -> "\\frac{$radicand}{y}" }
 private val RADICAL_ASSEMBLY_SOURCE = "\\sqrt{$RADICAL_ASSEMBLY_RADICAND}"
 private val RADICAL_ASSEMBLY_INDEXED_SOURCE = "\\sqrt[5]{$RADICAL_ASSEMBLY_RADICAND}"
+
+private data class RadicalVerticalPreviewCase(
+    val label: String,
+    val source: String,
+    val mode: MathMode,
+)
+
+private val RADICAL_VERTICAL_PREVIEW_CASES = listOf(
+    RadicalVerticalPreviewCase("inline base x / X", "\\sqrt{x}+\\sqrt{X}", MathMode.Inline),
+    RadicalVerticalPreviewCase("inline scripts", "\\sqrt{x_j^2}", MathMode.Inline),
+    RadicalVerticalPreviewCase("inline fraction", "\\sqrt{\\frac{a}{b}}", MathMode.Inline),
+    RadicalVerticalPreviewCase("inline nested", "\\sqrt{1+\\sqrt{x}}", MathMode.Inline),
+    RadicalVerticalPreviewCase("inline indexed base", "\\sqrt[3]{X}", MathMode.Inline),
+    RadicalVerticalPreviewCase("inline indexed fraction", "\\sqrt[3]{\\frac{a}{b}}", MathMode.Inline),
+    RadicalVerticalPreviewCase("display fraction", "\\sqrt{\\frac{a}{b}}", MathMode.Display),
+    RadicalVerticalPreviewCase("display assembly", RADICAL_ASSEMBLY_SOURCE, MathMode.Display),
+)

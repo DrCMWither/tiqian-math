@@ -724,13 +724,92 @@ private class MathLayoutPass(
         )
     }
 
+    /**
+     * Replays glyph-outline bounds for XeTeX's clean_box metrics when the font adapter exposes
+     * them, with an explicit reported-bounds fallback. Compound logical reserve and logical
+     * advance are never replaced by a visible-ink union.
+     */
+    private fun refineRadicalCleanBox(box: MathBox, node: MathRadical): MathBox {
+        val boundsSources = mutableSetOf<MathGlyphBoundsSource>()
+        val glyphs = box.glyphs.map { placement ->
+            val measured = glyphSource.measureGlyphOutlineBounds(
+                placement.glyphId,
+                placement.fontSizePx,
+                placement.style,
+                placement.sourceRange,
+            )
+            boundsSources += measured.boundsSource
+            val glyph = measured.glyphs.singleOrNull() ?: return@map placement
+            placement.copy(inkBounds = glyph.inkBounds.translated(placement.x, placement.baselineY))
+        }
+        val originalInkAscent = (-box.inkBounds.top).coerceAtLeast(0f)
+        val originalInkDescent = box.inkBounds.bottom.coerceAtLeast(0f)
+        // A flattened glyph-only mlist has no non-ink TeX box reserve: differences here come
+        // from the adapter's rounded reported bounds and must be replaced by the outline bbox.
+        // Rules and semantic constructions do carry replayable logical reserve (fraction gaps,
+        // radical overbar reserve, and assembly box extents), which clean_box must retain.
+        val preserveCompoundReserve = box.rules.isNotEmpty() || box.constructionPaintGroups.isNotEmpty()
+        val logicalReserveAbove = if (preserveCompoundReserve) {
+            (box.ascent - originalInkAscent).coerceAtLeast(0f)
+        } else {
+            0f
+        }
+        val logicalReserveBelow = if (preserveCompoundReserve) {
+            (box.descent - originalInkDescent).coerceAtLeast(0f)
+        } else {
+            0f
+        }
+        val refinedInk = geometryExtents(
+            box.width,
+            glyphs,
+            box.rules,
+            box.range,
+            box.constructionPaintGroups,
+        )
+        val refined = refinedInk.copy(
+            ascent = refinedInk.ascent + logicalReserveAbove,
+            descent = refinedInk.descent + logicalReserveBelow,
+        )
+        val exactOutlineBoundsAvailable = glyphs.isNotEmpty() &&
+            boundsSources.all { it == MathGlyphBoundsSource.Outline }
+        decision(
+            "TeXRadicalCleanBox",
+            node.radicand.range,
+            "policy" to if (exactOutlineBoundsAvailable) {
+                "ExactGlyphOutlineBoundsWithCompoundLogicalReserve"
+            } else {
+                "FontReportedBoundsFallbackWithCompoundLogicalReserve"
+            },
+            "boundsSources" to boundsSources,
+            "exactGlyphOutlineBoundsAvailable" to exactOutlineBoundsAvailable,
+            "logicalAdvanceBeforePx" to box.width,
+            "logicalAdvanceAfterPx" to refined.width,
+            "logicalAscentBeforePx" to box.ascent,
+            "logicalDescentBeforePx" to box.descent,
+            "inkTopBeforePx" to box.inkBounds.top,
+            "inkBottomBeforePx" to box.inkBounds.bottom,
+            "cleanAscentPx" to refined.ascent,
+            "cleanDescentPx" to refined.descent,
+            "cleanHeightPx" to refined.height,
+            "inkTopAfterPx" to refined.inkBounds.top,
+            "inkBottomAfterPx" to refined.inkBounds.bottom,
+            "logicalReserveAbovePx" to logicalReserveAbove,
+            "logicalReserveBelowPx" to logicalReserveBelow,
+            "compoundReservePreserved" to preserveCompoundReserve,
+        )
+        return refined
+    }
+
     private fun layoutRadical(
         node: MathRadical,
         style: MathStyle,
         alphabetOverride: MathAlphabetOverride?,
     ): LaidNode {
         val radicandStyle = style.cramped()
-        val radicand = layoutNode(node.radicand, radicandStyle, alphabetOverride).box
+        val radicand = refineRadicalCleanBox(
+            layoutNode(node.radicand, radicandStyle, alphabetOverride).box,
+            node,
+        )
         val degreeStyle = MathStyle.ScriptScript
         val degree = node.degree?.let { layoutNode(it, degreeStyle, alphabetOverride).box }
         val size = fontSize(style)
@@ -755,7 +834,11 @@ private class MathLayoutPass(
         )
         val ruleThickness = scale(constants.radicalRuleThickness, style)
         val extraAscender = scale(constants.radicalExtraAscender, style)
-        val targetHeight = radicand.inkBounds.height + gapMin + ruleThickness
+        // XeTeX make_radical selects the delimiter from clean_box height + depth. A leaf native
+        // math glyph contributes its exact glyph bbox to that box, while a compound nucleus
+        // contributes the already-completed logical box (including an inner radical's reserve).
+        // The painted subtree ink union is deliberately not a substitute for clean_box.
+        val targetHeight = radicand.height + gapMin + ruleThickness
         val baseRadical = measuredRunBox(baseRun, node.commandRange, style, size)
         val baseGlyphHeight = baseRadical.inkBounds.height
         val construction = baseGlyphId?.let {
@@ -875,27 +958,30 @@ private class MathLayoutPass(
             )
         }
 
-        // TeX's make_radical adds half of a selected delimiter's positive excess to the
-        // minimum clearance. The OpenType construction advance is the stretch extent used
-        // by selection, so its excess is measured against the same ink/gap/rule target.
-        // Logical line reserve and RadicalExtraAscender never feed this calculation.
-        val ruleBottomInB = radicand.inkBounds.top - actualClearance
+        // XeTeX make_radical adds half of the selected delimiter's positive nominal excess to
+        // the minimum clearance, then shifts the delimiter box by -(clean height + clearance).
+        // Outline top-stroke evidence remains a paint-only anchor below.
+        val ruleBottomInB = -radicand.ascent - actualClearance
         val ruleTopInB = ruleBottomInB - ruleThickness
         val radicalTopStrokeTopPx = topStroke?.topPx ?: -radicalGlyphAscent
         val radicalTopStrokeBottomPx = topStroke?.bottomPx ?: (-radicalGlyphAscent + ruleThickness)
         val radicalTopStrokeRightPx = topStroke?.rightPx ?: rawRadical.width
         val radicalBaselineInB = ruleTopInB - radicalTopStrokeTopPx
         val radicalInkTopInB = radicalBaselineInB + rawRadical.inkBounds.top
-        val unindexedAscent = maxOf(
-            radicand.ascent,
-            -ruleTopInB + extraAscender,
-            -radicalInkTopInB,
-        )
-        val unindexedDescent = max(
-            radicand.descent,
-            radicalBaselineInB + radicalGlyphDescent,
-        ).coerceAtLeast(0f)
-        val actualGap = radicand.inkBounds.top - ruleBottomInB
+        // Tectonic 0.17.0/XeTeX rewrites the OpenType delimiter box to height=rule and
+        // depth=nominalAdvance-rule, shifts it by ruleBottom, and builds overbar as
+        // kern(rule), rule(rule), kern(clearance), cleanBox. This is the TeX logical box;
+        // painted outline overhang remains solely in MathBox visual bounds.
+        val texDelimiterBoxHeight = ruleThickness
+        val texDelimiterBoxDepth = (achievedAdvance - ruleThickness).coerceAtLeast(0f)
+        val texDelimiterBoxShift = ruleBottomInB
+        val texDelimiterAscentInB = (texDelimiterBoxHeight - texDelimiterBoxShift).coerceAtLeast(0f)
+        val texDelimiterDescentInB = (texDelimiterBoxDepth + texDelimiterBoxShift).coerceAtLeast(0f)
+        val overbarLeadingReserve = ruleThickness
+        val overbarAscentInB = radicand.ascent + actualClearance + ruleThickness + overbarLeadingReserve
+        val unindexedAscent = max(overbarAscentInB, texDelimiterAscentInB)
+        val unindexedDescent = max(radicand.descent, texDelimiterDescentInB).coerceAtLeast(0f)
+        val actualGap = -radicand.ascent - ruleBottomInB
         val radicandXInB = rawRadical.width
         val radicalInB = rawRadical.translated(0f, radicalBaselineInB)
         val radicandInB = radicand.translated(radicandXInB, 0f)
@@ -937,14 +1023,9 @@ private class MathLayoutPass(
             descent = unindexedDescent,
         )
 
-        // The completed B still supplies the line-under edge for degree placement. OpenType
-        // supplies signed before/after kerns; TeX make_radical preserves the before kern and
-        // clamps after at -(degree width + before kern), keeping the radical origin non-negative.
-        // OpenType MATH's radical-sign
-        // reference maps here to the complete selected construction box: the base/variant/
-        // assembly ascent plus descent replayed by painting. This follows LuaTeX/WebKit's
-        // stretched-operator height mapping while excluding B's radicand metrics and
-        // ExtraAscender reserve.
+        // unicode-math's XeTeX root wrapper supplies signed MATH kerns and raises the degree by
+        // (height(B) - depth(B)) * RadicalDegreeBottomRaisePercent. Horizontal TeX clamping is
+        // independent and remains unchanged.
         val kernBeforeDegree = if (degree == null) 0f else scale(constants.radicalKernBeforeDegree, style)
         val kernAfterDegree = if (degree == null) 0f else scale(constants.radicalKernAfterDegree, style)
         val degreeHorizontalPlacement = degree?.let {
@@ -959,7 +1040,7 @@ private class MathLayoutPass(
         val unindexedX = degreeHorizontalPlacement?.radicalX ?: 0f
         val logicalWidth = unindexedX + unindexedBox.width
         val degreeRaisePercent = constants.radicalDegreeBottomRaisePercent
-        val degreeRaiseReferencePx = if (degree == null) null else radicalGlyphBlockSize
+        val degreeRaiseReferencePx = if (degree == null) null else unindexedBox.ascent - unindexedBox.descent
         val degreeRaisePx = if (degree == null) {
             null
         } else {
@@ -968,7 +1049,7 @@ private class MathLayoutPass(
         val degreeBaselineY = if (degree == null) {
             null
         } else {
-            unindexedBox.descent - degreeRaisePx!! - degree.descent
+            -degreeRaisePx!!
         }
         val shiftedUnindexed = unindexedBox.translated(unindexedX, 0f)
         val shiftedDegree = degree?.translated(degreeX!!, degreeBaselineY!!)
@@ -1036,7 +1117,11 @@ private class MathLayoutPass(
             "orthogonalAdvancePx" to construction?.orthogonalAdvancePx,
             "selectionStep" to selectionStep,
             "selectionPolicy" to "MathMLCore5.3.2NormalGlyphFirst",
-            "targetMetric" to "RadicandInkHeightPlusGapAndRule",
+            "targetMetric" to "TeXCleanBoxHeightPlusGapAndRule",
+            "cleanBoxPolicy" to "XeTeXMakeRadicalCleanBoxCrampedStyle",
+            "cleanRadicandAscentPx" to radicand.ascent,
+            "cleanRadicandDescentPx" to radicand.descent,
+            "cleanRadicandHeightPx" to radicand.height,
             "radicandInkHeightPx" to radicand.inkBounds.height,
             "radicandLogicalHeightPx" to radicand.height,
             "baseGlyphHeightPx" to baseGlyphHeight,
@@ -1072,16 +1157,16 @@ private class MathLayoutPass(
             "style" to style,
             "radicandStyle" to radicandStyle,
             "degreeStyle" to if (degree == null) null else degreeStyle,
-            "unindexedBoxPolicy" to "TeXMakeRadicalHalfPositiveConstructionExcess",
+            "unindexedBoxPolicy" to "XeTeXMakeRadicalCleanBoxNominalDelimiterAndOverbar",
             "degreePlacementPolicy" to if (degree == null) {
                 null
             } else {
-                "OpenTypeRadicalConstructionBoxHeightRaiseFromCompletedBLineDescent"
+                "UnicodeMathXeTeXRootHeightMinusDepthRaise"
             },
             "degreePlacementSpecificationDivergence" to if (degree == null) {
                 null
             } else {
-                "OpenTypeMATHRadicalSignFullBoxHeightMapping;NotMathMLCore3.3.3.3UnindexedBlockSize"
+                "unicode-math-xetex-r@@t;NotLuaTeXOrMathMLBlockSizeMapping"
             },
             "radicalVerticalGapPx" to gapMin,
             "minimumRadicalGapPx" to gapMin,
@@ -1093,6 +1178,11 @@ private class MathLayoutPass(
             "actualRadicalGapPx" to actualGap,
             "radicalRuleThicknessPx" to ruleThickness,
             "radicalExtraAscenderPx" to extraAscender,
+            "radicalExtraAscenderUsed" to false,
+            "overbarLeadingReservePx" to overbarLeadingReserve,
+            "overbarLeadingReservePolicy" to "XeTeXOverbarLeadingRuleThickness",
+            "overbarLeadingReserveSpecificationDivergence" to
+                "Tectonic0.17.0DoesNotConsumeOpenTypeMATH.RadicalExtraAscender",
             "radicalKernBeforeDegreePx" to kernBeforeDegree,
             "radicalKernAfterDegreePx" to kernAfterDegree,
             "usedRadicalKernBeforeDegreePx" to degreeHorizontalPlacement?.rawKernBeforeDegreePx,
@@ -1106,17 +1196,17 @@ private class MathLayoutPass(
             },
             "radicalDegreeBottomRaisePercent" to degreeRaisePercent,
             "degreeRaiseReferencePx" to degreeRaiseReferencePx,
-            "degreeRaiseReferenceAscentPx" to if (degree == null) null else radicalGlyphAscent,
-            "degreeRaiseReferenceDescentPx" to if (degree == null) null else radicalGlyphDescent,
+            "degreeRaiseReferenceAscentPx" to if (degree == null) null else unindexedBox.ascent,
+            "degreeRaiseReferenceDescentPx" to if (degree == null) null else unindexedBox.descent,
             "degreeRaiseReferenceMetric" to if (degree == null) {
                 null
             } else {
-                "SelectedRadicalConstructionBoxHeight"
+                "UnindexedRadicalBoxHeightMinusDepth"
             },
             "degreeRaiseReferencePolicy" to if (degree == null) {
                 null
             } else {
-                "OpenTypeMATH.RadicalDegreeBottomRaisePercentTimesSelectedRadicalConstructionBoxHeight"
+                "unicode-math-xetex-r@@t-times-OpenTypeMATH.RadicalDegreeBottomRaisePercent"
             },
             "radicalGlyphAscentPx" to radicalGlyphAscent,
             "radicalGlyphDescentPx" to radicalGlyphDescent,
@@ -1156,6 +1246,11 @@ private class MathLayoutPass(
             },
             "targetHeightPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
+            "texDelimiterBoxHeightPx" to texDelimiterBoxHeight,
+            "texDelimiterBoxDepthPx" to texDelimiterBoxDepth,
+            "texDelimiterBoxShiftPx" to texDelimiterBoxShift,
+            "texDelimiterContributedAscentPx" to texDelimiterAscentInB,
+            "texDelimiterContributedDescentPx" to texDelimiterDescentInB,
             "radicandAscentPx" to radicand.ascent,
             "radicandDescentPx" to radicand.descent,
             "unindexedAscentPx" to unindexedBox.ascent,

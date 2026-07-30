@@ -1,0 +1,40 @@
+\documentclass{article}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=200
+\showboxdepth=200
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-RADICAL-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-RADICAL-ORACLE-#1-END}%
+}
+\newcommand{\threeradicals}[1]{\sqrt{\sqrt{\sqrt{#1}}}}
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[
+  Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/
+]{LeteSansMath-Regular.otf}
+\setbox0=\hbox{$x$}
+\traceformula{INLINE-SQRT-X}{\sqrt{x}}
+\traceformula{INLINE-SQRT-CAP-X}{\sqrt{X}}
+\traceformula{INLINE-SCRIPTS}{\sqrt{x_j^2}}
+\traceformula{INLINE-FRACTION}{\sqrt{\frac{a}{b}}}
+\traceformula{INLINE-NESTED-SUM}{\sqrt{1+\sqrt{x}}}
+\traceformula{INLINE-NESTED-ONLY}{\sqrt{\sqrt{x}}}
+\traceformula{INLINE-DEGREE-CAP-X}{\sqrt[3]{X}}
+\traceformula{INLINE-DEGREE-FRACTION}{\sqrt[3]{\frac{a}{b}}}
+\traceformula{DISPLAY-SQRT-X}{\displaystyle\sqrt{x}}
+\traceformula{DISPLAY-FRACTION}{\displaystyle\sqrt{\frac{a}{b}}}
+\traceformula{DISPLAY-NESTED-RADICAL-3}{\displaystyle\sqrt{\sqrt{\sqrt{x}}}}
+\traceformula{DISPLAY-NESTED-RADICAL-5}{\displaystyle\sqrt{\sqrt{\sqrt{\sqrt{\sqrt{x}}}}}}
+\traceformula{DISPLAY-NESTED-RADICAL-8}{\displaystyle\sqrt{\sqrt{\sqrt{\sqrt{\sqrt{\sqrt{\sqrt{\sqrt{x}}}}}}}}}
+\traceformula{DISPLAY-NESTED-RADICAL-12}{\displaystyle\threeradicals{\threeradicals{\threeradicals{\threeradicals{x}}}}}
+\traceformula{DISPLAY-NESTED-RADICAL-18}{\displaystyle\threeradicals{\threeradicals{\threeradicals{\threeradicals{\threeradicals{\threeradicals{x}}}}}}}
+\traceformula{DISPLAY-DEEP-3}{\displaystyle\sqrt{\frac{\frac{\frac{x}{y}}{y}}{y}}}
+\traceformula{DISPLAY-DEEP-6}{\displaystyle\sqrt{\frac{\frac{\frac{\frac{\frac{\frac{x}{y}}{y}}{y}}{y}}{y}}{y}}}
+\traceformula{DISPLAY-DEEP-12}{\displaystyle\sqrt{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{x}{y}}{y}}{y}}{y}}{y}}{y}}{y}}{y}}{y}}{y}}{y}}{y}}}
+\end{document}

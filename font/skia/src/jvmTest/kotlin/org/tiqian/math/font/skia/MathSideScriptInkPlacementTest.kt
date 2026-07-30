@@ -24,7 +24,7 @@ import org.tiqian.math.layout.ResolvedMathSymbolRun
 
 class MathSideScriptInkPlacementTest {
     @Test
-    fun radicalLogicalReserveDoesNotMoveOrdinarySideScriptsForBothFontsAndNestedStyles() =
+    fun tectonicUnusedRadicalExtraAscenderDoesNotMoveOrdinarySideScripts() =
         withSideScriptFaces { label, delegate ->
             val enlargedFace = SideScriptOverrideFace(
                 delegate,
@@ -58,24 +58,27 @@ class MathSideScriptInkPlacementTest {
                 assertEquals(
                     baseResult.radicalConstructionKinds(),
                     enlargedResult.radicalConstructionKinds(),
-                    "$label/${case.label} reserve-only change keeps radical constructions",
+                    "$label/${case.label} unused constant keeps radical constructions",
                 )
                 assertNear(
                     baseDecision.floatOrNull("superscriptShiftPx"),
                     enlargedDecision.floatOrNull("superscriptShiftPx"),
-                    "$label/${case.label} superscript shift ignores logical reserve",
+                    "$label/${case.label} superscript shift ignores unused radical constant",
                 )
                 assertNear(
                     baseDecision.floatOrNull("subscriptShiftPx"),
                     enlargedDecision.floatOrNull("subscriptShiftPx"),
-                    "$label/${case.label} subscript shift ignores logical reserve",
+                    "$label/${case.label} subscript shift ignores unused radical constant",
                 )
-                assertTrue(
-                    enlargedResult.box.ascent > baseResult.box.ascent ||
-                        enlargedDecision.details["baseLogicalAscentPx"] != baseDecision.details["baseLogicalAscentPx"] ||
-                        enlargedDecision.details["subscriptLogicalAscentPx"] !=
-                        baseDecision.details["subscriptLogicalAscentPx"],
-                    "$label/${case.label} fixture must actually enlarge a logical reserve",
+                assertNear(
+                    baseResult.box.ascent,
+                    enlargedResult.box.ascent,
+                    "$label/${case.label} unused RadicalExtraAscender keeps logical ascent",
+                )
+                assertNear(
+                    baseResult.box.descent,
+                    enlargedResult.box.descent,
+                    "$label/${case.label} unused RadicalExtraAscender keeps logical descent",
                 )
                 assertNear(
                     baseResult.box.inkBounds.top,
@@ -266,6 +269,13 @@ private class SideScriptOverrideFace(
         style: MathStyle,
         sourceRange: SourceRange,
     ): MeasuredMathRun = delegate.measureGlyph(glyphId, fontSizePx, style, sourceRange)
+
+    override fun measureGlyphOutlineBounds(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = delegate.measureGlyphOutlineBounds(glyphId, fontSizePx, style, sourceRange)
 
     override fun shapeOutlineConstructionBase(
         text: String,

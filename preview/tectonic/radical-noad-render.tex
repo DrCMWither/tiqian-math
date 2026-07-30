@@ -1,0 +1,97 @@
+\documentclass{article}
+\usepackage{unicode-math}
+\usepackage[
+  paperwidth=675bp,
+  paperheight=990bp,
+  margin=0bp
+]{geometry}
+\pagestyle{empty}
+
+\newbox\leteBase
+\newbox\leteScripts
+\newbox\leteFraction
+\newbox\leteNested
+\newbox\leteDegree
+\newbox\leteDegreeFraction
+\newbox\leteDisplayFraction
+\newbox\leteAssembly
+\newbox\stixBase
+\newbox\stixScripts
+\newbox\stixFraction
+\newbox\stixNested
+\newbox\stixDegree
+\newbox\stixDegreeFraction
+\newbox\stixDisplayFraction
+\newbox\stixAssembly
+
+\newcommand{\oraclebox}[2]{%
+  \setbox#1=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+}
+\newcommand{\oraclerow}[2]{%
+  \hbox{\fontsize{6.75bp}{8bp}\selectfont\ttfamily #1}%
+  \vskip1bp
+  \hbox{#2}%
+  \vskip7bp
+}
+\newcommand{\deepfraction}{%
+  \frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{x}{y}}{y}}{y}}{y}}{y}}{y}}{y}}{y}}{y}}{y}}{y}}{y}%
+}
+
+\begin{document}
+\setmathfont[
+  Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/
+]{LeteSansMath-Regular.otf}
+\oraclebox{\leteBase}{\sqrt{x}+\sqrt{X}}
+\oraclebox{\leteScripts}{\sqrt{x_j^2}}
+\oraclebox{\leteFraction}{\sqrt{\frac{a}{b}}}
+\oraclebox{\leteNested}{\sqrt{1+\sqrt{x}}}
+\oraclebox{\leteDegree}{\sqrt[3]{X}}
+\oraclebox{\leteDegreeFraction}{\sqrt[3]{\frac{a}{b}}}
+\oraclebox{\leteDisplayFraction}{\displaystyle\sqrt{\frac{a}{b}}}
+\oraclebox{\leteAssembly}{\displaystyle\sqrt{\deepfraction}}
+
+\setmathfont[
+  Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/
+]{STIXTwoMath-Regular.otf}
+\oraclebox{\stixBase}{\sqrt{x}+\sqrt{X}}
+\oraclebox{\stixScripts}{\sqrt{x_j^2}}
+\oraclebox{\stixFraction}{\sqrt{\frac{a}{b}}}
+\oraclebox{\stixNested}{\sqrt{1+\sqrt{x}}}
+\oraclebox{\stixDegree}{\sqrt[3]{X}}
+\oraclebox{\stixDegreeFraction}{\sqrt[3]{\frac{a}{b}}}
+\oraclebox{\stixDisplayFraction}{\displaystyle\sqrt{\frac{a}{b}}}
+\oraclebox{\stixAssembly}{\displaystyle\sqrt{\deepfraction}}
+
+\vspace*{13.5bp}
+\noindent\hspace*{13.5bp}\vbox{%
+  \hbox{\fontsize{9.75bp}{11bp}\selectfont Tectonic 0.17.0 / XeTeX · 24bp (32px) · exact repository OTF}%
+  \vskip4bp
+  \hbox{\fontsize{7.5bp}{9bp}\selectfont Same source/style cases as the Tiqian radical vertical report}%
+  \vskip8bp
+  \hbox to 648bp{%
+    \vtop{\hsize=310bp
+      \hbox{\fontsize{8.25bp}{10bp}\selectfont Lete Sans Math}\vskip6bp
+      \oraclerow{inline base x / X}{\copy\leteBase}
+      \oraclerow{inline scripts}{\copy\leteScripts}
+      \oraclerow{inline fraction}{\copy\leteFraction}
+      \oraclerow{inline nested}{\copy\leteNested}
+      \oraclerow{inline indexed base}{\copy\leteDegree}
+      \oraclerow{inline indexed fraction}{\copy\leteDegreeFraction}
+      \oraclerow{display fraction}{\copy\leteDisplayFraction}
+      \oraclerow{display assembly, deep-12 fraction}{\copy\leteAssembly}
+    }%
+    \hfil
+    \vtop{\hsize=310bp
+      \hbox{\fontsize{8.25bp}{10bp}\selectfont STIX Two Math}\vskip6bp
+      \oraclerow{inline base x / X}{\copy\stixBase}
+      \oraclerow{inline scripts}{\copy\stixScripts}
+      \oraclerow{inline fraction}{\copy\stixFraction}
+      \oraclerow{inline nested}{\copy\stixNested}
+      \oraclerow{inline indexed base}{\copy\stixDegree}
+      \oraclerow{inline indexed fraction}{\copy\stixDegreeFraction}
+      \oraclerow{display fraction}{\copy\stixDisplayFraction}
+      \oraclerow{display assembly, deep-12 fraction}{\copy\stixAssembly}
+    }%
+  }%
+}
+\end{document}

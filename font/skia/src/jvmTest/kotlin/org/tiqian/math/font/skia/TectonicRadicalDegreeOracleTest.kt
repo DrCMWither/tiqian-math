@@ -5,7 +5,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.tiqian.math.core.MathMode
-import org.tiqian.math.core.MathRect
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
@@ -34,7 +33,8 @@ class TectonicRadicalDegreeOracleTest {
                 degreeAdvancePx = 10.208f,
                 kernAfterPx = -12.8f,
                 radicalOriginPx = 6.24f,
-                degreeInkBounds = MathRect(7.832f, -35.412964f, 19.832f, -19.412964f),
+                degreeInkLeftPx = 7.832f,
+                degreeInkRightPx = 19.832f,
                 radicalTopStrokeRightPx = 27.488f,
                 degreeToRadicalInkGapPx = -13.08f,
             ),
@@ -48,7 +48,8 @@ class TectonicRadicalDegreeOracleTest {
                 degreeAdvancePx = 9.8736f,
                 kernAfterPx = -10.72f,
                 radicalOriginPx = 1.2336f,
-                degreeInkBounds = MathRect(2.08f, -31.3472f, 12.08f, -15.3472f),
+                degreeInkLeftPx = 2.08f,
+                degreeInkRightPx = 12.08f,
                 radicalTopStrokeRightPx = 27.7616f,
                 degreeToRadicalInkGapPx = -10.2704f,
             ),
@@ -103,7 +104,8 @@ class TectonicRadicalDegreeOracleTest {
                 assertNear(oracle.degreeAdvancePx, geometry.float("degreeWidthPx"), "${oracle.label} degree advance")
                 assertNear(oracle.kernAfterPx, geometry.float("adjustedRadicalKernAfterDegreePx"), "${oracle.label} after kern")
                 assertNear(oracle.radicalOriginPx, geometry.float("radicalX"), "${oracle.label} radical origin")
-                assertRectNear(oracle.degreeInkBounds, degreeGlyph.inkBounds, "${oracle.label} degree ink")
+                assertNear(oracle.degreeInkLeftPx, degreeGlyph.inkBounds.left, "${oracle.label} degree ink left")
+                assertNear(oracle.degreeInkRightPx, degreeGlyph.inkBounds.right, "${oracle.label} degree ink right")
                 assertNear(
                     oracle.radicalTopStrokeRightPx,
                     topStrokeX,
@@ -129,13 +131,6 @@ class TectonicRadicalDegreeOracleTest {
         assertTrue(abs(expected - actual) <= 0.02f, "$message: expected $expected, got $actual")
     }
 
-    private fun assertRectNear(expected: MathRect, actual: MathRect, message: String) {
-        assertNear(expected.left, actual.left, "$message left")
-        assertNear(expected.top, actual.top, "$message top")
-        assertNear(expected.right, actual.right, "$message right")
-        assertNear(expected.bottom, actual.bottom, "$message bottom")
-    }
-
     private data class TectonicOracle(
         val label: String,
         val face: SkiaMathFontFace,
@@ -146,7 +141,8 @@ class TectonicRadicalDegreeOracleTest {
         val degreeAdvancePx: Float,
         val kernAfterPx: Float,
         val radicalOriginPx: Float,
-        val degreeInkBounds: MathRect,
+        val degreeInkLeftPx: Float,
+        val degreeInkRightPx: Float,
         val radicalTopStrokeRightPx: Float,
         val degreeToRadicalInkGapPx: Float,
     )

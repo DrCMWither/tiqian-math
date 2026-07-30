@@ -43,7 +43,7 @@ import org.tiqian.math.layout.ResolvedMathSymbolRun
 
 class MathRadicalNoadTest {
     @Test
-    fun degreeRaiseUsesSelectedRadicalBoxHeightInsteadOfUnindexedBoxReserveForBothFonts() =
+    fun degreeRaiseUsesCompletedXeTeXRadicalHeightMinusDepthForBothFonts() =
         withRadicalFaces { label, face ->
             val size = 48f
             val assemblyRadicand = (1..12).fold("x") { radicand, _ -> "\\frac{$radicand}{y}" }
@@ -52,9 +52,6 @@ class MathRadicalNoadTest {
                 Triple("variant", "\\sqrt[3]{\\frac{a}{b}}", "Variant"),
                 Triple("assembly", "\\sqrt[5]{$assemblyRadicand}", "Assembly"),
             )
-            val selectedBlockSizes = mutableListOf<Float>()
-            val selectedRaises = mutableListOf<Float>()
-
             cases.forEach { (caseLabel, source, expectedConstruction) ->
                 val base = MathLayoutEngine(face).layout(
                     source,
@@ -86,19 +83,21 @@ class MathRadicalNoadTest {
                     reserveConstruction.float("achievedAdvancePx"),
                     "$label/$caseLabel reserve-only change keeps the construction extent",
                 )
-                assertTrue(
-                    reserveGeometry.float("unindexedBlockSizePx") > baseGeometry.float("unindexedBlockSizePx"),
-                    "$label/$caseLabel RadicalExtraAscender must enlarge B",
+                assertEquals("false", baseGeometry.details["radicalExtraAscenderUsed"])
+                assertNear(
+                    baseGeometry.float("unindexedBlockSizePx"),
+                    reserveGeometry.float("unindexedBlockSizePx"),
+                    "$label/$caseLabel Tectonic 0.17.0 ignores RadicalExtraAscender",
                 )
                 assertNear(
                     baseGeometry.float("degreeRaisePx"),
                     reserveGeometry.float("degreeRaisePx"),
-                    "$label/$caseLabel B reserve must not change degree raise",
+                    "$label/$caseLabel unused extra ascender must not change degree raise",
                 )
                 assertNear(
                     baseGeometry.float("degreeRaiseReferencePx"),
                     reserveGeometry.float("degreeRaiseReferencePx"),
-                    "$label/$caseLabel B reserve must not change the selected radical reference",
+                    "$label/$caseLabel unused extra ascender must not change the completed B reference",
                 )
                 val selectedAscent = baseGeometry.float("radicalGlyphAscentPx")
                 val selectedDescent = baseGeometry.float("radicalGlyphDescentPx")
@@ -109,17 +108,15 @@ class MathRadicalNoadTest {
                         "$label/$caseLabel must exercise a selected radical with non-zero descent",
                     )
                 }
-                selectedBlockSizes += selectedBlockSize
-                selectedRaises += baseGeometry.float("degreeRaisePx")
                 assertNear(
                     selectedAscent + selectedDescent,
                     selectedBlockSize,
                     "$label/$caseLabel selected radical box height closes over ascent and descent",
                 )
                 assertNear(
-                    selectedBlockSize,
+                    baseGeometry.float("unindexedAscentPx") - baseGeometry.float("unindexedDescentPx"),
                     baseGeometry.float("degreeRaiseReferencePx"),
-                    "$label/$caseLabel degree raise references the complete selected radical box height",
+                    "$label/$caseLabel degree raise references height(B)-depth(B)",
                 )
                 assertNear(
                     baseGeometry.float("degreeRaiseReferencePx") *
@@ -128,39 +125,39 @@ class MathRadicalNoadTest {
                     "$label/$caseLabel degree raise applies the MATH percentage",
                 )
                 assertEquals(
-                    "SelectedRadicalConstructionBoxHeight",
+                    "UnindexedRadicalBoxHeightMinusDepth",
                     baseGeometry.details["degreeRaiseReferenceMetric"],
                     "$label/$caseLabel reference metric",
                 )
                 assertEquals(
-                    "OpenTypeMATH.RadicalDegreeBottomRaisePercentTimesSelectedRadicalConstructionBoxHeight",
+                    "unicode-math-xetex-r@@t-times-OpenTypeMATH.RadicalDegreeBottomRaisePercent",
                     baseGeometry.details["degreeRaiseReferencePolicy"],
                     "$label/$caseLabel reference policy",
                 )
                 assertNear(
-                    selectedAscent,
+                    baseGeometry.float("unindexedAscentPx"),
                     baseGeometry.float("degreeRaiseReferenceAscentPx"),
-                    "$label/$caseLabel decision records the selected radical ascent",
+                    "$label/$caseLabel decision records B height",
                 )
                 assertNear(
-                    selectedDescent,
+                    baseGeometry.float("unindexedDescentPx"),
                     baseGeometry.float("degreeRaiseReferenceDescentPx"),
-                    "$label/$caseLabel decision records the selected radical descent",
+                    "$label/$caseLabel decision records B depth",
                 )
                 assertEquals(
-                    "OpenTypeRadicalConstructionBoxHeightRaiseFromCompletedBLineDescent",
+                    "UnicodeMathXeTeXRootHeightMinusDepthRaise",
                     baseGeometry.details["degreePlacementPolicy"],
                     "$label/$caseLabel placement policy",
                 )
                 assertEquals(
-                    "OpenTypeMATHRadicalSignFullBoxHeightMapping;NotMathMLCore3.3.3.3UnindexedBlockSize",
+                    "unicode-math-xetex-r@@t;NotLuaTeXOrMathMLBlockSizeMapping",
                     baseGeometry.details["degreePlacementSpecificationDivergence"],
                     "$label/$caseLabel specification mapping",
                 )
                 assertNear(
-                    baseGeometry.float("unindexedDescentPx") - baseGeometry.float("degreeRaisePx"),
+                    -baseGeometry.float("degreeRaisePx") + baseGeometry.float("degreeDescentPx"),
                     baseGeometry.float("degreeLogicalBottomY"),
-                    "$label/$caseLabel degree logical bottom remains relative to completed B",
+                    "$label/$caseLabel degree box is placed from its raised baseline",
                 )
 
                 val noad = base.radicalNoadDecision()
@@ -183,12 +180,6 @@ class MathRadicalNoadTest {
                 )
             }
 
-            selectedBlockSizes.zipWithNext().forEach { (smaller, larger) ->
-                assertTrue(larger > smaller, "$label construction growth must increase radical box height")
-            }
-            selectedRaises.zipWithNext().forEach { (smaller, larger) ->
-                assertTrue(larger > smaller, "$label construction growth must proportionally increase degree raise")
-            }
         }
 
     @Test
@@ -226,9 +217,9 @@ class MathRadicalNoadTest {
                     "$label/$caseLabel actual clearance is the minimum plus half selected-construction excess",
                 )
                 assertNear(
-                    geometry.float("radicandInkTopPx") - expectedActualGap,
+                    -geometry.float("radicandAscentPx") - expectedActualGap,
                     geometry.float("ruleBottom"),
-                    "$label/$caseLabel overbar bottom closes against radicand ink",
+                    "$label/$caseLabel overbar bottom closes against clean-box height",
                 )
                 assertRadicalBoxAlgebra(geometry, "$label/$caseLabel")
             }
@@ -306,11 +297,11 @@ class MathRadicalNoadTest {
             val displayGeometry = display.radicalGeometryDecision()
             val indexedGeometry = indexed.radicalGeometryDecision()
             assertEquals(
-                "TeXMakeRadicalHalfPositiveConstructionExcess",
+                "XeTeXMakeRadicalCleanBoxNominalDelimiterAndOverbar",
                 indexedGeometry.details["unindexedBoxPolicy"],
             )
             assertEquals(
-                "OpenTypeRadicalConstructionBoxHeightRaiseFromCompletedBLineDescent",
+                "UnicodeMathXeTeXRootHeightMinusDepthRaise",
                 indexedGeometry.details["degreePlacementPolicy"],
             )
             assertNear(
@@ -339,9 +330,9 @@ class MathRadicalNoadTest {
                 "$label recorded degree ink bottom matches replayed placements",
             )
             assertNear(
-                indexedGeometry.float("unindexedDescentPx") - indexedGeometry.float("degreeRaisePx"),
+                -indexedGeometry.float("degreeRaisePx") + indexedGeometry.float("degreeDescentPx"),
                 indexedGeometry.float("degreeLogicalBottomY"),
-                "$label degree bottom is based on B line descent and block size",
+                "$label degree bottom is based on the raised degree baseline",
             )
             val scriptSize = size * face.mathFont.constants.scriptPercentScaleDown / 100f
             val constructionBase = face.shapeConstructionBase("√", scriptSize, SourceRange(3, 8)).glyphs.single().glyphId
@@ -411,9 +402,9 @@ class MathRadicalNoadTest {
             val geometry = result.radicalGeometryDecision()
             assertAssemblyTopAlignedToOverbar(geometry, "$label real assembly")
             assertNear(
-                geometry.float("unindexedDescentPx") - geometry.float("degreeRaisePx"),
+                -geometry.float("degreeRaisePx") + geometry.float("degreeDescentPx"),
                 geometry.float("degreeLogicalBottomY"),
-                "$label tall indexed assembly positions the degree from completed box B",
+                "$label tall indexed assembly places the degree from the raised baseline",
             )
         }
 
@@ -674,49 +665,41 @@ class MathRadicalNoadTest {
     }
 
     @Test
-    fun logicalReserveDoesNotLeakIntoTheInkBasedStretchTarget() {
+    fun nestedRadicalLogicalBoxFeedsTheOuterTeXCleanBoxTarget() {
         SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
             val size = 72f
             val source = "\\sqrt{\\sqrt{x}}"
             val outerCommandRange = SourceRange(0, 5)
-            val zero = delegate.mathFont.constants.copy(
-                radicalVerticalGap = 0,
-                radicalDisplayStyleVerticalGap = 0,
-                radicalRuleThickness = 0,
-                radicalExtraAscender = 0,
-            )
-            val withoutReserve = layout(delegate, delegate.mathFont.copy(constants = zero), source, size)
-            val withReserve = layout(
-                delegate,
-                delegate.mathFont.copy(constants = zero.copy(radicalExtraAscender = 3_000)),
-                source,
-                size,
-            )
-            val baseChoice = withoutReserve.decisions.single {
+            val result = MathLayoutEngine(delegate).layout(source, MathLayoutOptions(fontSizePx = size))
+            val inner = result.decisions.filter { it.name == "OpenTypeMathRadical" }.first()
+            val outer = result.decisions.filter { it.name == "OpenTypeMathRadical" }.last()
+            val outerChoice = result.decisions.single {
                 it.name == "OpenTypeRadicalConstruction" && it.range == outerCommandRange
             }
-            val reservedChoice = withReserve.decisions.single {
-                it.name == "OpenTypeRadicalConstruction" && it.range == outerCommandRange
-            }
-            assertEquals("RadicandInkHeightPlusGapAndRule", baseChoice.details["targetMetric"])
-            assertEquals("MathMLCore5.3.2NormalGlyphFirst", baseChoice.details["selectionPolicy"])
+            assertEquals("TeXCleanBoxHeightPlusGapAndRule", outerChoice.details["targetMetric"])
+            assertEquals("MathMLCore5.3.2NormalGlyphFirst", outerChoice.details["selectionPolicy"])
             assertNear(
-                baseChoice.float("radicandInkHeightPx"),
-                reservedChoice.float("radicandInkHeightPx"),
-                "inner radical keeps identical visible ink",
+                inner.float("unindexedAscentPx"),
+                outer.float("radicandAscentPx"),
+                "outer clean_box keeps the inner radical height",
+            )
+            assertNear(
+                inner.float("unindexedDescentPx"),
+                outer.float("radicandDescentPx"),
+                "outer clean_box keeps the inner radical depth",
+            )
+            assertNear(
+                outer.float("radicandAscentPx") + outer.float("radicandDescentPx") +
+                    outer.float("minimumRadicalGapPx") + outer.float("radicalRuleThicknessPx"),
+                outerChoice.float("targetHeightPx"),
+                "outer stretch target consumes the complete clean box",
             )
             assertTrue(
-                reservedChoice.float("radicandLogicalHeightPx") >
-                    baseChoice.float("radicandLogicalHeightPx") + 100f,
-                "fixture must alter only the recursive logical reserve",
+                outerChoice.float("targetHeightPx") >
+                    outerChoice.float("radicandInkHeightPx") + outer.float("minimumRadicalGapPx") +
+                    outer.float("radicalRuleThicknessPx"),
+                "the nested fixture disproves the former visible-ink-only target",
             )
-            assertNear(
-                baseChoice.float("targetHeightPx"),
-                reservedChoice.float("targetHeightPx"),
-                "logical reserve does not enter radical stretch target",
-            )
-            assertEquals(baseChoice.details["construction"], reservedChoice.details["construction"])
-            assertEquals(baseChoice.details["componentGlyphIds"], reservedChoice.details["componentGlyphIds"])
         }
     }
 
@@ -823,25 +806,20 @@ class MathRadicalNoadTest {
             )
             val ascender = ascenderResult.radicalGeometryDecision()
             assertNear(300f, ascender.float("radicalExtraAscenderPx"), "RadicalExtraAscender")
+            assertEquals("false", ascender.details["radicalExtraAscenderUsed"])
+            assertEquals(
+                "Tectonic0.17.0DoesNotConsumeOpenTypeMATH.RadicalExtraAscender",
+                ascender.details["overbarLeadingReserveSpecificationDivergence"],
+            )
             assertNear(
-                ascender.float("ruleTop") - 300f,
+                inlineBase.float("reservedTopPx"),
                 ascender.float("reservedTopPx"),
-                "extra ascender reserve",
+                "Tectonic-compatible radical box does not consume RadicalExtraAscender",
             )
-            assertAtLeast(ascenderResult.box.ascent, -ascender.float("reservedTopPx"), "extra ascender box height")
-            val nestedAscender = layout(
-                delegate,
-                delegate.mathFont.copy(constants = zero.copy(radicalExtraAscender = 3_000)),
-                "\\frac{\\sqrt{x}}{y}",
-                size,
-            )
-            val nestedRadical = nestedAscender.radicalGeometryDecision()
-            val numeratorShift = nestedAscender.decisions.first { it.name == "OpenTypeMathFractionStack" }
-                .float("numeratorShiftPx")
-            assertAtLeast(
-                nestedAscender.box.ascent,
-                -nestedRadical.float("reservedTopPx") + numeratorShift,
-                "RadicalExtraAscender survives fraction and null-delimiter boxing",
+            assertEquals(
+                layout(delegate, delegate.mathFont.copy(constants = zero), "\\sqrt{x}", size).box,
+                ascenderResult.box,
+                "changing only RadicalExtraAscender cannot move Tectonic 0.17.0 geometry",
             )
 
             val indexedBase = radicalGeometry(delegate, zero, MathMode.Inline, "\\sqrt[3]{x}", size)
@@ -894,26 +872,21 @@ class MathRadicalNoadTest {
                 "\\sqrt[3]{x}",
                 size,
             )
-            assertTrue(
-                indexedWithAscender.float("unindexedBlockSizePx") >
-                    indexedRaiseBase.float("unindexedBlockSizePx"),
-                "RadicalExtraAscender must enlarge the already-built box B",
-            )
             assertNear(
-                indexedWithAscender.float("unindexedDescentPx") -
-                    indexedWithAscender.float("degreeRaisePx"),
+                -indexedWithAscender.float("degreeRaisePx") +
+                    indexedWithAscender.float("degreeDescentPx"),
                 indexedWithAscender.float("degreeLogicalBottomY"),
-                "degree uses B line descent after ExtraAscender is applied",
+                "degree uses the raised baseline",
             )
             assertNear(
                 indexedRaiseBase.float("degreeRaisePx"),
                 indexedWithAscender.float("degreeRaisePx"),
-                "RadicalExtraAscender does not alter the radical-sign ascender reference",
+                "unused RadicalExtraAscender does not alter height(B)-depth(B)",
             )
             assertNear(
                 indexedRaiseBase.float("degreeBaselineY"),
                 indexedWithAscender.float("degreeBaselineY"),
-                "top-only B reserve does not move the degree from the unchanged line-under edge",
+                "unused RadicalExtraAscender does not move the degree baseline",
             )
         }
     }
@@ -1147,11 +1120,11 @@ private fun MathLayoutDecision.float(name: String): Float =
 private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String) {
     val ruleThickness = geometry.float("radicalRuleThicknessPx")
     val minimumGap = geometry.float("radicalVerticalGapPx")
-    val radicandInkHeight = geometry.float("radicandInkBottomPx") - geometry.float("radicandInkTopPx")
+    val cleanHeight = geometry.float("radicandAscentPx") + geometry.float("radicandDescentPx")
     assertNear(
-        radicandInkHeight + minimumGap + ruleThickness,
+        cleanHeight + minimumGap + ruleThickness,
         geometry.float("targetHeightPx"),
-        "$label stretch target uses radicand ink only",
+        "$label stretch target uses TeX clean_box height plus depth",
     )
     val expectedExcess = (
         geometry.float("achievedAdvancePx") - geometry.float("targetHeightPx")
@@ -1167,9 +1140,9 @@ private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String)
         "$label clearance receives half the positive construction excess",
     )
     assertNear(
-        geometry.float("radicandInkTopPx") - geometry.float("actualRadicalGapPx"),
+        -geometry.float("radicandAscentPx") - geometry.float("actualRadicalGapPx"),
         geometry.float("ruleBottom"),
-        "$label overbar bottom closes against radicand ink",
+        "$label overbar bottom closes against clean_box height",
     )
     assertNear(
         geometry.float("ruleTop") + ruleThickness,
@@ -1178,20 +1151,20 @@ private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String)
     )
     assertNear(
         maxOf(
-            geometry.float("radicandAscentPx"),
-            -geometry.float("ruleTop") + geometry.float("radicalExtraAscenderPx"),
-            -(geometry.float("radicalPaintOriginY") - geometry.float("radicalGlyphAscentPx")),
+            geometry.float("radicandAscentPx") + geometry.float("actualRadicalGapPx") +
+                2f * ruleThickness,
+            geometry.float("texDelimiterContributedAscentPx"),
         ),
         geometry.float("unindexedAscentPx"),
-        "$label unindexed ascent reserves radicand, overbar safety, and radical ink independently",
+        "$label unindexed ascent follows XeTeX overbar and nominal delimiter boxes",
     )
     assertNear(
         maxOf(
             geometry.float("radicandDescentPx"),
-            geometry.float("radicalPaintOriginY") + geometry.float("radicalGlyphDescentPx"),
+            geometry.float("texDelimiterContributedDescentPx"),
         ).coerceAtLeast(0f),
         geometry.float("unindexedDescentPx"),
-        "$label unindexed descent encloses radicand and selected radical construction",
+        "$label unindexed descent follows XeTeX clean and nominal delimiter boxes",
     )
     assertNear(
         geometry.float("ruleTop"),
@@ -1210,6 +1183,8 @@ private fun assertRadicalBoxAlgebra(geometry: MathLayoutDecision, label: String)
         "$label overbar reaches the radicand logical right edge without changing radical advance",
     )
     assertEquals("Available(GlyphOutlineCrossSection)", geometry.details["radicalTopStrokeEvidence"])
+    assertEquals("XeTeXMakeRadicalCleanBoxNominalDelimiterAndOverbar", geometry.details["unindexedBoxPolicy"])
+    assertEquals("false", geometry.details["radicalExtraAscenderUsed"])
     assertEquals(
         "SelectedOpenTypeConstructionAdvanceMinusStretchTarget",
         geometry.details["constructionExcessMetric"],
