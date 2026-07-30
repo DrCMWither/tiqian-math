@@ -257,13 +257,8 @@ private class MathLayoutPass(
         }
         finishSegment(node.body.range.endExclusive)
 
-        var segmentStyle = style
         val segmentLayouts = segments.map { segment ->
-            layoutList(segment, segmentStyle, alphabetOverride).also {
-                segment.children.filterIsInstance<MathStyleDeclaration>().forEach { declaration ->
-                    segmentStyle = styleForLevel(declaration.requestedLevel)
-                }
-            }
+            layoutList(segment, style, alphabetOverride)
         }
         val innerCleanAscent = segmentLayouts.maxOfOrNull { it.laid.box.texCleanBoxMetrics.ascent } ?: 0f
         val innerCleanDescent = segmentLayouts.maxOfOrNull { it.laid.box.texCleanBoxMetrics.descent } ?: 0f
