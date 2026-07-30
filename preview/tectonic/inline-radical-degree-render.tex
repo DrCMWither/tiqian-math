@@ -1,0 +1,31 @@
+\documentclass{article}
+\usepackage{unicode-math}
+\usepackage[
+  paperwidth=675bp,
+  paperheight=142.5bp,
+  margin=0bp
+]{geometry}
+\pagestyle{empty}
+\newbox\letebox
+\newbox\stixbox
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[
+  Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/
+]{LeteSansMath-Regular.otf}
+\setbox\letebox=\hbox{\fontsize{24bp}{24bp}\selectfont$\sqrt[3]{X}$}
+\setmathfont[
+  Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/
+]{STIXTwoMath-Regular.otf}
+\setbox\stixbox=\hbox{\fontsize{24bp}{24bp}\selectfont$\sqrt[3]{X}$}
+\vspace*{13.5bp}
+\noindent\hspace*{13.5bp}\vbox{%
+  \hbox{\fontsize{9.75bp}{11bp}\selectfont Tectonic 0.17.0 · inline · 24bp (32px) · \texttt{\string\sqrt[3]\{X\}}}%
+  \vskip 9bp
+  \hbox to 648bp{%
+    \vbox{\hsize=300bp\hbox{\fontsize{8.25bp}{10bp}\selectfont Lete Sans Math}\vskip6bp\copy\letebox}%
+    \hfil
+    \vbox{\hsize=300bp\hbox{\fontsize{8.25bp}{10bp}\selectfont STIX Two Math}\vskip6bp\copy\stixbox}%
+  }%
+}
+\end{document}

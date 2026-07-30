@@ -1,0 +1,18 @@
+\documentclass{article}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=100
+\showboxdepth=100
+\newbox\rootbox
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[
+  Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/
+]{STIXTwoMath-Regular.otf}
+\setbox\rootbox=\hbox{\fontsize{24bp}{24bp}\selectfont$\sqrt[3]{X}$}
+\message{TIQIAN-ORACLE-STIX-BEGIN}
+\showbox\rootbox
+\message{TIQIAN-ORACLE-STIX-END}
+\noindent\copy\rootbox
+\end{document}

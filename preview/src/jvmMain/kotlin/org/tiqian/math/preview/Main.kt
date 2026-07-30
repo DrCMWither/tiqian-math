@@ -116,12 +116,27 @@ private fun RadicalDegreeHorizontalComparison(
             Column(Modifier.width(390.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RadicalTier("\\sqrt{x}", "\\sqrt{x}", face)
-                    RadicalTier("\\sqrt[3]{x}", "\\sqrt[3]{x}", face)
-                    RadicalTier("\\sqrt[g_j+abc]{x}", "\\sqrt[g_j+abc]{x}", face)
+                    RadicalDegreeTier("plain inline", "\\sqrt{x}", face)
+                    RadicalDegreeTier("oracle · ³√X", "\\sqrt[3]{X}", face)
+                    RadicalDegreeTier("wide degree", "\\sqrt[g_j+abc]{x}", face)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RadicalDegreeTier(label: String, source: String, face: SkiaMathFontFace) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, fontSize = 10.sp, color = Color(0xFF6B655E))
+        TiqianMath(
+            source = source,
+            modifier = Modifier.background(Color.White).padding(7.dp),
+            mode = MathMode.Inline,
+            fontFace = face,
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 32.sp, lineHeight = 44.sp),
+            softWrap = false,
+        )
     }
 }
 
@@ -263,7 +278,37 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("preview=${output.absolutePath} bytes=${output.length()}")
     }
+    ImageComposeScene(width = 900, height = 190) { RadicalDegreeOracleScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-radical-degree-inline.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("radical-degree-oracle=${output.absolutePath} bytes=${output.length()}")
+    }
     renderRadicalSeamReport()
+}
+
+@Composable
+private fun RadicalDegreeOracleScreen() {
+    val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
+    DisposableEffect(lete, stix) {
+        onDispose {
+            lete.close()
+            stix.close()
+        }
+    }
+    MaterialTheme {
+        Surface(color = Color.White) {
+            Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Tiqian · inline · 32 px · \\sqrt[3]{X}", fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(48.dp)) {
+                    RadicalDegreeTier("Lete Sans Math", "\\sqrt[3]{X}", lete)
+                    RadicalDegreeTier("STIX Two Math", "\\sqrt[3]{X}", stix)
+                }
+            }
+        }
+    }
 }
 
 private fun auditRadicalPreviewTiers() {
@@ -359,6 +404,23 @@ private fun auditRadicalPreviewTiers() {
                         "verticalPolicy=${geometry.details["degreePlacementPolicy"]}",
                 )
             }
+            val inlineOracle = MathLayoutEngine(face).layout(
+                "\\sqrt[3]{X}",
+                MathLayoutOptions(MathMode.Inline, 32f),
+            )
+            val inlineGeometry = inlineOracle.decisions.single { it.name == "OpenTypeMathRadical" }
+            val degreeGlyph = inlineOracle.box.glyphs.single { it.sourceRange.start == 6 }
+            val radicalGlyph = inlineOracle.box.glyphs.single { it.sourceRange.start == 0 }
+            val radicalOrigin = inlineGeometry.details.getValue("radicalX").toFloat()
+            val topStrokeRight = radicalOrigin +
+                inlineGeometry.details.getValue("radicalTopStrokeRightPx").toFloat()
+            println(
+                "preview-degree-horizontal-oracle=$label mode=Inline size=32 " +
+                    "source=\\sqrt[3]{X} degreeInk=${degreeGlyph.inkBounds} " +
+                    "degreeAdvance=${inlineGeometry.details["degreeWidthPx"]} " +
+                    "radicalOrigin=$radicalOrigin topStrokeRight=$topStrokeRight " +
+                    "degreeToRadicalInk=${radicalGlyph.inkBounds.left - degreeGlyph.inkBounds.right}",
+            )
         }
     }
 }

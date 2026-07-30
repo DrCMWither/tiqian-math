@@ -158,7 +158,7 @@ class SkiaMathFontFace(
         boundsSource: MathGlyphBoundsSource,
     ): MeasuredMathRun {
         if (text.isEmpty()) return MeasuredMathRun(emptyList(), 0f, 0f, 0f, false)
-        val font = Font(typeface, fontSizePx)
+        val font = font(fontSizePx)
         return try {
             val collector = GlyphCollector()
             val features = when (style.level) {
@@ -219,7 +219,7 @@ class SkiaMathFontFace(
         fontSizePx: Float,
         boundsSource: MathGlyphBoundsSource,
     ): MeasuredMathRun {
-        val font = Font(typeface, fontSizePx)
+        val font = font(fontSizePx)
         return try {
             val ids = shortArrayOf(glyphId.toShort())
             measuredRun(
@@ -235,7 +235,14 @@ class SkiaMathFontFace(
         }
     }
 
-    fun font(fontSizePx: Float): Font = Font(typeface, fontSizePx)
+    /**
+     * Math layout retains fractional design-space advances. Without subpixel positioning Skia's
+     * shaper quantizes [RunInfo.advanceX] to whole device pixels even though the selected glyph's
+     * OpenType advance remains fractional, which moves following noads at phase-dependent sizes.
+     */
+    fun font(fontSizePx: Float): Font = Font(typeface, fontSizePx).apply {
+        isSubpixel = true
+    }
 
     fun constructionOutline(
         box: MathBox,
