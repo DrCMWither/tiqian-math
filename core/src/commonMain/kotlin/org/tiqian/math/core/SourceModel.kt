@@ -57,6 +57,13 @@ enum class DiagnosticCode {
     MissingMathConstruction,
     MathVariantTooShort,
     MissingConstructionOutlineEvidence,
+    MissingDelimiterAfterLeft,
+    MissingDelimiterAfterMiddle,
+    MissingDelimiterAfterRight,
+    UnexpectedRightDelimiter,
+    MiddleOutsideDelimitedGroup,
+    MissingRightDelimiter,
+    UnsupportedDelimiter,
 }
 
 data class MathDiagnostic(

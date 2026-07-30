@@ -20,6 +20,7 @@ import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.layout.MathFontFace
 import org.tiqian.math.layout.MathConstructionOutlineEvidence
+import org.tiqian.math.layout.MathConstructionOutlineCapability
 import org.tiqian.math.layout.MathConstructionOutlineUnavailableReason
 import org.tiqian.math.layout.MathConstructionTopStroke
 import org.tiqian.math.layout.MathGlyphBoundsSource
@@ -330,6 +331,7 @@ class SkiaMathFontFace(
                 ),
             )
         }
+        var replayable = false
         val evidence = font(fontSizePx).use { skiaFont ->
             val outline = skiaFont.getPath(glyph.glyphId.toShort())
             if (outline == null || outline.isEmpty) {
@@ -338,6 +340,7 @@ class SkiaMathFontFace(
                     MathConstructionOutlineUnavailableReason.GlyphOutlineUnavailable,
                 )
             } else {
+                replayable = true
                 try {
                     outline.topStrokeEvidence(fontSizePx, glyph.x)
                 } finally {
@@ -345,7 +348,17 @@ class SkiaMathFontFace(
                 }
             }
         }
-        return MeasuredOutlineConstructionRun(run, evidence)
+        return MeasuredOutlineConstructionRun(
+            run,
+            evidence,
+            if (replayable) {
+                MathConstructionOutlineCapability.Replayable
+            } else {
+                MathConstructionOutlineCapability.Unavailable(
+                    MathConstructionOutlineUnavailableReason.GlyphOutlineUnavailable,
+                )
+            },
+        )
     }
 
     private fun Path.topStrokeEvidence(

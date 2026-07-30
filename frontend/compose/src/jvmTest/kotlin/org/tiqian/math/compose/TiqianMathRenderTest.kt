@@ -125,6 +125,50 @@ class TiqianMathRenderTest {
     }
 
     @Test
+    fun actualRendererReplaysContentDrivenDelimitersAsCachedConstructionPaths() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var observed: MathLayoutResult? = null
+            val source = "\\left\\langle a\\middle|\\frac{\\frac{\\frac{x}{y}}{y}}{y}\\right\\rangle"
+            ImageComposeScene(width = 520, height = 420, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    TiqianMath(
+                        source = source,
+                        modifier = Modifier.padding(16.dp),
+                        mode = MathMode.Display,
+                        fontSizePx = 40f,
+                        nullDelimiterSpacePx = 1.2f * 96f / 72.27f,
+                        delimiterFactor = 901,
+                        delimiterShortfallPx = 5f * 96f / 72.27f,
+                        fontFace = face,
+                        color = Color.Black.copy(alpha = 0.5f),
+                        onMathLayout = { observed = it },
+                    )
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                val layout = assertNotNull(observed)
+                assertEquals(3, layout.box.constructionPaintGroups.count {
+                    it.kind == org.tiqian.math.core.MathConstructionPaintKind.Delimiter
+                })
+                assertTrue(layout.decisions.any { it.name == "TeXContentDrivenDelimitedGroup" })
+                var maximumAlpha = 0f
+                var darkPixels = 0
+                for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                    val pixel = pixels[x, y]
+                    if (pixel.red < 0.8f) darkPixels++
+                    maximumAlpha = maxOf(maximumAlpha, 1f - pixel.red)
+                }
+                assertTrue(darkPixels > 300, "delimiter formula was actually rasterized")
+                assertTrue(maximumAlpha in 0.45f..0.53f, "assembly overlap is union-painted once")
+                val stats = face.constructionOutlineCacheStats()
+                assertEquals(layout.box.constructionPaintGroups.size, stats.builds.toInt())
+                layout.box.constructionPaintGroups.forEach { face.constructionOutline(layout.box, it) }
+                assertTrue(face.constructionOutlineCacheStats().hits >= layout.box.constructionPaintGroups.size)
+            }
+        }
+    }
+
+    @Test
     fun renderPlanMeasuresInkOverhangAndUsesSafeLogicalBaseline() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             val result = MathLayoutEngine(face).layout("x", MathLayoutOptions(MathMode.Inline, 40f))

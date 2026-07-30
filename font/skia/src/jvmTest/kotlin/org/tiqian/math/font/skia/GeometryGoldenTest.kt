@@ -63,6 +63,12 @@ class GeometryGoldenTest {
                     MathMode.Display,
                     40f,
                 ),
+                GoldenCase(
+                    "content-delimiters",
+                    "\\left\\langle a\\middle|\\frac{b}{c}\\right\\rangle",
+                    MathMode.Inline,
+                    40f,
+                ),
                 GoldenCase("adjustment", "a,b=c+d", MathMode.Inline, 40f),
             ).forEach { case ->
                 val result = engine.layout(case.source, MathLayoutOptions(case.mode, case.size))
@@ -249,6 +255,26 @@ class GeometryGoldenTest {
                             }
                         },
                     )
+                    "content-delimiters" -> {
+                        val group = result.decisions.single { it.name == "TeXContentDrivenDelimitedGroup" }
+                        val delimiters = result.decisions.filter { it.name == "TeXContentDrivenDelimiter" }
+                        appendLine(
+                            "  evidence=group=" +
+                                "${group.details["innerCleanAscentPx"]}+${group.details["innerCleanDescentPx"]}/" +
+                                "axis=${group.details["axisHeightPx"]}/" +
+                                "targets=${group.details["factorTargetPx"]},${group.details["shortfallTargetPx"]}->" +
+                                "${group.details["targetPx"]}/${group.details["groupBreakPolicy"]} " +
+                                delimiters.joinToString(",") { delimiter ->
+                                    "${delimiter.details["side"]}:${delimiter.details["sourceSpelling"]}/" +
+                                        "${delimiter.details["scalar"]}/${delimiter.details["construction"]}/" +
+                                        "${delimiter.details["glyphIds"]}@${delimiter.details["componentBaselineOriginsPx"]}/" +
+                                        "${delimiter.details["achievedAdvancePx"]}/" +
+                                        "${delimiter.details["centerShiftPx"]}/" +
+                                        "${delimiter.details["logicalAdvancePx"]}/" +
+                                        "${delimiter.details["capability"]}"
+                                },
+                        )
+                    }
                     "adjustment" -> appendLine(
                         "  evidence=" + result.fragments.joinToString(",") {
                             "${it.sourceRange.start}:ic=${it.trailingItalicCorrectionPx.fmt()}/" +

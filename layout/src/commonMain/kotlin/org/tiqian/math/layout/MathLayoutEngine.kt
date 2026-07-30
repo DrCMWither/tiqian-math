@@ -28,6 +28,10 @@ data class MathLayoutOptions(
      * Null keeps the selected OpenType MATH font's `SpaceAfterScript` constant.
      */
     val scriptSpacePx: Float? = null,
+    /** Plain-TeX `\delimiterfactor`; 901 means roughly 90.1% of the axis-symmetric span. */
+    val delimiterFactor: Int = 901,
+    /** Formula-scoped `\delimitershortfall` in pixels; null keeps the plain-TeX 5pt/10pt ratio. */
+    val delimiterShortfallPx: Float? = null,
 ) {
     init {
         require(fontSizePx > 0f) { "math font size must be positive" }
@@ -36,6 +40,10 @@ data class MathLayoutOptions(
         }
         require(scriptSpacePx == null || scriptSpacePx >= 0f) {
             "script space must not be negative"
+        }
+        require(delimiterFactor > 0) { "delimiter factor must be positive" }
+        require(delimiterShortfallPx == null || delimiterShortfallPx >= 0f) {
+            "delimiter shortfall must not be negative"
         }
     }
 }
@@ -61,6 +69,8 @@ private class MathLayoutPass(
     private var baseFontSizePx: Float = 24f
     private var nullDelimiterSpacePx: Float = 2.88f
     private var explicitScriptSpacePx: Float? = null
+    private var delimiterFactor: Int = 901
+    private var delimiterShortfallPx: Float = 12f
     private var nextConstructionPaintGroupId: Int = 1
 
     fun layout(source: String, options: MathLayoutOptions): MathLayoutResult {
@@ -69,6 +79,9 @@ private class MathLayoutPass(
         nullDelimiterSpacePx = options.nullDelimiterSpacePx
             ?: options.fontSizePx * DEFAULT_NULL_DELIMITER_SPACE_EM
         explicitScriptSpacePx = options.scriptSpacePx
+        delimiterFactor = options.delimiterFactor
+        delimiterShortfallPx = options.delimiterShortfallPx
+            ?: options.fontSizePx * DEFAULT_DELIMITER_SHORTFALL_EM
         val parsed = parser.parse(source)
         diagnostics += parsed.diagnostics
         val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
@@ -161,6 +174,15 @@ private class MathLayoutPass(
         }
         is MathFraction -> layoutFraction(node, style, alphabetOverride)
         is MathRadical -> layoutRadical(node, style, alphabetOverride)
+        is MathDelimited -> layoutDelimited(node, style, alphabetOverride)
+        is MathMiddleDelimiter -> LaidNode(
+            node,
+            emptyBox(node.range),
+            MathAtomClass.Inner,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
         is MathStyleDeclaration -> LaidNode(
             node,
             emptyBox(node.range),
@@ -203,6 +225,387 @@ private class MathLayoutPass(
             style = style,
             scriptBaseKind = ScriptBaseKind.CompoundBox,
         )
+    }
+
+    private fun layoutDelimited(
+        node: MathDelimited,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val segments = mutableListOf<MathList>()
+        val middles = mutableListOf<MathMiddleDelimiter>()
+        var segmentStart = node.body.range.start
+        var pending = mutableListOf<MathNode>()
+        fun finishSegment(endExclusive: Int) {
+            val range = if (pending.isEmpty()) {
+                SourceRange(segmentStart, segmentStart)
+            } else {
+                pending.first().range.cover(pending.last().range)
+            }
+            segments += MathList(pending.toList(), range)
+            pending = mutableListOf()
+            segmentStart = endExclusive
+        }
+        node.body.children.forEach { child ->
+            if (child is MathMiddleDelimiter) {
+                finishSegment(child.range.start)
+                middles += child
+                segmentStart = child.range.endExclusive
+            } else {
+                pending += child
+            }
+        }
+        finishSegment(node.body.range.endExclusive)
+
+        var segmentStyle = style
+        val segmentLayouts = segments.map { segment ->
+            layoutList(segment, segmentStyle, alphabetOverride).also {
+                segment.children.filterIsInstance<MathStyleDeclaration>().forEach { declaration ->
+                    segmentStyle = styleForLevel(declaration.requestedLevel)
+                }
+            }
+        }
+        val innerCleanAscent = segmentLayouts.maxOfOrNull { it.laid.box.texCleanBoxMetrics.ascent } ?: 0f
+        val innerCleanDescent = segmentLayouts.maxOfOrNull { it.laid.box.texCleanBoxMetrics.descent } ?: 0f
+        val delimiterSize = fontSize(style)
+        val axisHeight = glyphSource.mathFont.scaleDesignUnits(constants.axisHeight, delimiterSize)
+        val distanceBelowAxis = innerCleanDescent + axisHeight
+        val distanceAboveAxis = innerCleanAscent - axisHeight
+        val maxAxisDistance = maxOf(distanceBelowAxis, distanceAboveAxis).coerceAtLeast(0f)
+        val factorTarget = maxAxisDistance * delimiterFactor / 500f
+        val shortfallTarget = 2f * maxAxisDistance - delimiterShortfallPx
+        val target = maxOf(factorTarget, shortfallTarget).coerceAtLeast(0f)
+        val targetEvidence = DelimiterTargetEvidence(
+            innerCleanAscentPx = innerCleanAscent,
+            innerCleanDescentPx = innerCleanDescent,
+            axisHeightPx = axisHeight,
+            maxAxisDistancePx = maxAxisDistance,
+            factor = delimiterFactor,
+            shortfallPx = delimiterShortfallPx,
+            factorTargetPx = factorTarget,
+            shortfallTargetPx = shortfallTarget,
+            targetPx = target,
+        )
+
+        val left = layoutDelimiter(node.left, style, targetEvidence)
+        val middleLayouts = middles.map { layoutDelimiter(it.delimiter, style, targetEvidence) }
+        val right = layoutDelimiter(node.right, style, targetEvidence)
+        var x = 0f
+        val positionedChildren = mutableListOf<Pair<MathBox, Float>>()
+        val glyphs = mutableListOf<MathGlyphPlacement>()
+        val rules = mutableListOf<MathRulePlacement>()
+        val paintGroups = mutableListOf<MathConstructionPaintGroup>()
+        fun append(box: MathBox) {
+            val shifted = box.translated(x, 0f)
+            glyphs += shifted.glyphs
+            rules += shifted.rules
+            paintGroups += shifted.constructionPaintGroups
+            positionedChildren += box to 0f
+            x += box.width
+        }
+        append(left)
+        segmentLayouts.forEachIndexed { index, segment ->
+            append(segment.laid.box)
+            middleLayouts.getOrNull(index)?.let(::append)
+        }
+        append(right)
+        val geometry = geometryExtentsPreservingLogicalChildren(
+            width = x,
+            glyphs = glyphs,
+            rules = rules,
+            range = node.range,
+            children = positionedChildren,
+            constructionPaintGroups = paintGroups,
+        )
+        val box = geometry.copy(
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = geometry.ascent,
+                descent = geometry.descent,
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = geometry.texCleanBoxMetrics.evidence + MathTeXCleanBoxEvidence.CompletedChildBox,
+            ),
+        )
+        decision(
+            "TeXContentDrivenDelimitedGroup",
+            node.range,
+            "atomClass" to MathAtomClass.Inner,
+            "sizePolicy" to node.sizePolicy,
+            "innerCleanAscentPx" to innerCleanAscent,
+            "innerCleanDescentPx" to innerCleanDescent,
+            "axisHeightPx" to axisHeight,
+            "maxAxisDistancePx" to maxAxisDistance,
+            "delimiterFactor" to delimiterFactor,
+            "delimiterShortfallPx" to delimiterShortfallPx,
+            "factorTargetPx" to factorTarget,
+            "shortfallTargetPx" to shortfallTarget,
+            "targetPx" to target,
+            "middleCount" to middles.size,
+            "groupBreakPolicy" to "UnbreakableContentDrivenFencedInnerNoad",
+            "internalBreaksExported" to false,
+            "packingPolicy" to "TeXLeftMiddleRightNoInternalMathGlue",
+            "logicalAdvancePx" to box.width,
+            "cleanAscentPx" to box.texCleanBoxMetrics.ascent,
+            "cleanDescentPx" to box.texCleanBoxMetrics.descent,
+        )
+        return LaidNode(
+            node = node,
+            box = box,
+            atomClass = MathAtomClass.Inner,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutDelimiter(
+        spec: MathDelimiterSpec,
+        style: MathStyle,
+        target: DelimiterTargetEvidence,
+    ): MathBox {
+        val identity = spec.identity
+        if (identity == null || identity == MathDelimiterIdentity.Invisible) {
+            val nullSpace = if (identity == MathDelimiterIdentity.Invisible) nullDelimiterSpacePx else 0f
+            decision(
+                "TeXContentDrivenDelimiter",
+                spec.range,
+                "sourceSpelling" to spec.sourceText,
+                "commandRange" to spec.commandRange,
+                "delimiterRange" to spec.delimiterRange,
+                "scalar" to null,
+                "identity" to (identity?.debugName ?: "unsupported"),
+                "side" to spec.side,
+                "style" to style,
+                "fontSizePx" to fontSize(style),
+                "innerCleanAscentPx" to target.innerCleanAscentPx,
+                "innerCleanDescentPx" to target.innerCleanDescentPx,
+                "axisHeightPx" to target.axisHeightPx,
+                "delimiterFactor" to target.factor,
+                "delimiterShortfallPx" to target.shortfallPx,
+                "factorTargetPx" to target.factorTargetPx,
+                "shortfallTargetPx" to target.shortfallTargetPx,
+                "targetPx" to target.targetPx,
+                "targetPolicy" to "XeTeXMakeLeftRightAxisFactorShortfall",
+                "delimitedSubFormulaMinHeightUsed" to false,
+                "construction" to "None",
+                "glyphIds" to "",
+                "componentOffsetsDesignUnits" to "",
+                "achievedAdvancePx" to 0f,
+                "centerShiftPx" to 0f,
+                "logicalAdvancePx" to 0f,
+                "nullDelimiterSpacePx" to nullSpace,
+                "packedAdvancePx" to nullSpace,
+                "capability" to if (identity == MathDelimiterIdentity.Invisible) {
+                    "SupportedInvisibleDelimiter"
+                } else {
+                    "UnsupportedDelimiterRecovery"
+                },
+                "fallback" to false,
+                "groupBreakPolicy" to "UnbreakableContentDrivenFencedInnerNoad",
+            )
+            return emptyBox(spec.range).copy(width = nullSpace)
+        }
+
+        val size = fontSize(style)
+        val text = scalarString(checkNotNull(identity.scalar))
+        val baseMeasurement = glyphSource.shapeOutlineConstructionBase(text, size, spec.range)
+        val baseRun = baseMeasurement.run
+        val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
+        if (baseRun.missingGlyph || baseGlyphId == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingGlyph,
+                "The selected formula-wide math face has no ${identity.debugName} delimiter glyph",
+                spec.delimiterRange,
+            )
+        }
+        val construction = baseGlyphId?.let {
+            selectVerticalConstruction(
+                baseGlyphId = it,
+                normalRun = baseRun,
+                targetHeight = target.targetPx,
+                size = size,
+                style = style,
+                range = spec.range,
+                assemblyPolicy = MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
+            )
+        }
+        val componentMeasurements = construction?.components?.map { component ->
+            component to glyphSource.measureOutlineConstructionGlyph(
+                component.glyphId,
+                size,
+                style,
+                spec.range,
+            )
+        }
+        val placed = construction?.let {
+            placeVerticalConstruction(
+                construction = it,
+                componentRuns = componentMeasurements.orEmpty().map { measurement ->
+                    measurement.first to measurement.second.run
+                },
+                componentOutlineEvidences = componentMeasurements.orEmpty().map { it.second.evidence },
+                size = size,
+                style = style,
+                sourceRange = spec.range,
+                centerComponentsHorizontally = false,
+            )
+        }
+        val baseBox = measuredRunBox(baseRun, spec.range, style, size)
+        val rawBox = if (placed == null) {
+            baseBox
+        } else {
+            geometryExtents(placed.width, placed.glyphs, emptyList(), spec.range)
+        }
+        val achievedAdvance = construction?.let {
+            glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
+        } ?: rawBox.inkBounds.height
+        val axisY = -target.axisHeightPx
+        val centeringAscent = if (construction?.kind == MathConstructionKind.Assembly) {
+            achievedAdvance
+        } else {
+            (-rawBox.inkBounds.top).coerceAtLeast(0f)
+        }
+        val centeringDescent = if (construction?.kind == MathConstructionKind.Assembly) {
+            0f
+        } else {
+            rawBox.inkBounds.bottom.coerceAtLeast(0f)
+        }
+        val centerShift = (centeringAscent - centeringDescent) / 2f - target.axisHeightPx
+        val shiftedGlyphs = rawBox.glyphs.map { glyph ->
+            glyph.copy(
+                baselineY = glyph.baselineY + centerShift,
+                inkBounds = glyph.inkBounds.translated(0f, centerShift),
+            )
+        }
+        val outlineMeasurements = if (construction == null) {
+            listOf(baseMeasurement)
+        } else {
+            componentMeasurements.orEmpty().map { it.second }
+        }
+        val outlineAvailable = outlineMeasurements.isNotEmpty() &&
+            outlineMeasurements.all { it.outlineCapability == MathConstructionOutlineCapability.Replayable }
+        if (!outlineAvailable && shiftedGlyphs.isNotEmpty()) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingConstructionOutlineEvidence,
+                "The math font adapter cannot provide replayable outline evidence for ${identity.debugName}",
+                spec.range,
+            )
+        }
+        val paintGroup = shiftedGlyphs.takeIf { it.isNotEmpty() }?.let {
+            MathConstructionPaintGroup(
+                id = nextConstructionPaintGroupId++,
+                kind = MathConstructionPaintKind.Delimiter,
+                shapeKind = when (construction?.kind) {
+                    MathConstructionKind.Assembly -> MathConstructionShapeKind.Assembly
+                    MathConstructionKind.Variant -> MathConstructionShapeKind.Variant
+                    MathConstructionKind.BaseGlyph, null -> MathConstructionShapeKind.BaseGlyph
+                },
+                sourceRange = spec.range,
+                outlinePolicy = MathConstructionOutlinePolicy.RequireOutlineUnion,
+            )
+        }
+        val groupedGlyphs = shiftedGlyphs.map { glyph ->
+            glyph.copy(constructionGroupId = paintGroup?.id)
+        }
+        val visual = geometryExtents(
+            width = rawBox.width,
+            glyphs = groupedGlyphs,
+            rules = emptyList(),
+            range = spec.range,
+            constructionPaintGroups = listOfNotNull(paintGroup),
+        )
+        val logicalAscent = if (construction?.kind == MathConstructionKind.Assembly) {
+            (achievedAdvance - centerShift).coerceAtLeast(0f)
+        } else {
+            visual.ascent
+        }
+        val logicalDescent = if (construction?.kind == MathConstructionKind.Assembly) {
+            centerShift.coerceAtLeast(0f)
+        } else {
+            visual.descent
+        }
+        val box = visual.copy(
+            ascent = logicalAscent,
+            descent = logicalDescent,
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = logicalAscent,
+                descent = logicalDescent,
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = visual.texCleanBoxMetrics.evidence,
+            ),
+        )
+        val reachesTarget = achievedAdvance + GEOMETRY_EPSILON_PX >= target.targetPx
+        if (construction == null && !reachesTarget) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingMathConstruction,
+                "${identity.debugName} has no MATH construction covering ${target.targetPx}px",
+                spec.range,
+            )
+        } else if (construction != null && !construction.reachesTarget) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MathVariantTooShort,
+                "${identity.debugName} MATH construction does not reach the TeX delimiter target",
+                spec.range,
+                DiagnosticSeverity.Warning,
+            )
+        }
+        val assemblyValidation = construction?.assemblyValidation
+            ?: baseGlyphId?.let(glyphSource.mathFont::verticalAssemblyValidation)
+        decision(
+            "TeXContentDrivenDelimiter",
+            spec.range,
+            "sourceSpelling" to spec.sourceText,
+            "commandRange" to spec.commandRange,
+            "delimiterRange" to spec.delimiterRange,
+            "scalar" to unicodeLabel(checkNotNull(identity.scalar)),
+            "identity" to identity.debugName,
+            "side" to spec.side,
+            "style" to style,
+            "fontSizePx" to size,
+            "innerCleanAscentPx" to target.innerCleanAscentPx,
+            "innerCleanDescentPx" to target.innerCleanDescentPx,
+            "axisHeightPx" to target.axisHeightPx,
+            "delimiterFactor" to target.factor,
+            "delimiterShortfallPx" to target.shortfallPx,
+            "factorTargetPx" to target.factorTargetPx,
+            "shortfallTargetPx" to target.shortfallTargetPx,
+            "targetPx" to target.targetPx,
+            "targetPolicy" to "XeTeXMakeLeftRightAxisFactorShortfall",
+            "delimitedSubFormulaMinHeightUsed" to false,
+            "baseGlyphId" to baseGlyphId,
+            "construction" to (construction?.kind ?: "NormalGlyphFallback"),
+            "constructionPolicy" to construction?.constructionPolicy,
+            "glyphIds" to groupedGlyphs.joinToString(",") { it.glyphId.toString() },
+            "componentOffsetsDesignUnits" to construction?.components?.joinToString(",") { it.offset.toString() },
+            "componentBaselineOriginsPx" to placed?.componentBaselineOriginsPx?.joinToString(","),
+            "componentBottomOriginsPx" to placed?.componentBottomOriginsPx?.joinToString(","),
+            "componentHorizontalOriginsPx" to placed?.componentHorizontalOriginsPx?.joinToString(","),
+            "connectorOverlapsDesignUnits" to construction?.connectorOverlaps,
+            "extenderRepetitions" to construction?.extenderRepetitions,
+            "achievedAdvancePx" to achievedAdvance,
+            "reachesTarget" to reachesTarget,
+            "centeringMetric" to if (construction?.kind == MathConstructionKind.Assembly) {
+                "XeTeXAssemblyNominalAdvance"
+            } else {
+                "ExactGlyphBoundingBox"
+            },
+            "centerShiftPx" to centerShift,
+            "logicalAdvancePx" to box.width,
+            "logicalAscentPx" to box.ascent,
+            "logicalDescentPx" to box.descent,
+            "inkTopPx" to box.inkBounds.top,
+            "inkBottomPx" to box.inkBounds.bottom,
+            "outlineEvidence" to outlineMeasurements.joinToString(",") { it.evidence.evidenceLabel() },
+            "outlineCapability" to outlineMeasurements.joinToString(",") { it.outlineCapability.toString() },
+            "capability" to if (outlineAvailable) "ReplayableOutlineUnion" else "OutlineEvidenceUnavailable",
+            "fallback" to (construction == null),
+            "assemblyValid" to assemblyValidation?.valid,
+            "assemblyInvalidReasons" to assemblyValidation?.invalidReasons,
+            "assemblyValidationPolicy" to assemblyValidation?.validationPolicy,
+            "assemblySpecificationDivergence" to assemblyValidation?.specificationDivergence,
+            "assemblyPolicy" to MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
+            "groupBreakPolicy" to "UnbreakableContentDrivenFencedInnerNoad",
+        )
+        return box
     }
 
     private fun layoutAlphabetScopeNode(node: MathAlphabetScope, style: MathStyle): LaidNode {
@@ -2703,6 +3106,18 @@ private class MathLayoutPass(
         val scriptBaseKind: ScriptBaseKind,
     )
 
+    private data class DelimiterTargetEvidence(
+        val innerCleanAscentPx: Float,
+        val innerCleanDescentPx: Float,
+        val axisHeightPx: Float,
+        val maxAxisDistancePx: Float,
+        val factor: Int,
+        val shortfallPx: Float,
+        val factorTargetPx: Float,
+        val shortfallTargetPx: Float,
+        val targetPx: Float,
+    )
+
     private data class PlacedVerticalConstruction(
         val width: Float,
         val glyphs: List<MathGlyphPlacement>,
@@ -2778,7 +3193,18 @@ private fun MathConstructionOutlineEvidence.evidenceLabel(): String = when (this
 private fun unicodeLabel(scalar: Int): String = "U+${scalar.toString(16).uppercase().padStart(4, '0')}"
 
 private const val DEFAULT_NULL_DELIMITER_SPACE_EM = 0.12f
+private const val DEFAULT_DELIMITER_SHORTFALL_EM = 0.5f
 private const val RADICAL_SIGN = "\u221A"
+
+private fun scalarString(scalar: Int): String = if (scalar <= 0xFFFF) {
+    scalar.toChar().toString()
+} else {
+    val adjusted = scalar - 0x10000
+    charArrayOf(
+        ((adjusted ushr 10) + 0xD800).toChar(),
+        ((adjusted and 0x3FF) + 0xDC00).toChar(),
+    ).concatToString()
+}
 
 private enum class ScriptBaseKind {
     Character,

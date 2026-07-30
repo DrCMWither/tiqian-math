@@ -93,6 +93,9 @@ private fun PreviewScreen() {
                 Text("TeX fraction noad · fixed-style binomial delimiters", fontSize = 13.sp)
                 ScriptBinomialSample("Lete Sans Math", lete)
                 ScriptBinomialSample("STIX Two Math", stix)
+                Text("TeX content-driven delimiters · shared left/middle/right target", fontSize = 13.sp)
+                DelimiterNoadSample("Lete Sans Math", lete)
+                DelimiterNoadSample("STIX Two Math", stix)
                 Text("Operator-trailing line breaks · 260 px host width", fontSize = 13.sp)
                 TiqianMath(
                     source = "E_k=(n-1)E_{k-1}+E_{k-2}+\\frac{a+b}{\\binom{n}{k}}=y_2^3",
@@ -103,6 +106,41 @@ private fun PreviewScreen() {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun DelimiterNoadSample(label: String, face: SkiaMathFontFace) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            DelimiterPreviewTier("normal", "\\left(x\\right)", MathMode.Inline, face, 24)
+            DelimiterPreviewTier("middle", "\\left\\langle a\\middle|b\\right\\rangle", MathMode.Inline, face, 24)
+            DelimiterPreviewTier("invisible", "\\left.\\frac{a}{b}\\right|", MathMode.Inline, face, 22)
+        }
+    }
+}
+
+@Composable
+private fun DelimiterPreviewTier(
+    label: String,
+    source: String,
+    mode: MathMode,
+    face: SkiaMathFontFace,
+    sizeSp: Int,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, fontSize = 9.sp, color = Color(0xFF6B655E))
+        TiqianMath(
+            source = source,
+            modifier = Modifier.background(Color.White).padding(5.dp),
+            mode = mode,
+            fontFace = face,
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = sizeSp.sp, lineHeight = (sizeSp + 14).sp),
+            nullDelimiterSpacePx = TECTONIC_NULL_DELIMITER_SPACE_PX,
+            delimiterShortfallPx = TECTONIC_DELIMITER_SHORTFALL_PX,
+            softWrap = false,
+        )
     }
 }
 
@@ -307,7 +345,7 @@ private fun FontSample(label: String, face: SkiaMathFontFace, mode: MathMode) {
 @OptIn(ExperimentalComposeUiApi::class)
 private fun renderSnapshot() {
     auditRadicalPreviewTiers()
-    ImageComposeScene(width = 900, height = 4700) { PreviewScreen() }.use { scene ->
+    ImageComposeScene(width = 900, height = 5200) { PreviewScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/math-preview.png")
         output.parentFile.mkdirs()
@@ -342,7 +380,68 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("operator-side-script-oracle=${output.absolutePath} bytes=${output.length()}")
     }
+    ImageComposeScene(width = 1400, height = 1900) { DelimiterNoadOracleScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-delimiter-noad.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("delimiter-noad-oracle=${output.absolutePath} bytes=${output.length()}")
+    }
     renderRadicalSeamReport()
+}
+
+@Composable
+private fun DelimiterNoadOracleScreen() {
+    val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
+    DisposableEffect(lete, stix) {
+        onDispose {
+            lete.close()
+            stix.close()
+        }
+    }
+    MaterialTheme {
+        Surface(color = Color.White) {
+            Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Tiqian · exact repository OTF · Tectonic 0.17.0 comparison settings", fontSize = 13.sp)
+                Text(
+                    "nominal 32 px · delimiterfactor=901 · delimitershortfall=5pt · nulldelimiterspace=1.2pt",
+                    fontSize = 10.sp,
+                    color = Color(0xFF55504A),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(26.dp)) {
+                    DelimiterNoadFontColumn("Lete Sans Math", lete)
+                    DelimiterNoadFontColumn("STIX Two Math", stix)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DelimiterNoadFontColumn(label: String, face: SkiaMathFontFace) {
+    Column(Modifier.width(660.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+        DELIMITER_NOAD_PREVIEW_CASES.forEach { case ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("${case.label} · ${case.source}", fontSize = 8.sp, color = Color(0xFF6B655E))
+                TiqianMath(
+                    source = case.source,
+                    modifier = Modifier.background(Color(0xFFF7F5F1)).padding(4.dp),
+                    mode = case.mode,
+                    fontFace = face,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = case.fontSizeSp.sp,
+                        lineHeight = case.lineHeightSp.sp,
+                    ),
+                    nullDelimiterSpacePx = TECTONIC_NULL_DELIMITER_SPACE_PX,
+                    delimiterShortfallPx = TECTONIC_DELIMITER_SHORTFALL_PX,
+                    scriptSpacePx = TECTONIC_SCRIPT_SPACE_PX,
+                    softWrap = false,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -806,6 +905,35 @@ private const val SEAM_CROP_WIDTH_PX = 30
 private const val SEAM_CROP_HEIGHT_PX = 12
 private const val TECTONIC_NULL_DELIMITER_SPACE_PX = 1.2f * 96f / 72.27f
 private const val TECTONIC_SCRIPT_SPACE_PX = 0.5f * 96f / 72.27f
+private const val TECTONIC_DELIMITER_SHORTFALL_PX = 5f * 96f / 72.27f
+
+private data class DelimiterNoadPreviewCase(
+    val label: String,
+    val source: String,
+    val mode: MathMode = MathMode.Inline,
+    val fontSizeSp: Int = 32,
+    val lineHeightSp: Int = 58,
+)
+
+private val DELIMITER_TALL_CONTENT =
+    (1..8).fold("x") { content, _ -> "\\frac{$content}{y}" }
+
+private val DELIMITER_NOAD_PREVIEW_CASES = listOf(
+    DelimiterNoadPreviewCase("normal", "\\left(x\\right)"),
+    DelimiterNoadPreviewCase("fraction", "\\left(\\frac{a}{b}\\right)"),
+    DelimiterNoadPreviewCase("tall assembly", "\\left($DELIMITER_TALL_CONTENT\\right)", MathMode.Inline, 32, 180),
+    DelimiterNoadPreviewCase("invisible", "\\left.\\frac{a}{b}\\right|"),
+    DelimiterNoadPreviewCase("middle", "\\left\\langle a\\middle|\\frac{b}{c}\\right\\rangle"),
+    DelimiterNoadPreviewCase("nested", "\\left[\\sqrt{\\frac{a}{\\left(b+c\\right)}}\\right]", MathMode.Display, 32, 100),
+    DelimiterNoadPreviewCase("scripts", "\\left(\\frac{a}{b}\\right)_0^1"),
+    DelimiterNoadPreviewCase(
+        "complex",
+        "\\left\\langle\\sqrt{\\frac{a+b}{c+d}}\\middle|\\frac{\\sum\\limits_{i=1}^{n}i^2}{\\binom{2n}{n}}\\right\\rangle",
+        MathMode.Display,
+        32,
+        130,
+    ),
+)
 
 private val FRACTION_NOAD_PREVIEW_CASES = listOf(
     "inline fraction" to "\\frac{a}{b}",

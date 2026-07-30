@@ -60,7 +60,19 @@ enum class MathConstructionOutlineUnavailableReason {
 data class MeasuredOutlineConstructionRun(
     val run: MeasuredMathRun,
     val evidence: MathConstructionOutlineEvidence,
+    /** General path replay capability, independent from the radical-only top-stroke anchor. */
+    val outlineCapability: MathConstructionOutlineCapability = when (evidence) {
+        is MathConstructionOutlineEvidence.Available -> MathConstructionOutlineCapability.Replayable
+        is MathConstructionOutlineEvidence.Unavailable ->
+            MathConstructionOutlineCapability.Unavailable(evidence.reason)
+    },
 )
+
+sealed interface MathConstructionOutlineCapability {
+    data object Replayable : MathConstructionOutlineCapability
+    data class Unavailable(val reason: MathConstructionOutlineUnavailableReason) :
+        MathConstructionOutlineCapability
+}
 
 enum class MathGlyphBoundsSource {
     FontReported,

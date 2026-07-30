@@ -80,7 +80,8 @@ class MathParserTest {
         assertEquals(MathNamedSymbol.LeftBracket, assertIs<MathSymbolIdentity.Named>(ordinaryBrackets.first().identity).symbol)
 
         val generalDelimiters = MathParser().parse("\\left(x\\right)")
-        assertEquals(2, generalDelimiters.diagnostics.count { it.code == DiagnosticCode.UnsupportedCommand })
+        assertTrue(generalDelimiters.diagnostics.isEmpty(), generalDelimiters.diagnostics.toString())
+        assertIs<MathDelimited>(generalDelimiters.root.children.single())
     }
 
     @Test

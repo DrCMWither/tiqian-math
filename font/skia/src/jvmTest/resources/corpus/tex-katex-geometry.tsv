@@ -8,4 +8,5 @@ math-kern	x_1^2	OpenType MATH MathKern two-height algorithm	parsed corner kerns 
 operator-auto	\sum_i^n	TeX make_op displaylimits; OpenType MATH n-ary variants	Auto uses stacked limits only in display style and the operator follows the math axis
 operator-integral	\int_i^n	plain.tex integral nolimits; TeX op noad	integrals default to side scripts while an explicit limits modifier overrides
 radical-noad	\sqrt[3]{\frac{x}{y}}	TeX make_radical; LaTeX2e root; OpenType MATH radicals	radicand is cramped, degree is scriptscript, and named MATH radical geometry is used
+content-delimiter	\left\langle a\middle|\frac{b}{c}\right\rangle	Tectonic 0.17.0 XeTeX make_left_right box trace	all left middle right delimiters share the completed clean-box TeX target and remain unbreakable
 tall-binomial-fixed	\binom{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{\frac{a}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{b}}{k}	Tectonic 0.17.0 XeTeX box trace	tall content does not alter the fixed text-style binomial delimiter target

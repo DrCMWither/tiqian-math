@@ -209,6 +209,9 @@ private class ParserState(
     }
 
     private fun parseControlWord(token: MathToken): MathNode {
+        if (token.text == "left") return parseDelimited(token)
+        if (token.text == "right") return parseStrayDelimiterCommand(token, MathDelimiterSide.Right)
+        if (token.text == "middle") return parseStrayDelimiterCommand(token, MathDelimiterSide.Middle)
         TeXMathSymbolTable.largeOperator(token.text)?.let { identity ->
             return MathOperator(
                 sourceText = sourceSlice(token.range),
@@ -281,6 +284,127 @@ private class ParserState(
             token.range,
         )
         return MathErrorNode(sourceSlice(token.range), token.range)
+    }
+
+    private fun parseDelimited(leftCommand: MathToken): MathDelimited {
+        val left = parseDelimiterSpec(leftCommand, MathDelimiterSide.Left)
+        val children = mutableListOf<MathNode>()
+        var right: MathDelimiterSpec? = null
+        while (right == null) {
+            skipIgnored()
+            val token = peek()
+            when {
+                token.kind == MathTokenKind.End || token.kind == MathTokenKind.CloseGroup -> {
+                    val insertion = SourceRange(token.range.start, token.range.start)
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.MissingRightDelimiter,
+                        "Delimited group opened by \\left is missing its matching \\right",
+                        insertion,
+                    )
+                    right = syntheticInvisibleDelimiter(MathDelimiterSide.Right, insertion)
+                }
+                token.kind == MathTokenKind.ControlWord && token.text == "right" -> {
+                    val command = advance()
+                    right = parseDelimiterSpec(command, MathDelimiterSide.Right)
+                }
+                token.kind == MathTokenKind.ControlWord && token.text == "middle" -> {
+                    val command = advance()
+                    children += MathMiddleDelimiter(parseDelimiterSpec(command, MathDelimiterSide.Middle))
+                }
+                else -> parseAtomWithScripts()?.let(children::add)
+            }
+        }
+        val bodyRange = when {
+            children.isNotEmpty() -> children.first().range.cover(children.last().range)
+            else -> SourceRange(left.range.endExclusive, left.range.endExclusive)
+        }
+        val body = MathList(children, bodyRange)
+        return MathDelimited(
+            left = left,
+            body = body,
+            right = right,
+            range = leftCommand.range.cover(right.range),
+        )
+    }
+
+    private fun parseStrayDelimiterCommand(command: MathToken, side: MathDelimiterSide): MathNode {
+        val delimiter = parseDelimiterSpec(command, side)
+        diagnostics += MathDiagnostic(
+            if (side == MathDelimiterSide.Right) {
+                DiagnosticCode.UnexpectedRightDelimiter
+            } else {
+                DiagnosticCode.MiddleOutsideDelimitedGroup
+            },
+            if (side == MathDelimiterSide.Right) {
+                "Command \\right has no matching \\left"
+            } else {
+                "Command \\middle has no enclosing \\left ... \\right group"
+            },
+            delimiter.range,
+        )
+        return MathErrorNode(sourceSlice(delimiter.range), delimiter.range)
+    }
+
+    private fun parseDelimiterSpec(
+        command: MathToken,
+        side: MathDelimiterSide,
+    ): MathDelimiterSpec {
+        skipIgnored()
+        val token = peek()
+        if (token.kind in delimiterMissingKinds ||
+            (token.kind == MathTokenKind.ControlWord && token.text in delimiterBoundaryCommands)
+        ) {
+            diagnostics += MathDiagnostic(
+                when (side) {
+                    MathDelimiterSide.Left -> DiagnosticCode.MissingDelimiterAfterLeft
+                    MathDelimiterSide.Middle -> DiagnosticCode.MissingDelimiterAfterMiddle
+                    MathDelimiterSide.Right -> DiagnosticCode.MissingDelimiterAfterRight
+                },
+                "Command \\${command.text} must be followed by a delimiter token",
+                command.range,
+            )
+            val insertion = SourceRange(command.range.endExclusive, command.range.endExclusive)
+            return syntheticInvisibleDelimiter(side, insertion, command.range)
+        }
+
+        advance()
+        val identity = delimiterIdentity(token)
+        val totalRange = command.range.cover(token.range)
+        if (identity == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.UnsupportedDelimiter,
+                "${sourceSlice(token.range)} is not a supported delimiter after \\${command.text}",
+                token.range,
+            )
+        }
+        return MathDelimiterSpec(
+            sourceText = sourceSlice(token.range),
+            identity = identity,
+            side = side,
+            commandRange = command.range,
+            delimiterRange = token.range,
+            range = totalRange,
+        )
+    }
+
+    private fun syntheticInvisibleDelimiter(
+        side: MathDelimiterSide,
+        insertion: SourceRange,
+        commandRange: SourceRange = insertion,
+    ): MathDelimiterSpec = MathDelimiterSpec(
+        sourceText = "",
+        identity = MathDelimiterIdentity.Invisible,
+        side = side,
+        commandRange = commandRange,
+        delimiterRange = insertion,
+        range = if (commandRange.isEmpty) insertion else commandRange,
+    )
+
+    private fun delimiterIdentity(token: MathToken): MathDelimiterIdentity? = when (token.kind) {
+        MathTokenKind.Symbol -> literalDelimiters[token.text]
+        MathTokenKind.ControlSymbol -> controlSymbolDelimiters[token.text]
+        MathTokenKind.ControlWord -> commandDelimiters[token.text]
+        else -> null
     }
 
     private fun parseRequiredArgument(command: MathToken, role: String): MathNode {
@@ -402,13 +526,54 @@ private class ParserState(
         )
 
         val explicitlyUnsupportedCommands = setOf(
-            "left", "right", "overline", "underline",
+            "overline", "underline",
             "hat", "bar", "vec", "begin", "end", "text", "operatorname", "limits", "nolimits",
             "matrix", "cases", "newcommand", "def", "color", "mathnormal", "mathit", "mathbf",
             "boldsymbol", "mathsf",
         )
 
         val limitsModifiers = setOf("limits", "nolimits")
+
+        val delimiterMissingKinds = setOf(
+            MathTokenKind.End,
+            MathTokenKind.CloseGroup,
+            MathTokenKind.Superscript,
+            MathTokenKind.Subscript,
+        )
+        val delimiterBoundaryCommands = setOf("left", "middle", "right")
+        val literalDelimiters = mapOf(
+            "(" to MathDelimiterIdentity.LeftParenthesis,
+            ")" to MathDelimiterIdentity.RightParenthesis,
+            "[" to MathDelimiterIdentity.LeftBracket,
+            "]" to MathDelimiterIdentity.RightBracket,
+            "|" to MathDelimiterIdentity.VerticalBar,
+            "/" to MathDelimiterIdentity.Solidus,
+            "." to MathDelimiterIdentity.Invisible,
+        )
+        val controlSymbolDelimiters = mapOf(
+            "{" to MathDelimiterIdentity.LeftBrace,
+            "}" to MathDelimiterIdentity.RightBrace,
+            "|" to MathDelimiterIdentity.DoubleVerticalBar,
+        )
+        val commandDelimiters = mapOf(
+            "vert" to MathDelimiterIdentity.VerticalBar,
+            "Vert" to MathDelimiterIdentity.DoubleVerticalBar,
+            "lvert" to MathDelimiterIdentity.VerticalBar,
+            "rvert" to MathDelimiterIdentity.VerticalBar,
+            "langle" to MathDelimiterIdentity.LeftAngleBracket,
+            "rangle" to MathDelimiterIdentity.RightAngleBracket,
+            "lfloor" to MathDelimiterIdentity.LeftFloor,
+            "rfloor" to MathDelimiterIdentity.RightFloor,
+            "lceil" to MathDelimiterIdentity.LeftCeiling,
+            "rceil" to MathDelimiterIdentity.RightCeiling,
+            "backslash" to MathDelimiterIdentity.ReverseSolidus,
+            "uparrow" to MathDelimiterIdentity.UpArrow,
+            "downarrow" to MathDelimiterIdentity.DownArrow,
+            "updownarrow" to MathDelimiterIdentity.UpDownArrow,
+            "Uparrow" to MathDelimiterIdentity.DoubleUpArrow,
+            "Downarrow" to MathDelimiterIdentity.DoubleDownArrow,
+            "Updownarrow" to MathDelimiterIdentity.DoubleUpDownArrow,
+        )
 
     }
 

@@ -42,6 +42,7 @@ class ComparisonCorpusTest {
                 "operator-auto",
                 "operator-integral",
                 "radical-noad",
+                "content-delimiter",
             ),
             corpus.map { it.id }.toSet(),
         )
@@ -165,6 +166,19 @@ class ComparisonCorpusTest {
                             )
                             assertTrue(result.decisions.any { it.name == "OpenTypeRadicalConstruction" })
                         }
+                        ComparisonInvariant.ContentDrivenDelimiterTargetAndPacking -> {
+                            assertEquals(ComparisonOracle.TectonicXeTeXMakeLeftRightTrace, case.oracle)
+                            val group = result.decisions.single { it.name == "TeXContentDrivenDelimitedGroup" }
+                            val target = group.details.getValue("targetPx").toFloat()
+                            assertEquals("UnbreakableContentDrivenFencedInnerNoad", group.details["groupBreakPolicy"])
+                            assertEquals("false", group.details["internalBreaksExported"])
+                            val delimiters = result.decisions.filter { it.name == "TeXContentDrivenDelimiter" }
+                            assertEquals(3, delimiters.size)
+                            assertTrue(delimiters.all {
+                                abs(it.details.getValue("targetPx").toFloat() - target) <= 0.03f &&
+                                    it.details["targetPolicy"] == "XeTeXMakeLeftRightAxisFactorShortfall"
+                            }, case.toString())
+                        }
                     }
                 }
             }
@@ -189,6 +203,7 @@ private enum class ComparisonOracle(val corpusText: String) {
     TeXMakeOpAndOpenTypeNary("TeX make_op displaylimits; OpenType MATH n-ary variants"),
     PlainTeXIntegralNoLimits("plain.tex integral nolimits; TeX op noad"),
     TeXMakeRadicalAndOpenTypeMath("TeX make_radical; LaTeX2e root; OpenType MATH radicals"),
+    TectonicXeTeXMakeLeftRightTrace("Tectonic 0.17.0 XeTeX make_left_right box trace"),
     ;
 
     companion object {
@@ -208,6 +223,9 @@ private enum class ComparisonInvariant(val corpusText: String) {
     IntegralDefaultNoLimits("integrals default to side scripts while an explicit limits modifier overrides"),
     RadicalCrampedDegreeAndMathGeometry(
         "radicand is cramped, degree is scriptscript, and named MATH radical geometry is used",
+    ),
+    ContentDrivenDelimiterTargetAndPacking(
+        "all left middle right delimiters share the completed clean-box TeX target and remain unbreakable",
     ),
     ;
 

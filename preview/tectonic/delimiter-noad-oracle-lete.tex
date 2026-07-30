@@ -1,0 +1,48 @@
+\documentclass{article}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=300
+\showboxdepth=300
+\errorcontextlines=-1
+\newbox\oraclebox
+\def\DeepA{\frac{x}{y}}
+\def\DeepB{\frac{\DeepA}{y}}
+\def\DeepC{\frac{\DeepB}{y}}
+\def\DeepD{\frac{\DeepC}{y}}
+\def\DeepE{\frac{\DeepD}{y}}
+\def\DeepF{\frac{\DeepE}{y}}
+\def\DeepG{\frac{\DeepF}{y}}
+\def\DeepH{\frac{\DeepG}{y}}
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-DELIMITER-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-DELIMITER-ORACLE-#1-END}%
+}
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/]{LeteSansMath-Regular.otf}
+\traceformula{INLINE-NORMAL}{\left(x\right)}
+\traceformula{DISPLAY-NORMAL}{\displaystyle\left(x\right)}
+\traceformula{INLINE-FRACTION}{\left(\frac{a}{b}\right)}
+\traceformula{DISPLAY-FRACTION}{\displaystyle\left(\frac{a}{b}\right)}
+\traceformula{SCRIPT-FRACTION}{{\scriptstyle\left(\frac{a}{b}\right)}}
+\traceformula{INLINE-ASSEMBLY}{\left(\DeepH\right)}
+\traceformula{RADICAL}{\left[\sqrt{\frac{a}{b}}\right]}
+\traceformula{INVISIBLE}{\left.\frac{a}{b}\right|}
+\traceformula{MIDDLE}{\left\langle a\middle|\frac{b}{c}\right\rangle}
+\traceformula{MIDDLE-PLAIN}{\left\langle a|\frac{b}{c}\right\rangle}
+\traceformula{NESTED}{\left(\left[\frac{a}{b}\right]\right)}
+\traceformula{SCRIPTS}{\left(\frac{a}{b}\right)_0^1}
+\traceformula{SPACING-ORD}{a\left(b\right)c}
+\traceformula{SPACING-BIN}{a+\left(b\right)+c}
+\traceformula{SPACING-REL}{a=\left(b\right)=c}
+\traceformula{BRACE}{\left\{\frac{a}{b}\right\}}
+\traceformula{DOUBLE-BAR}{\left\|\frac{a}{b}\right\Vert}
+\traceformula{ANGLE}{\left\langle\frac{a}{b}\right\rangle}
+\traceformula{FLOOR}{\left\lfloor\frac{a}{b}\right\rfloor}
+\traceformula{CEILING}{\left\lceil\frac{a}{b}\right\rceil}
+\traceformula{SLASH}{\left/\frac{a}{b}\right\backslash}
+\traceformula{ARROW}{\left\uparrow\frac{a}{b}\right\Downarrow}
+\end{document}

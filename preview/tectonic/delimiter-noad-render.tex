@@ -1,0 +1,50 @@
+\documentclass{article}
+\usepackage[paperwidth=1050bp,paperheight=1425bp,margin=14bp]{geometry}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\usepackage{xcolor}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4bp}
+\delimiterfactor=901
+\delimitershortfall=5pt
+\nulldelimiterspace=1.2pt
+\def\DeepA{\frac{x}{y}}
+\def\DeepB{\frac{\DeepA}{y}}
+\def\DeepC{\frac{\DeepB}{y}}
+\def\DeepD{\frac{\DeepC}{y}}
+\def\DeepE{\frac{\DeepD}{y}}
+\def\DeepF{\frac{\DeepE}{y}}
+\def\DeepG{\frac{\DeepF}{y}}
+\def\DeepH{\frac{\DeepG}{y}}
+\newcommand{\Case}[2]{%
+  {\fontsize{7bp}{9bp}\selectfont\color{gray}#1\quad\texttt{\detokenize{#2}}\par}%
+  {\fontsize{24bp}{34bp}\selectfont\color{black}$#2$\par\vspace{3bp}}%
+}
+\newcommand{\DelimiterCases}{%
+  \Case{normal}{\left(x\right)}%
+  \Case{fraction}{\left(\frac{a}{b}\right)}%
+  {\fontsize{7bp}{9bp}\selectfont\color{gray}tall assembly\par}%
+  {\fontsize{24bp}{34bp}\selectfont$\left(\DeepH\right)$\par\vspace{3bp}}%
+  \Case{invisible}{\left.\frac{a}{b}\right|}%
+  \Case{middle}{\left\langle a\middle|\frac{b}{c}\right\rangle}%
+  {\fontsize{7bp}{9bp}\selectfont\color{gray}nested\par}%
+  {\fontsize{24bp}{34bp}\selectfont\[\left[\sqrt{\frac{a}{\left(b+c\right)}}\right]\]\vspace{3bp}}%
+  \Case{scripts}{\left(\frac{a}{b}\right)_0^1}%
+  {\fontsize{7bp}{9bp}\selectfont\color{gray}complex\par}%
+  {\fontsize{24bp}{34bp}\selectfont\[\left\langle\sqrt{\frac{a+b}{c+d}}\middle|\frac{\sum\limits_{i=1}^{n}i^2}{\binom{2n}{n}}\right\rangle\]}%
+}
+\begin{document}
+{\fontsize{10bp}{12bp}\selectfont\textbf{Tectonic 0.17.0 / XeTeX}\quad exact repository OTF\par}
+{\fontsize{7bp}{9bp}\selectfont nominal 32 px; delimiterfactor 901; delimitershortfall 5pt; nulldelimiterspace 1.2pt\par\vspace{5bp}}
+\begin{minipage}[t]{0.48\textwidth}
+  {\fontsize{9bp}{11bp}\selectfont\textbf{Lete Sans Math}\par}
+  \setmathfont[Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/]{LeteSansMath-Regular.otf}
+  \DelimiterCases
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\textwidth}
+  {\fontsize{9bp}{11bp}\selectfont\textbf{STIX Two Math}\par}
+  \setmathfont[Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/]{STIXTwoMath-Regular.otf}
+  \DelimiterCases
+\end{minipage}
+\end{document}

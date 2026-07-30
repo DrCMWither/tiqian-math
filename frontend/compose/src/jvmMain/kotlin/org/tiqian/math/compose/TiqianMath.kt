@@ -61,6 +61,10 @@ fun TiqianMath(
     nullDelimiterSpacePx: Float? = null,
     /** Explicit TeX `\scriptspace` in layout pixels; null retains the font MATH constant. */
     scriptSpacePx: Float? = null,
+    /** TeX `\delimiterfactor` used by content-driven `\left ... \right`. */
+    delimiterFactor: Int = 901,
+    /** Explicit TeX `\delimitershortfall` in layout pixels; null retains the engine policy. */
+    delimiterShortfallPx: Float? = null,
     color: Color = Color.Unspecified,
     softWrap: Boolean = true,
     fontFace: SkiaMathFontFace? = null,
@@ -84,7 +88,16 @@ fun TiqianMath(
     }
     val defaultFace = if (fontFace == null) rememberLeteMathFontFace() else null
     val resolvedFace = fontFace ?: checkNotNull(defaultFace)
-    val result = remember(source, mode, resolvedFontSizePx, nullDelimiterSpacePx, scriptSpacePx, resolvedFace) {
+    val result = remember(
+        source,
+        mode,
+        resolvedFontSizePx,
+        nullDelimiterSpacePx,
+        scriptSpacePx,
+        delimiterFactor,
+        delimiterShortfallPx,
+        resolvedFace,
+    ) {
         MathLayoutEngine(resolvedFace).layout(
             source,
             MathLayoutOptions(
@@ -92,6 +105,8 @@ fun TiqianMath(
                 resolvedFontSizePx,
                 nullDelimiterSpacePx = nullDelimiterSpacePx,
                 scriptSpacePx = scriptSpacePx,
+                delimiterFactor = delimiterFactor,
+                delimiterShortfallPx = delimiterShortfallPx,
             ),
         )
     }
