@@ -285,8 +285,16 @@ private class MathLayoutPass(
         val left = layoutDelimiter(node.left, style, targetEvidence)
         val middleLayouts = middles.map { layoutDelimiter(it.delimiter, style, targetEvidence) }
         val right = layoutDelimiter(node.right, style, targetEvidence)
+        val delimiterBoxes = listOf(left) + middleLayouts + right
+        val completedAscent = maxOf(
+            innerCleanAscent,
+            delimiterBoxes.maxOfOrNull { it.ascent } ?: 0f,
+        )
+        val completedDescent = maxOf(
+            innerCleanDescent,
+            delimiterBoxes.maxOfOrNull { it.descent } ?: 0f,
+        )
         var x = 0f
-        val positionedChildren = mutableListOf<Pair<MathBox, Float>>()
         val glyphs = mutableListOf<MathGlyphPlacement>()
         val rules = mutableListOf<MathRulePlacement>()
         val paintGroups = mutableListOf<MathConstructionPaintGroup>()
@@ -295,7 +303,6 @@ private class MathLayoutPass(
             glyphs += shifted.glyphs
             rules += shifted.rules
             paintGroups += shifted.constructionPaintGroups
-            positionedChildren += box to 0f
             x += box.width
         }
         append(left)
@@ -304,20 +311,24 @@ private class MathLayoutPass(
             middleLayouts.getOrNull(index)?.let(::append)
         }
         append(right)
-        val geometry = geometryExtentsPreservingLogicalChildren(
+        val paintedGeometry = geometryExtents(
             width = x,
             glyphs = glyphs,
             rules = rules,
             range = node.range,
-            children = positionedChildren,
             constructionPaintGroups = paintGroups,
         )
-        val box = geometry.copy(
+        val box = paintedGeometry.copy(
+            ascent = completedAscent,
+            descent = completedDescent,
             texCleanBoxMetrics = MathTeXCleanBoxMetrics(
-                ascent = geometry.ascent,
-                descent = geometry.descent,
+                ascent = completedAscent,
+                descent = completedDescent,
                 policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
-                evidence = geometry.texCleanBoxMetrics.evidence + MathTeXCleanBoxEvidence.CompletedChildBox,
+                evidence = paintedGeometry.texCleanBoxMetrics.evidence +
+                    segmentLayouts.flatMap { it.laid.box.texCleanBoxMetrics.evidence } +
+                    delimiterBoxes.flatMap { it.texCleanBoxMetrics.evidence } +
+                    MathTeXCleanBoxEvidence.CompletedChildBox,
             ),
         )
         decision(
@@ -338,6 +349,9 @@ private class MathLayoutPass(
             "groupBreakPolicy" to "UnbreakableContentDrivenFencedInnerNoad",
             "internalBreaksExported" to false,
             "packingPolicy" to "TeXLeftMiddleRightNoInternalMathGlue",
+            "completedBoxPolicy" to "XeTeXCompletedDelimiterNoadMaxOfInnerCleanAndDelimiterLogicalExtents",
+            "completedLogicalAscentPx" to completedAscent,
+            "completedLogicalDescentPx" to completedDescent,
             "logicalAdvancePx" to box.width,
             "cleanAscentPx" to box.texCleanBoxMetrics.ascent,
             "cleanDescentPx" to box.texCleanBoxMetrics.descent,

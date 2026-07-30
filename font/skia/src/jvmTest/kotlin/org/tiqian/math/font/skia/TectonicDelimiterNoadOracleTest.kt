@@ -35,6 +35,8 @@ class TectonicDelimiterNoadOracleTest {
                     if (case.assertWholeFormulaVerticalBox) {
                         assertNear(case.ascentPt * TEX_PT_TO_PX, result.box.ascent, "${oracle.label}/${case.label} height")
                         assertNear(case.descentPt * TEX_PT_TO_PX, result.box.descent, "${oracle.label}/${case.label} depth")
+                        assertNear(case.ascentPt * TEX_PT_TO_PX, result.box.texCleanBoxMetrics.ascent, "${oracle.label}/${case.label} clean height")
+                        assertNear(case.descentPt * TEX_PT_TO_PX, result.box.texCleanBoxMetrics.descent, "${oracle.label}/${case.label} clean depth")
                     }
                     case.glyphXsPx.forEachIndexed { index, expected ->
                         assertNear(expected, result.box.glyphs[index].x, "${oracle.label}/${case.label} glyph[$index].x")
@@ -96,6 +98,7 @@ class TectonicDelimiterNoadOracleTest {
             SkiaMathFontFace(LeteSansMath.load()),
             listOf(
                 Case("normal", "\\left(x\\right)", 28.93210f, 17.87549f, 4.38367f, listOf(9u, 3650u, 10u), listOf(0f, 10.080002f, 28.352009f), listOf(0f, 0f)),
+                Case("ordinary-b", "\\left(b\\right)", 28.90799f, 17.87549f, 4.38367f, listOf(9u, 3629u, 10u), emptyList(), listOf(0f, 0f)),
                 Case("display-normal", "\\left(x\\right)", 28.93210f, 17.87549f, 4.38367f, listOf(9u, 3650u, 10u), emptyList(), listOf(0f, 0f), mode = MathMode.Display),
                 Case("fraction", "\\left(\\frac{a}{b}\\right)", 31.28392f, 26.58403f, 13.09221f, listOf(1836u, 2701u, 2702u, 1851u), listOf(0f, 14.517222f, 14.394023f, 28.756046f), listOf(-0.016f, -0.016f)),
                 Case("display-fraction", "\\left(\\frac{a}{b}\\right)", 36.31870f, 30.53479f, 17.04297f, listOf(1837u, 3628u, 3629u, 1852u), emptyList(), listOf(-0.016f, -0.016f), mode = MathMode.Display),
@@ -103,9 +106,9 @@ class TectonicDelimiterNoadOracleTest {
                 Case("inline-assembly", INLINE_ASSEMBLY_SOURCE, 56.56593f, 116.01016f, 100.01834f, listOf(813u, 814u, 814u, 814u, 814u, 814u, 815u, 3224u, 3225u, 3225u, 3225u, 3225u, 3225u, 3225u, 3225u, 2725u, 816u, 817u, 817u, 817u, 817u, 817u, 818u), emptyList(), null),
                 Case("radical-content", "\\left[\\sqrt{\\frac{a}{b}}\\right]", 46.77379f, 26.58403f, 13.09221f, listOf(1866u, 1790u, 2701u, 2702u, 1881u), emptyList(), null),
                 Case("middle", MIDDLE, 54.19350f, 26.58403f, 13.09221f, listOf(2016u, 3628u, 1911u, 2702u, 2703u, 2031u), listOf(0f, 12.448f, 30.272f, 45.17802f, 45.95082f, 59.540047f), listOf(-0.016f, -0.016f, -0.016f)),
-                Case("middle-style-reset", MIDDLE_STYLE_RESET, 44.35692f, 17.87549f, 4.38367f, listOf(9u, 2701u, 93u, 3629u, 10u), emptyList(), listOf(0f, 0f, 0f), assertWholeFormulaVerticalBox = false),
-                Case("middle-multi-reset-a", MIDDLE_MULTI_RESET_A, 62.44852f, 17.87549f, 4.38367f, listOf(9u, 2701u, 93u, 3629u, 93u, 3630u, 10u), emptyList(), listOf(0f, 0f, 0f, 0f), assertWholeFormulaVerticalBox = false),
-                Case("middle-multi-reset-b", MIDDLE_MULTI_RESET_B, 62.32086f, 17.87549f, 4.38367f, listOf(9u, 3628u, 93u, 2702u, 93u, 3630u, 10u), emptyList(), listOf(0f, 0f, 0f, 0f), assertWholeFormulaVerticalBox = false),
+                Case("middle-style-reset", MIDDLE_STYLE_RESET, 44.35692f, 17.87549f, 4.38367f, listOf(9u, 2701u, 93u, 3629u, 10u), emptyList(), listOf(0f, 0f, 0f)),
+                Case("middle-multi-reset-a", MIDDLE_MULTI_RESET_A, 62.44852f, 17.87549f, 4.38367f, listOf(9u, 2701u, 93u, 3629u, 93u, 3630u, 10u), emptyList(), listOf(0f, 0f, 0f, 0f)),
+                Case("middle-multi-reset-b", MIDDLE_MULTI_RESET_B, 62.32086f, 17.87549f, 4.38367f, listOf(9u, 3628u, 93u, 2702u, 93u, 3630u, 10u), emptyList(), listOf(0f, 0f, 0f, 0f)),
                 Case("invisible", "\\left.\\frac{a}{b}\\right|", 23.23335f, 26.58403f, 13.09221f, listOf(2701u, 2702u, 1911u), listOf(3.311245f, 3.188045f, 17.550068f), listOf(-0.016f)),
                 Case("nested", "\\left(\\left[\\frac{a}{b}\\right]\\right)", 49.97777f, 26.58403f, 13.09221f, listOf(1836u, 1866u, 2701u, 2702u, 1881u, 1851u), emptyList(), null),
                 Case("scripts", "\\left(\\frac{a}{b}\\right)_0^1", 41.56447f, 31.70964f, 16.60007f, listOf(1836u, 2701u, 2702u, 1851u, 2549u, 2548u), listOf(0f, 14.517222f, 14.394023f, 28.756046f, 41.556046f, 41.556046f), listOf(-0.016f, -0.016f)),
@@ -126,6 +129,7 @@ class TectonicDelimiterNoadOracleTest {
             SkiaMathFontFace(StixTwoMath.load()),
             listOf(
                 Case("normal", "\\left(x\\right)", 30.90747f, 17.44182f, 5.01006f, listOf(1064u, 3354u, 1065u), listOf(0f, 11.424f, 29.632f), listOf(0.384f, 0.384f)),
+                Case("ordinary-b", "\\left(b\\right)", 29.79933f, 17.44182f, 5.01006f, listOf(1064u, 3327u, 1065u), emptyList(), listOf(0.384f, 0.384f)),
                 Case("display-normal", "\\left(x\\right)", 30.90747f, 17.44182f, 5.01006f, listOf(1064u, 3354u, 1065u), emptyList(), listOf(0.384f, 0.384f), mode = MathMode.Display),
                 Case("fraction", "\\left(\\frac{a}{b}\\right)", 33.24242f, 26.28285f, 14.31337f, listOf(1303u, 4421u, 4422u, 1315u), listOf(0f, 15.258022f, 15.4484215f, 30.493647f), listOf(0.384f, 0.384f)),
                 Case("display-fraction", "\\left(\\frac{a}{b}\\right)", 36.34279f, 26.95834f, 15.70831f, listOf(1303u, 3326u, 3327u, 1315u), emptyList(), listOf(0.384f, 0.384f), mode = MathMode.Display),
@@ -133,9 +137,9 @@ class TectonicDelimiterNoadOracleTest {
                 Case("inline-assembly", INLINE_ASSEMBLY_SOURCE, 51.68771f, 130.97585f, 116.04408f, listOf(4860u, 4861u, 4861u, 4861u, 4861u, 4861u, 4861u, 4861u, 4862u, 4699u, 4700u, 4700u, 4700u, 4700u, 4700u, 4700u, 4700u, 4451u, 4863u, 4864u, 4864u, 4864u, 4864u, 4864u, 4864u, 4864u, 4865u), emptyList(), null),
                 Case("radical-content", "\\left[\\sqrt{\\frac{a}{b}}\\right]", 58.41647f, 30.06192f, 16.74190f, listOf(1328u, 1658u, 4421u, 4422u, 1340u), emptyList(), null),
                 Case("middle", MIDDLE, 52.61317f, 26.67395f, 14.33023f, listOf(2495u, 3326u, 1062u, 1062u, 4422u, 4423u, 2500u), listOf(0f, 13.568f, 31.328f, 31.328f, 41.46602f, 42.72042f, 56.320847f), listOf(0.384f, 9.291928f, -10.25193f, 0.384f)),
-                Case("middle-style-reset", MIDDLE_STYLE_RESET, 46.50093f, 17.44182f, 5.01006f, listOf(1064u, 4421u, 1062u, 3327u, 1065u), emptyList(), listOf(0.384f, -0.4808f, 0.384f), assertWholeFormulaVerticalBox = false),
-                Case("middle-multi-reset-a", MIDDLE_MULTI_RESET_A, 62.90620f, 17.44182f, 5.01006f, listOf(1064u, 4421u, 1062u, 3327u, 1062u, 3328u, 1065u), emptyList(), listOf(0.384f, -0.4808f, -0.4808f, 0.384f), assertWholeFormulaVerticalBox = false),
-                Case("middle-multi-reset-b", MIDDLE_MULTI_RESET_B, 63.39040f, 17.44182f, 5.01006f, listOf(1064u, 3326u, 1062u, 4422u, 1062u, 3328u, 1065u), emptyList(), listOf(0.384f, -0.4808f, -0.4808f, 0.384f), assertWholeFormulaVerticalBox = false),
+                Case("middle-style-reset", MIDDLE_STYLE_RESET, 46.50093f, 17.44182f, 5.01006f, listOf(1064u, 4421u, 1062u, 3327u, 1065u), emptyList(), listOf(0.384f, -0.4808f, 0.384f)),
+                Case("middle-multi-reset-a", MIDDLE_MULTI_RESET_A, 62.90620f, 17.44182f, 5.01006f, listOf(1064u, 4421u, 1062u, 3327u, 1062u, 3328u, 1065u), emptyList(), listOf(0.384f, -0.4808f, -0.4808f, 0.384f)),
+                Case("middle-multi-reset-b", MIDDLE_MULTI_RESET_B, 63.39040f, 17.44182f, 5.01006f, listOf(1064u, 3326u, 1062u, 4422u, 1062u, 3328u, 1065u), emptyList(), listOf(0.384f, -0.4808f, -0.4808f, 0.384f)),
                 Case("invisible", "\\left.\\frac{a}{b}\\right|", 20.30159f, 24.70717f, 14.31337f, listOf(4421u, 4422u, 1062u, 1062u), listOf(3.188045f, 3.3784442f, 18.42367f, 18.42367f), listOf(9.271749f, -10.231747f)),
                 Case("nested", "\\left(\\left[\\frac{a}{b}\\right]\\right)", 52.94804f, 26.28285f, 14.31337f, listOf(1303u, 1327u, 4421u, 4422u, 1339u, 1315u), emptyList(), null),
                 Case("scripts", "\\left(\\frac{a}{b}\\right)_0^1", 43.52296f, 33.65157f, 17.23096f, listOf(1303u, 4421u, 4422u, 1315u, 4274u, 4273u), listOf(0f, 15.258022f, 15.4484215f, 30.493647f, 44.157646f, 44.157646f), listOf(0.384f, 0.384f)),
