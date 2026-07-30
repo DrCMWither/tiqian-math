@@ -94,7 +94,7 @@ class MathSideScriptInkPlacementTest {
         }
 
     @Test
-    fun actualBaseAndScriptInkEdgesDriveNamedConstraintsForBothFonts() =
+    fun nativeGlyphAndCompletedCompoundBoxesDriveNamedConstraintsForBothFonts() =
         withSideScriptFaces { label, delegate ->
             val size = 48f
             val constants = delegate.mathFont.constants.copy(
@@ -133,14 +133,14 @@ class MathSideScriptInkPlacementTest {
                 MathLayoutOptions(MathMode.Inline, size),
             ).scriptDecision(MathStyle.Text)
             assertNear(
-                -shortBase.inkBounds.top,
+                shortBase.texCleanBoxMetrics.ascent,
                 shortBaseSuperscript.float("superscriptShiftPx"),
-                "$label SuperscriptBaselineDropMax uses short base ink top",
+                "$label SuperscriptBaselineDropMax uses short completed base top",
             )
             assertNear(
-                -tallBase.inkBounds.top,
+                tallBase.texCleanBoxMetrics.ascent,
                 tallBaseSuperscript.float("superscriptShiftPx"),
-                "$label SuperscriptBaselineDropMax uses tall base ink top",
+                "$label SuperscriptBaselineDropMax uses tall completed base top",
             )
 
             val shortBaseSubscript = baselineDropEngine.layout(
@@ -152,14 +152,14 @@ class MathSideScriptInkPlacementTest {
                 MathLayoutOptions(MathMode.Inline, size),
             ).scriptDecision(MathStyle.Text)
             assertNear(
-                shortBase.inkBounds.bottom,
+                shortBase.texCleanBoxMetrics.descent,
                 shortBaseSubscript.float("subscriptShiftPx"),
-                "$label SubscriptBaselineDropMin uses short base ink bottom",
+                "$label SubscriptBaselineDropMin uses short completed base bottom",
             )
             assertNear(
-                tallBase.inkBounds.bottom,
+                tallBase.texCleanBoxMetrics.descent,
                 tallBaseSubscript.float("subscriptShiftPx"),
-                "$label SubscriptBaselineDropMin uses deep base ink bottom",
+                "$label SubscriptBaselineDropMin uses deep completed base bottom",
             )
 
             val shallowScriptSource = "{y}"
@@ -182,14 +182,14 @@ class MathSideScriptInkPlacementTest {
                 MathLayoutOptions(MathMode.Inline, size),
             ).scriptDecision(MathStyle.Text)
             assertNear(
-                shallowScript.inkBounds.bottom,
+                shallowScript.texCleanBoxMetrics.descent,
                 shallowSuperscript.float("superscriptShiftPx"),
-                "$label SuperscriptBottomMin uses shallow script ink bottom",
+                "$label SuperscriptBottomMin uses shallow completed script bottom",
             )
             assertNear(
-                deepScript.inkBounds.bottom,
+                deepScript.texCleanBoxMetrics.descent,
                 deepSuperscript.float("superscriptShiftPx"),
-                "$label SuperscriptBottomMin uses deep script ink bottom",
+                "$label SuperscriptBottomMin uses deep completed script bottom",
             )
             assertEquals("CompoundBox", deepSuperscript.details["superscriptKind"])
 
@@ -203,14 +203,14 @@ class MathSideScriptInkPlacementTest {
                 MathLayoutOptions(MathMode.Inline, size),
             ).scriptDecision(MathStyle.Text)
             assertNear(
-                -shallowScript.inkBounds.top,
+                shallowScript.texCleanBoxMetrics.ascent,
                 shallowSubscript.float("subscriptShiftPx"),
-                "$label SubscriptTopMax uses shallow script ink top",
+                "$label SubscriptTopMax uses shallow completed script top",
             )
             assertNear(
-                -deepScript.inkBounds.top,
+                deepScript.texCleanBoxMetrics.ascent,
                 tallSubscript.float("subscriptShiftPx"),
-                "$label SubscriptTopMax uses tall script ink top",
+                "$label SubscriptTopMax uses tall completed script top",
             )
             assertEquals("CompoundBox", tallSubscript.details["subscriptKind"])
 
@@ -219,16 +219,30 @@ class MathSideScriptInkPlacementTest {
             val pairedDecision = paired.scriptDecision(MathStyle.Text)
             val subscriptGlyph = paired.box.glyphs.single { it.sourceRange == SourceRange(3, 4) }
             val superscriptGlyph = paired.box.glyphs.single { it.sourceRange == SourceRange(7, 8) }
-            val replayedGap = subscriptGlyph.inkBounds.top - superscriptGlyph.inkBounds.bottom
+            val subscriptOutline = face.measureGlyphOutlineBounds(
+                subscriptGlyph.glyphId,
+                subscriptGlyph.fontSizePx,
+                subscriptGlyph.style,
+                subscriptGlyph.sourceRange,
+            ).glyphs.single().inkBounds
+            val superscriptOutline = face.measureGlyphOutlineBounds(
+                superscriptGlyph.glyphId,
+                superscriptGlyph.fontSizePx,
+                superscriptGlyph.style,
+                superscriptGlyph.sourceRange,
+            ).glyphs.single().inkBounds
+            val replayedGap =
+                (subscriptGlyph.baselineY + subscriptOutline.top) -
+                    (superscriptGlyph.baselineY + superscriptOutline.bottom)
             val expectedGap = face.mathFont.scaleDesignUnits(constants.subSuperscriptGapMin, size)
             assertNear(expectedGap, replayedGap, "$label paired-script final glyph ink gap")
             assertNear(replayedGap, pairedDecision.float("finalInkGapPx"), "$label decision replays final ink gap")
             assertEquals(
-                "OpenTypeMATH1.9InkEdgesForOrdinarySideScripts",
+                "XeTeXNativeGlyphOutlineOrCompletedChildBoxForOrdinarySideScripts",
                 pairedDecision.details["verticalPlacementMetricPolicy"],
             )
             assertEquals(
-                "PreserveTranslatedChildLogicalExtentsAfterInkConstrainedPlacement",
+                "ExactOutlinePlacementWithCompletedChildBoxes",
                 pairedDecision.details["logicalReservePolicy"],
             )
         }

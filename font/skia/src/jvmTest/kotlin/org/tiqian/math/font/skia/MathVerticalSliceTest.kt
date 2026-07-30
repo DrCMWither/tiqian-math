@@ -83,9 +83,8 @@ class MathVerticalSliceTest {
             fractionSource,
             MathLayoutOptions(MathMode.Display, size),
         )
+        val fractionStack = fraction.decisions.single { it.name == "OpenTypeMathFractionStack" }
         val rule = fraction.box.rules.single()
-        val numerator = fraction.glyphAt(fractionSource.lastIndexOf('a'))
-        val denominator = fraction.glyphAt(fractionSource.lastIndexOf('b'))
         assertNear(
             -face.mathFont.scaleDesignUnits(constants.axisHeight, size),
             (rule.top + rule.bottom) / 2f,
@@ -97,12 +96,12 @@ class MathVerticalSliceTest {
             "$label fraction rule",
         )
         assertAtLeast(
-            rule.top - numerator.inkBounds.bottom,
+            fractionStack.float("actualNumeratorGapPx"),
             face.mathFont.scaleDesignUnits(constants.fractionNumDisplayStyleGapMin, size),
             "$label numerator clearance",
         )
         assertAtLeast(
-            denominator.inkBounds.top - rule.bottom,
+            fractionStack.float("actualDenominatorGapPx"),
             face.mathFont.scaleDesignUnits(constants.fractionDenomDisplayStyleGapMin, size),
             "$label denominator clearance",
         )
@@ -284,13 +283,13 @@ class MathVerticalSliceTest {
         assertNear(120f, scriptGap, "synthetic subSuperscriptGapMin")
 
         val fraction = MathLayoutEngine(face).layout("\\frac{a}{b}", MathLayoutOptions(MathMode.Display, size))
-        val rule = fraction.box.rules.single()
-        assertNear(61f, rule.top - fraction.glyphAt(6).inkBounds.bottom, "synthetic fractionNumDisplayStyleGapMin")
-        assertNear(73f, fraction.glyphAt(9).inkBounds.top - rule.bottom, "synthetic fractionDenomDisplayStyleGapMin")
+        val fractionStack = fraction.decisions.single { it.name == "OpenTypeMathFractionStack" }
+        assertNear(61f, fractionStack.float("actualNumeratorGapPx"), "synthetic fractionNumDisplayStyleGapMin")
+        assertNear(73f, fractionStack.float("actualDenominatorGapPx"), "synthetic fractionDenomDisplayStyleGapMin")
 
         val stack = MathLayoutEngine(face).layout("\\binom{n}{k}", MathLayoutOptions(MathMode.Display, size))
-        val stackGap = stack.glyphAt(10).inkBounds.top - stack.glyphAt(7).inkBounds.bottom
-        assertNear(140f, stackGap, "synthetic stackDisplayStyleGapMin")
+        val stackDecision = stack.decisions.single { it.name == "OpenTypeMathFractionStack" }
+        assertNear(140f, stackDecision.float("actualGapPx"), "synthetic stackDisplayStyleGapMin")
     }
 }
 
@@ -343,6 +342,8 @@ private inline fun withRealFaces(block: (String, SkiaMathFontFace) -> Unit) {
 private fun MathLayoutResult.glyphAt(sourceOffset: Int): MathGlyphPlacement =
     box.glyphs.firstOrNull { it.sourceRange == SourceRange(sourceOffset, sourceOffset + 1) }
         ?: box.glyphs.first { sourceOffset in it.sourceRange.start until it.sourceRange.endExclusive }
+
+private fun MathLayoutDecision.float(key: String): Float = details.getValue(key).toFloat()
 
 private fun expectedSize(font: OpenTypeMathFont, baseSize: Float, style: MathStyle): Float = when (style.level) {
     MathStyleLevel.Display, MathStyleLevel.Text -> baseSize

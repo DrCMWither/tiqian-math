@@ -6,6 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.tiqian.math.core.MathLayoutDecision
 import org.tiqian.math.core.MathMode
+import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathLayoutEngine
@@ -64,6 +65,13 @@ class TectonicRadicalVerticalOracleTest {
                             "${geometry.details["unindexedDescentPx"]} " +
                             "degree=${geometry.details["degreeBaselineY"]}",
                     )
+                    if (case.label == "fraction scripts" || case.label == "fraction of radical scripts") {
+                        result.decisions.filter {
+                            it.name == "OpenTypeMathScriptPlacement" ||
+                                it.name == "TeXFractionChildBoxMetrics" ||
+                                it.name == "OpenTypeMathFractionStack"
+                        }.forEach { println("radical-composition-current=${oracle.label}/${case.label} $it") }
+                    }
                     if (case.label == "display assembly") {
                         result.decisions.filter { it.name == "OpenTypeMathRadical" }.forEachIndexed { index, nested ->
                             println(
@@ -80,6 +88,12 @@ class TectonicRadicalVerticalOracleTest {
                     }
 
                     runCatching {
+                        result.decisions.filter { it.name == "TeXFractionChildBoxMetrics" }.forEach { child ->
+                            assertEquals("CompletedChildTeXCleanBoxMetrics", child.details["policy"])
+                        }
+                        result.decisions.filter { it.name == "OpenTypeMathFractionStack" }.forEach { stack ->
+                            assertEquals("XeTeXPostCleanBoxChildMathFontSize", stack.details["gapConstantScalePolicy"])
+                        }
                         assertEquals(case.construction, construction.details["construction"], case.message(oracle, "construction"))
                         assertEquals(case.componentGlyphIds, construction.details.getValue("componentGlyphIds").csvUShorts())
                         assertNear(
@@ -106,6 +120,12 @@ class TectonicRadicalVerticalOracleTest {
                         assertNear(expectedRuleBottom, geometry.float("texDelimiterBoxShiftPx"), case.message(oracle, "delimiter box shift"))
                         case.degreeBaselinePt?.let {
                             assertNear(it.px(), geometry.float("degreeBaselineY"), case.message(oracle, "degree baseline"))
+                        }
+                        case.formulaAscentPt?.let {
+                            assertNear(it.px(), result.box.ascent, case.message(oracle, "completed formula ascent"))
+                        }
+                        case.formulaDescentPt?.let {
+                            assertNear(it.px(), result.box.descent, case.message(oracle, "completed formula descent"))
                         }
                         if (case.construction == "Assembly") {
                             assertEquals(
@@ -179,6 +199,81 @@ class TectonicRadicalVerticalOracleTest {
         }
     }
 
+    @Test
+    fun ordinaryScriptsUseOneXeTeXPlacementForGlyphsCompletedBoxAndCleanMetrics() {
+        radicalFonts().forEach { oracle ->
+            oracle.face.use { face ->
+                val engine = MathLayoutEngine(face)
+                sideScriptCases(oracle.label).forEach { case ->
+                    val result = engine.layout(case.source, MathLayoutOptions(fontSizePx = FONT_SIZE_PX))
+                    val placement = result.decisions.single { it.name == "OpenTypeMathScriptPlacement" }
+
+                    assertNear(case.ascentPt.px(), result.box.ascent, "${oracle.label}/${case.label} ascent")
+                    assertNear(case.descentPt.px(), result.box.descent, "${oracle.label}/${case.label} descent")
+                    assertNear(
+                        result.box.ascent,
+                        result.box.texCleanBoxMetrics.ascent,
+                        "${oracle.label}/${case.label} completed/clean ascent",
+                    )
+                    assertNear(
+                        result.box.descent,
+                        result.box.texCleanBoxMetrics.descent,
+                        "${oracle.label}/${case.label} completed/clean descent",
+                    )
+                    val paintedInkAscent = (-result.box.inkBounds.top).coerceAtLeast(0f)
+                    val paintedInkDescent = result.box.inkBounds.bottom.coerceAtLeast(0f)
+                    assertNear(
+                        paintedInkAscent,
+                        result.lineMetrics.inkAscentPx,
+                        "${oracle.label}/${case.label} host metrics expose painted ink ascent",
+                    )
+                    assertNear(
+                        paintedInkDescent,
+                        result.lineMetrics.inkDescentPx,
+                        "${oracle.label}/${case.label} host metrics expose painted ink descent",
+                    )
+                    assertTrue(
+                        result.lineMetrics.logicalAscentPx + EPSILON_PX >=
+                            maxOf(result.box.ascent, paintedInkAscent) + result.lineMetrics.mathLeadingPx,
+                        "${oracle.label}/${case.label} host ascent reserves TeX box and painted ink independently",
+                    )
+                    assertTrue(
+                        result.lineMetrics.logicalDescentPx + EPSILON_PX >=
+                            maxOf(result.box.descent, paintedInkDescent),
+                        "${oracle.label}/${case.label} host descent reserves TeX box and painted ink independently",
+                    )
+                    assertEquals(
+                        "XeTeXNativeGlyphOutlineOrCompletedChildBoxForOrdinarySideScripts",
+                        placement.details["verticalPlacementMetricPolicy"],
+                    )
+                    assertEquals("SamePlacementAsPaintedGlyphs", placement.details["texCleanBoxPlacementPolicy"])
+                    case.superscriptShiftPt?.let { expectedPt ->
+                        val expected = expectedPt.px()
+                        val glyph = result.box.glyphs.single { it.sourceRange == case.superscriptRange }
+                        assertNear(-expected, glyph.baselineY, "${oracle.label}/${case.label} superscript glyph baseline")
+                        assertNear(expected, placement.float("superscriptShiftPx"), "${oracle.label}/${case.label} superscript shift")
+                        assertNear(
+                            expected,
+                            placement.float("texCleanBoxSuperscriptShiftPx"),
+                            "${oracle.label}/${case.label} shared superscript shift",
+                        )
+                    }
+                    case.subscriptShiftPt?.let { expectedPt ->
+                        val expected = expectedPt.px()
+                        val glyph = result.box.glyphs.single { it.sourceRange == case.subscriptRange }
+                        assertNear(expected, glyph.baselineY, "${oracle.label}/${case.label} subscript glyph baseline")
+                        assertNear(expected, placement.float("subscriptShiftPx"), "${oracle.label}/${case.label} subscript shift")
+                        assertNear(
+                            expected,
+                            placement.float("texCleanBoxSubscriptShiftPx"),
+                            "${oracle.label}/${case.label} shared subscript shift",
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     private fun radicalFonts(): List<RadicalFontOracle> = listOf(
         RadicalFontOracle(
             label = "Lete Sans Math",
@@ -191,6 +286,14 @@ class TectonicRadicalVerticalOracleTest {
                 RadicalOracleCase("subscript", "\\sqrt{x_j}", MathMode.Inline, 19.33551f, 10.247f, 12.18954f, 9.07535f, 27.75166f, 3.48428f, 1.83084f, "BaseGlyph", listOf(557u)),
                 RadicalOracleCase("superscript fraction", "\\sqrt{x^{\\frac{a}{b}}}", MathMode.Inline, 34.45316f, 2.78998f, 25.68884f, 0f, 35.41229f, 5.10263f, 1.83084f, "Variant", listOf(1790u)),
                 RadicalOracleCase("subscript radical", "\\sqrt{x_{\\sqrt{y}}}", MathMode.Inline, 21.9812f, 15.26193f, 12.18954f, 11.44461f, 35.41229f, 6.12997f, 1.83084f, "Variant", listOf(1790u)),
+                RadicalOracleCase("fraction scripts", "\\sqrt{\\frac{x_j^2}{b}}", MathMode.Inline, 40.18665f, 12.32956f, 33.56523f, 11.68246f, 50.68536f, 2.95973f, 1.83084f, "Variant", listOf(1792u)),
+                RadicalOracleCase(
+                    "fraction of radical scripts", "\\frac{\\sqrt{x_j^2}}{b}", MathMode.Inline,
+                    21.85205f, 9.56374f, 16.39084f, 8.28455f, 30.13421f, 2.89804f,
+                    1.28159f, "Variant", listOf(1791u),
+                    formulaAscentPt = 40.30563f,
+                    formulaDescentPt = 11.68246f,
+                ),
                 RadicalOracleCase("fraction", "\\sqrt{\\frac{a}{b}}", MathMode.Inline, 25.53899f, 11.70415f, 19.54297f, 11.68246f, 35.41229f, 2.33434f, 1.83084f, "Variant", listOf(1790u)),
                 RadicalOracleCase("nested sum", "\\sqrt{1+\\sqrt{x}}", MathMode.Inline, 30.69066f, 6.55247f, 23.87318f, 5.70932f, 35.41229f, 3.15579f, 1.83084f, "Variant", listOf(1790u)),
                 RadicalOracleCase("nested only", "\\sqrt{\\sqrt{x}}", MathMode.Inline, 30.69066f, 6.55247f, 23.87318f, 5.70932f, 35.41229f, 3.15579f, 1.83084f, "Variant", listOf(1790u)),
@@ -224,6 +327,14 @@ class TectonicRadicalVerticalOracleTest {
                 RadicalOracleCase("subscript", "\\sqrt{x_j}", MathMode.Inline, 19.11275f, 11.12021f, 11.53911f, 8.87047f, 28.59483f, 4.2974f, 1.63812f, "BaseGlyph", listOf(1657u)),
                 RadicalOracleCase("superscript fraction", "\\sqrt{x^{\\frac{a}{b}}}", MathMode.Inline, 40.73964f, 5.56134f, 30.0953f, 0.2409f, 44.66285f, 7.36809f, 1.63812f, "Variant", listOf(1658u)),
                 RadicalOracleCase("subscript radical", "\\sqrt{x_{\\sqrt{y}}}", MathMode.Inline, 17.399f, 12.83395f, 11.53911f, 12.29797f, 28.59483f, 2.58365f, 1.63812f, "BaseGlyph", listOf(1657u)),
+                RadicalOracleCase("fraction scripts", "\\sqrt{\\frac{x_j^2}{b}}", MathMode.Inline, 41.44879f, 17.28262f, 33.15562f, 14.31337f, 57.09329f, 5.01692f, 1.63812f, "Variant", listOf(1659u)),
+                RadicalOracleCase(
+                    "fraction of radical scripts", "\\frac{\\sqrt{x_j^2}}{b}", MathMode.Inline,
+                    21.17151f, 11.2392f, 15.58984f, 9.38425f, 31.26402f, 3.2883f,
+                    1.14668f, "Variant", listOf(1658u),
+                    formulaAscentPt = 40.59224f,
+                    formulaDescentPt = 14.31337f,
+                ),
                 RadicalOracleCase("fraction", "\\sqrt{\\frac{a}{b}}", MathMode.Inline, 30.06192f, 16.23906f, 22.81232f, 14.31337f, 44.66285f, 3.97336f, 1.63812f, "Variant", listOf(1658u)),
                 RadicalOracleCase("nested sum", "\\sqrt{1+\\sqrt{x}}", MathMode.Inline, 34.1235f, 12.17747f, 23.42754f, 6.80542f, 44.66285f, 7.41972f, 1.63812f, "Variant", listOf(1658u)),
                 RadicalOracleCase("nested only", "\\sqrt{\\sqrt{x}}", MathMode.Inline, 34.1235f, 12.17747f, 23.42754f, 6.80542f, 44.66285f, 7.41972f, 1.63812f, "Variant", listOf(1658u)),
@@ -284,11 +395,37 @@ class TectonicRadicalVerticalOracleTest {
         val assemblyStretchCapacityDesignUnits: Float? = null,
         val assemblyAppliedStretchDesignUnits: Float? = null,
         val connectorOverlapsDesignUnits: List<Float>? = null,
+        val formulaAscentPt: Float? = null,
+        val formulaDescentPt: Float? = null,
     ) {
         fun message(font: RadicalFontOracle, field: String): String = "${font.label}/$label $field"
     }
 
     private fun Float.px(): Float = this * TEX_PT_TO_PX
+
+    private fun sideScriptCases(fontLabel: String): List<SideScriptOracleCase> = if (fontLabel == "Lete Sans Math") {
+        listOf(
+            SideScriptOracleCase("superscript", "x^2", 22.36142f, 0f, superscriptShiftPt = 10.11888f),
+            SideScriptOracleCase("subscript", "x_j", 12.18954f, 9.07535f, subscriptShiftPt = 6.02315f),
+            SideScriptOracleCase(
+                "paired", "x_j^2", 22.36142f, 9.40607f,
+                superscriptShiftPt = 10.11888f,
+                subscriptShiftPt = 6.35387f,
+            ),
+        )
+    } else {
+        listOf(
+            SideScriptOracleCase("superscript", "x^2", 19.9884f, 0.2409f, superscriptShiftPt = 8.67332f),
+            SideScriptOracleCase("subscript", "x_j", 11.53911f, 8.87047f, subscriptShiftPt = 5.05943f),
+            SideScriptOracleCase(
+                "paired", "x_j^2", 20.46928f, 10.39482f,
+                // The paired-script vbox moves down 6.58379pt, but the superscript glyph
+                // baseline is 20.46928pt - 11.31508pt above the formula baseline.
+                superscriptShiftPt = 9.1542f,
+                subscriptShiftPt = 6.58379f,
+            ),
+        )
+    }
 
     private fun MathLayoutDecision.float(key: String): Float = details.getValue(key).toFloat()
 
@@ -312,6 +449,19 @@ class TectonicRadicalVerticalOracleTest {
         const val EPSILON_PX = 0.08f
         const val EPSILON_DESIGN_UNITS = 0.1f
     }
+}
+
+private data class SideScriptOracleCase(
+    val label: String,
+    val source: String,
+    val ascentPt: Float,
+    val descentPt: Float,
+    val superscriptShiftPt: Float? = null,
+    val subscriptShiftPt: Float? = null,
+) {
+    val superscriptRange: SourceRange
+        get() = SourceRange(if (subscriptShiftPt == null) 2 else 4, if (subscriptShiftPt == null) 3 else 5)
+    val subscriptRange: SourceRange get() = SourceRange(2, 3)
 }
 
 private fun nestedRadical(depth: Int): String = "\\sqrt{".repeat(depth) + "x" + "}".repeat(depth)

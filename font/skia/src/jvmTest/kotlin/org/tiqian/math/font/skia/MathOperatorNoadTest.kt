@@ -218,6 +218,16 @@ class MathOperatorNoadTest {
                 )
                 assertTrue(limits.float("operatorItalicCorrectionPx") > 0f, "$label fixture needs non-zero IC")
                 assertNear(expectedLogicalWidth, result.box.width, "$label TeX limit width ignores skew")
+                assertNear(
+                    result.box.ascent,
+                    result.box.texCleanBoxMetrics.ascent,
+                    "$label completed limit ascent is its recursive clean-box ascent",
+                )
+                assertNear(
+                    result.box.descent,
+                    result.box.texCleanBoxMetrics.descent,
+                    "$label completed limit descent is its recursive clean-box descent",
+                )
 
                 val operatorCenter = limits.float("operatorX") + limits.float("operatorWidthPx") / 2f
                 val upperCenter = limits.float("upperX") + limits.float("upperWidthPx") / 2f

@@ -34,9 +34,8 @@ internal data class SideScriptVerticalPlacement(
 )
 
 /**
- * Ordinary side-script vertical placement from OpenType MATH ink-edge constraints.
- * Logical box reserve is deliberately absent from the calculations and is retained only when
- * the already-positioned children are combined into their parent [org.tiqian.math.core.MathBox].
+ * XeTeX `make_scripts` placement from OpenType MATH constraints. Callers provide exact native
+ * glyph boxes for leaves and completed TeX boxes for compound children.
  */
 internal fun resolveSideScriptVerticalPlacement(
     base: SideScriptBoxVerticalMetrics,
@@ -91,7 +90,10 @@ internal fun resolveSideScriptVerticalPlacement(
         val availableSuperscriptMove = (
             constraints.superscriptBottomMaxWithSubscriptPx - superscriptBottomHeight
             ).coerceAtLeast(0f)
-        superscriptPairGapMove = minOf(pairGapDeficit, availableSuperscriptMove)
+        // XeTeX first gives the entire gap deficit to the subscript, then transfers the full
+        // SuperscriptBottomMaxWithSubscript correction from subscript to superscript. This is
+        // intentionally not capped by the original deficit.
+        superscriptPairGapMove = availableSuperscriptMove
         subscriptPairGapMove = pairGapDeficit - superscriptPairGapMove
         superscriptShift += superscriptPairGapMove
         subscriptShift += subscriptPairGapMove

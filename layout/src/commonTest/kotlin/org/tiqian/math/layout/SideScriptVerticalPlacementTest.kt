@@ -163,6 +163,33 @@ class SideScriptVerticalPlacementTest {
         assertEquals(placement.finalInkGapPx, replayedGap)
     }
 
+    @Test
+    fun xetexTransfersTheFullSuperscriptBottomCorrectionAfterClosingThePairGap() {
+        val placement = resolveSideScriptVerticalPlacement(
+            base = metrics(20f, 5f, inkTop = -20f, inkBottom = 5f),
+            superscript = metrics(10f, 0f, inkTop = -10f, inkBottom = 0f),
+            subscript = metrics(10f, 0f, inkTop = 0f, inkBottom = 5f),
+            appliesBaselineDrop = false,
+            constraints = SideScriptVerticalConstraints(
+                superscriptShiftUpPx = 10f,
+                subscriptShiftDownPx = 10f,
+                superscriptBottomMinPx = 0f,
+                superscriptBaselineDropMaxPx = 0f,
+                subscriptTopMaxPx = 0f,
+                subscriptBaselineDropMinPx = 0f,
+                subSuperscriptGapMinPx = 30f,
+                superscriptBottomMaxWithSubscriptPx = 25f,
+            ),
+        )
+
+        assertEquals(10f, placement.pairGapDeficitPx)
+        assertEquals(15f, placement.superscriptPairGapMovePx)
+        assertEquals(-5f, placement.subscriptPairGapMovePx)
+        assertEquals(25f, placement.superscriptShiftPx)
+        assertEquals(5f, placement.subscriptShiftPx)
+        assertEquals(30f, placement.finalInkGapPx)
+    }
+
     private fun metrics(
         logicalAscent: Float,
         logicalDescent: Float,
