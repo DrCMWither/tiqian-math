@@ -108,7 +108,7 @@ class SecondAuditGeometryTest {
     fun rulelessGapDeficitIsSplitSymmetricallyAroundTheExistingStack() = withSecondAuditFaces { label, delegate ->
         val constants = delegate.mathFont.constants.copy(
             stackTopShiftUp = 100,
-            stackBottomShiftDown = 300,
+            fractionDenominatorShiftDown = 300,
             stackGapMin = 900,
         )
         val face = SecondAuditOverrideFace(delegate, delegate.mathFont.copy(constants = constants))
@@ -120,10 +120,11 @@ class SecondAuditGeometryTest {
         assertTrue(halfCorrection > 0f, label)
         assertNear(halfCorrection, numeratorShift - 4f, "$label numerator half")
         assertNear(halfCorrection, denominatorShift - 12f, "$label denominator half")
+        assertEquals("TeXRule15cNum1Num3Denom1Denom2WithOpenTypeStackGap", decision.details["shiftPolicy"])
     }
 
     @Test
-    fun logicalAdvanceStaysSeparateFromInkAndOnlyCollisionKernsSeparateBinomialInk() = withSecondAuditFaces { label, face ->
+    fun fractionNullDelimitersAndBinomialCancellationUseLogicalBoxesWithoutInkCollisionKerns() = withSecondAuditFaces { label, face ->
         val engine = MathLayoutEngine(face)
         val size = 40f
         val nullDelimiterSpace = 7f
@@ -161,20 +162,28 @@ class SecondAuditGeometryTest {
         )
 
         val source = "\\binom{n}{k}"
-        val binomial = engine.layout(source, MathLayoutOptions(fontSizePx = size))
-        assertTrue(binomial.decisions.none { it.name == "TeXFractionNullDelimiters" }, "$label real delimiters replace null ones")
-        val content = binomial.box.glyphs.filter {
-            it.sourceRange == SourceRange(source.indexOf('n'), source.indexOf('n') + 1) ||
-                it.sourceRange == SourceRange(source.indexOf('k'), source.indexOf('k') + 1)
-        }
-        val delimiter = binomial.box.glyphs - content.toSet()
-        val left = delimiter.filter { it.inkBounds.right <= content.minOf { glyph -> glyph.inkBounds.left } + 0.02f }
-        val right = delimiter.filter { it.inkBounds.left >= content.maxOf { glyph -> glyph.inkBounds.right } - 0.02f }
-        assertTrue(left.isNotEmpty() && right.isNotEmpty(), "$label delimiter sides are collision-separated")
-        assertTrue(left.maxOf { it.inkBounds.right } <= content.minOf { it.inkBounds.left } + 0.02f, label)
-        assertTrue(content.maxOf { it.inkBounds.right } <= right.minOf { it.inkBounds.left } + 0.02f, label)
-        assertTrue(binomial.decisions.filter { it.name == "BinomialDelimiter" }
-            .all { it.details["coversTop"] == "true" && it.details["coversBottom"] == "true" })
+        val binomial = engine.layout(
+            source,
+            MathLayoutOptions(fontSizePx = size, nullDelimiterSpacePx = nullDelimiterSpace),
+        )
+        assertTrue(binomial.decisions.any { it.name == "TeXFractionNullDelimiters" }, "$label primitive noad keeps null boxes")
+        assertTrue(binomial.decisions.none { it.name == "BinomialHorizontalCollisionKern" }, "$label no visual collision kern")
+        val packing = binomial.decisions.single { it.name == "TeXBinomialFractionNoadPacking" }
+        val leftAdvance = packing.details.getValue("leftDelimiterAdvancePx").toFloat()
+        val stackAdvance = packing.details.getValue("stackAdvancePx").toFloat()
+        val rightAdvance = packing.details.getValue("rightDelimiterAdvancePx").toFloat()
+        assertNear(leftAdvance, packing.details.getValue("stackX").toFloat(), "$label stack follows left logical advance")
+        assertNear(
+            leftAdvance + stackAdvance,
+            packing.details.getValue("rightDelimiterX").toFloat(),
+            "$label right delimiter follows stack logical advance",
+        )
+        assertNear(leftAdvance + stackAdvance + rightAdvance, binomial.box.width, "$label TeX packed width")
+        assertEquals((-nullDelimiterSpace).toString(), packing.details["leftCancellationKernPx"])
+        assertEquals((-nullDelimiterSpace).toString(), packing.details["rightCancellationKernPx"])
+        assertTrue(binomial.decisions.filter { it.name == "BinomialDelimiter" }.all {
+            it.details["stackCoverageRequired"] == "false"
+        })
     }
 
     @Test
@@ -222,6 +231,13 @@ private class SecondAuditOverrideFace(
         style: MathStyle,
         sourceRange: SourceRange,
     ): MeasuredMathRun = delegate.measureGlyph(glyphId, fontSizePx, style, sourceRange)
+
+    override fun measureGlyphOutlineBounds(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = delegate.measureGlyphOutlineBounds(glyphId, fontSizePx, style, sourceRange)
 }
 
 private inline fun withSecondAuditFaces(block: (String, SkiaMathFontFace) -> Unit) {

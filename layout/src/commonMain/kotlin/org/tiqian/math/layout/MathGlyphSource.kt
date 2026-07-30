@@ -152,6 +152,17 @@ interface MathFontFace {
     ): MeasuredMathRun
 
     /**
+     * Measures one already-resolved glyph with replayable outline bounds when the adapter can
+     * provide them. Logical advance remains the same as [measureGlyph].
+     */
+    fun measureGlyphOutlineBounds(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = measureGlyph(glyphId, fontSizePx, style, sourceRange)
+
+    /**
      * Returns logical measurement plus independent outline evidence for semantic construction
      * painting. Backends without replayable outlines retain [measureGlyph]'s measurement and
      * explicitly return [MathConstructionOutlineEvidence.Unavailable].

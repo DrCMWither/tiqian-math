@@ -1096,6 +1096,15 @@ private class RadicalOverrideFace(
         advanceWidthOverrides[glyphId]?.let { run.copy(width = it) } ?: run
     }
 
+    override fun measureGlyphOutlineBounds(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = delegate.measureGlyphOutlineBounds(glyphId, fontSizePx, style, sourceRange).let { run ->
+        advanceWidthOverrides[glyphId]?.let { run.copy(width = it) } ?: run
+    }
+
     override fun shapeOutlineConstructionBase(
         text: String,
         fontSizePx: Float,

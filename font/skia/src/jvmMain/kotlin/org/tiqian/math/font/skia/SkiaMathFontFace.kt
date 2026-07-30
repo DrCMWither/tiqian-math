@@ -200,6 +200,17 @@ class SkiaMathFontFace(
         MathGlyphBoundsSource.FontReported,
     )
 
+    override fun measureGlyphOutlineBounds(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = measureGlyphWithBoundsSource(
+        glyphId,
+        fontSizePx,
+        MathGlyphBoundsSource.Outline,
+    )
+
     override fun measureOutlineConstructionGlyph(
         glyphId: UShort,
         fontSizePx: Float,

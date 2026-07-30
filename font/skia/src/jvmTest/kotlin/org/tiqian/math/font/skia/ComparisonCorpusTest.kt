@@ -38,7 +38,7 @@ class ComparisonCorpusTest {
                 "cramped-superscript",
                 "script-binomial",
                 "math-kern",
-                "assembly",
+                "tall-binomial-fixed",
                 "operator-auto",
                 "operator-integral",
                 "radical-noad",
@@ -73,11 +73,15 @@ class ComparisonCorpusTest {
                             val z = result.box.glyphs.first { it.sourceRange == SourceRange(case.source.indexOf('z'), case.source.indexOf('z') + 1) }
                             assertEquals(MathStyle.ScriptScriptCramped, z.style, case.toString())
                         }
-                        ComparisonInvariant.ScriptBinomialBaseCoverage -> {
-                            assertEquals(ComparisonOracle.TeXStylesAndOpenTypeVariants, case.oracle)
+                        ComparisonInvariant.ScriptBinomialFixedTarget -> {
+                            assertEquals(ComparisonOracle.LaTeX2eXeTeXGenfracFixedTargets, case.oracle)
                             assertFalse(result.diagnostics.any { it.code == DiagnosticCode.MathVariantTooShort }, case.toString())
-                            assertTrue(result.decisions.filter { it.name == "BinomialDelimiter" }
-                                .all { it.details["construction"] != "BaseGlyph" }, case.toString())
+                            assertTrue(result.decisions.filter { it.name == "BinomialDelimiter" }.all {
+                                it.details["targetEmFactor"] == "1.45" &&
+                                    it.details["delimiterStyle"] == "Text" &&
+                                    it.details["stackCoverageRequired"] == "false"
+                            }, case.toString())
+                            assertTrue(result.decisions.any { it.name == "TeXBinomialFractionNoadPacking" })
                         }
                         ComparisonInvariant.FinalMathKernParticipates -> {
                             assertEquals(ComparisonOracle.OpenTypeMathKern, case.oracle)
@@ -85,10 +89,17 @@ class ComparisonCorpusTest {
                                 it.name == "OpenTypeMathKern" && it.details["strategy"] == "two-correction-heights"
                             }, case.toString())
                         }
-                        ComparisonInvariant.AssemblyCoversTarget -> {
-                            assertEquals(ComparisonOracle.OpenTypeGlyphAssembly, case.oracle)
-                            assertTrue(result.decisions.filter { it.name == "BinomialDelimiter" }
-                                .all { it.details["construction"] == "Assembly" }, case.toString())
+                        ComparisonInvariant.TallBinomialUsesFixedTarget -> {
+                            assertEquals(ComparisonOracle.TectonicXeTeXBoxTrace, case.oracle)
+                            val tall = result.decisions.filter { it.name == "BinomialDelimiter" }
+                            val simple = engine.layout("\\binom{n}{k}", MathLayoutOptions(fontSizePx = 44f))
+                                .decisions.filter { it.name == "BinomialDelimiter" }
+                            assertEquals(simple.map { it.details["construction"] }, tall.map { it.details["construction"] })
+                            assertTrue(tall.all {
+                                it.details["targetEmFactor"] == "1.0" &&
+                                    it.details["coversStackTop"] == "false" &&
+                                    it.details["coversStackBottom"] == "false"
+                            }, case.toString())
                         }
                         ComparisonInvariant.OperatorAutoDisplayLimits -> {
                             assertEquals(ComparisonOracle.TeXMakeOpAndOpenTypeNary, case.oracle)
@@ -172,9 +183,9 @@ private enum class ComparisonOracle(val corpusText: String) {
     TeXOrdinarySubMlistAndKaTeXOrdGroup("TeX ordinary sub-mlist noad; KaTeX ord group"),
     KaTeXTightSpacingTable("KaTeX spacingData tight table"),
     KaTeXSuperscriptStyleTable("KaTeX Style.sup [S,Sc,S,Sc,SS,SSc,SS,SSc]"),
-    TeXStylesAndOpenTypeVariants("TeX style transitions; OpenType MATH variants"),
+    LaTeX2eXeTeXGenfracFixedTargets("LaTeX2e XeTeX genfrac fixed style targets"),
     OpenTypeMathKern("OpenType MATH MathKern two-height algorithm"),
-    OpenTypeGlyphAssembly("OpenType MATH GlyphAssembly"),
+    TectonicXeTeXBoxTrace("Tectonic 0.17.0 XeTeX box trace"),
     TeXMakeOpAndOpenTypeNary("TeX make_op displaylimits; OpenType MATH n-ary variants"),
     PlainTeXIntegralNoLimits("plain.tex integral nolimits; TeX op noad"),
     TeXMakeRadicalAndOpenTypeMath("TeX make_radical; LaTeX2e root; OpenType MATH radicals"),
@@ -190,9 +201,9 @@ private enum class ComparisonInvariant(val corpusText: String) {
     OrdinarySubMlistBoundary("group is one Ord atom and edge Bin becomes Ord internally"),
     TightBinaryGlueSuppressed("binary glue is suppressed in ScriptCramped"),
     CrampedNestedSuperscript("nested denominator superscripts remain ScriptScriptCramped"),
-    ScriptBinomialBaseCoverage("ScriptCramped delimiters use base-glyph construction coverage"),
+    ScriptBinomialFixedTarget("ScriptCramped uses 1.45 script em target with text-style delimiter selection"),
     FinalMathKernParticipates("parsed corner kerns participate in final script x"),
-    AssemblyCoversTarget("extenders repeat and connector overlap covers the target"),
+    TallBinomialUsesFixedTarget("tall content does not alter the fixed text-style binomial delimiter target"),
     OperatorAutoDisplayLimits("Auto uses stacked limits only in display style and the operator follows the math axis"),
     IntegralDefaultNoLimits("integrals default to side scripts while an explicit limits modifier overrides"),
     RadicalCrampedDegreeAndMathGeometry(

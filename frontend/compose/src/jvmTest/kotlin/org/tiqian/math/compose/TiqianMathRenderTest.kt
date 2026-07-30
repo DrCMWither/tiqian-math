@@ -40,6 +40,29 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalComposeUiApi::class)
 class TiqianMathRenderTest {
     @Test
+    fun explicitTeXNullDelimiterSpaceReachesTheFractionNoad() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var observed: MathLayoutResult? = null
+            ImageComposeScene(width = 180, height = 140, density = Density(1f)) {
+                TiqianMath(
+                    source = "\\frac{a}{b}",
+                    fontSizePx = 32f,
+                    nullDelimiterSpacePx = 1.5940225f,
+                    fontFace = face,
+                    onMathLayout = { observed = it },
+                )
+            }.use { scene ->
+                scene.render()
+                val decision = assertNotNull(observed).decisions.single {
+                    it.name == "TeXFractionNullDelimiters"
+                }
+                assertNear(1.5940225f, decision.details.getValue("leftSpacePx").toFloat())
+                assertNear(1.5940225f, decision.details.getValue("rightSpacePx").toFloat())
+            }
+        }
+    }
+
+    @Test
     fun actualRendererReplaysEachRadicalAsOneCachedConstructionPath() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             var observed: MathLayoutResult? = null

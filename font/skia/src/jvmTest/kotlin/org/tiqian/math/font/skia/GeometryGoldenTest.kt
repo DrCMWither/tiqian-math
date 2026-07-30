@@ -120,12 +120,24 @@ class GeometryGoldenTest {
                                 "${scripts.details["finalInkGapPx"]}",
                         )
                     }
-                    "script-binomial" -> appendLine(
-                        "  evidence=" + result.decisions.filter { it.name == "BinomialDelimiter" }.joinToString(",") {
-                            "${it.details["side"]}:${it.details["baseGlyphId"]}/${it.details["construction"]}/" +
-                                "${it.details.getValue("targetPx").toFloat().fmt()}/${it.details.getValue("achievedAdvancePx").toFloat().fmt()}"
-                        },
-                    )
+                    "script-binomial" -> {
+                        val delimiters = result.decisions.filter { it.name == "BinomialDelimiter" }
+                        val packing = result.decisions.single { it.name == "TeXBinomialFractionNoadPacking" }
+                        appendLine(
+                            "  evidence=" + delimiters.joinToString(",") {
+                                "${it.details["side"]}:${it.details["baseGlyphId"]}/${it.details["construction"]}/" +
+                                    "${it.details["targetPolicy"]}/${it.details["delimiterStyle"]}/" +
+                                    "${it.details["targetEmFactor"]}*" +
+                                    "${it.details.getValue("targetReferenceFontSizePx").toFloat().fmt()}=" +
+                                    "${it.details.getValue("targetPx").toFloat().fmt()}/" +
+                                    "${it.details.getValue("achievedAdvancePx").toFloat().fmt()}"
+                            } +
+                                " packing=${packing.details.getValue("stackX").toFloat().fmt()}/" +
+                                "${packing.details.getValue("rightDelimiterX").toFloat().fmt()}/" +
+                                "${packing.details.getValue("totalAdvancePx").toFloat().fmt()}/" +
+                                packing.details["policy"],
+                        )
+                    }
                     "operator-inline", "operator-display" -> appendLine(
                         "  evidence=" + result.decisions.filter {
                             it.name == "TeXOperatorNoad" ||

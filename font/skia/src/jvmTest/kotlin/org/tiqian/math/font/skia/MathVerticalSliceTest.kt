@@ -230,12 +230,16 @@ class MathVerticalSliceTest {
             assertNear(27f, engine.layout("\\scriptscriptstyle{q}", MathLayoutOptions(fontSizePx = size)).box.glyphs.single().fontSizePx)
 
             val stack = engine.layout("\\binom{n}{k}", MathLayoutOptions(MathMode.Display, size))
-            assertNear(-93f, stack.glyphAt(7).baselineY, "synthetic stackTopDisplayStyleShiftUp")
-            assertNear(94f, stack.glyphAt(10).baselineY, "synthetic stackBottomDisplayStyleShiftDown")
-            assertTrue(stack.debugDump.contains("fixedTargetPx=250.0"), "synthetic delimitedSubFormulaMinHeight")
+            assertNear(-92f, stack.glyphAt(7).baselineY, "TeX Rule 15c display num1")
+            assertNear(91f, stack.glyphAt(10).baselineY, "TeX Rule 15c display denom1")
             assertTrue(
-                stack.debugDump.contains("targetPolicy=TeXFractionNoadFixedWithAxisInkSafety"),
-                "fixed binomial target remains separate from axis-relative ink coverage",
+                stack.debugDump.contains("shiftPolicy=TeXRule15cNum1Num3Denom1Denom2WithOpenTypeStackGap"),
+            )
+            assertTrue(stack.debugDump.contains("targetPx=239.0"), "LaTeX2e XeTeX display genfrac target")
+            assertTrue(
+                stack.debugDump.contains("targetPolicy=LaTeX2eXeTeXGenfracFixedStyleTarget") &&
+                    stack.debugDump.contains("delimitedSubFormulaMinHeightUsed=false"),
+                "OpenType has no fraction delim1/delim2; genfrac fallback is explicit",
             )
 
             verifyExtremeMinimumGaps(realFace, base, size)
@@ -320,6 +324,13 @@ private class ConstantOverrideFace(
         style: MathStyle,
         sourceRange: SourceRange,
     ): MeasuredMathRun = delegate.measureGlyph(glyphId, fontSizePx, style, sourceRange)
+
+    override fun measureGlyphOutlineBounds(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = delegate.measureGlyphOutlineBounds(glyphId, fontSizePx, style, sourceRange)
 }
 
 private inline fun withRealFaces(block: (String, SkiaMathFontFace) -> Unit) {

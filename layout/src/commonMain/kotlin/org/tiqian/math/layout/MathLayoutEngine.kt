@@ -1569,14 +1569,23 @@ private class MathLayoutPass(
     }
 
     private fun layoutFraction(node: MathFraction, style: MathStyle, alphabetOverride: MathAlphabetOverride?): LaidNode {
-        val numerator = layoutNode(node.numerator, style.fractionNumerator(), alphabetOverride).box
-        val denominator = layoutNode(node.denominator, style.fractionDenominator(), alphabetOverride).box
+        val numerator = refineFractionChildBox(
+            layoutNode(node.numerator, style.fractionNumerator(), alphabetOverride).box,
+            node,
+            "numerator",
+        )
+        val denominator = refineFractionChildBox(
+            layoutNode(node.denominator, style.fractionDenominator(), alphabetOverride).box,
+            node,
+            "denominator",
+        )
         val display = style.level == MathStyleLevel.Display
         val stack = layoutFractionStack(node, style, numerator, denominator, display)
+        val fractionNoad = addNullFractionDelimiters(stack, node)
         val withDelimiters = if (node.hasParentheses) {
-            addBinomialParentheses(stack, node, style)
+            addBinomialParentheses(fractionNoad, stack, node, style)
         } else {
-            addNullFractionDelimiters(stack, node)
+            fractionNoad
         }
         return LaidNode(
             node,
@@ -1586,6 +1595,60 @@ private class MathLayoutPass(
             style,
             ScriptBaseKind.CompoundBox,
         )
+    }
+
+    /**
+     * XeTeX's fraction box trace consumes font-unit glyph height/depth, while Skia's ordinary
+     * `Font.getBounds` can snap those edges to whole pixels. Rebuild only the fraction child's
+     * ink union from replayable outlines, retaining its logical advance and any non-ink reserve
+     * already established by compound layout (for example RadicalExtraAscender).
+     */
+    private fun refineFractionChildBox(box: MathBox, node: MathFraction, role: String): MathBox {
+        val boundsSources = mutableSetOf<MathGlyphBoundsSource>()
+        val glyphs = box.glyphs.map { placement ->
+            val measured = glyphSource.measureGlyphOutlineBounds(
+                placement.glyphId,
+                placement.fontSizePx,
+                placement.style,
+                placement.sourceRange,
+            )
+            boundsSources += measured.boundsSource
+            val glyph = measured.glyphs.singleOrNull() ?: return@map placement
+            placement.copy(
+                inkBounds = glyph.inkBounds.translated(placement.x, placement.baselineY),
+            )
+        }
+        val originalInkAscent = (-box.inkBounds.top).coerceAtLeast(0f)
+        val originalInkDescent = box.inkBounds.bottom.coerceAtLeast(0f)
+        val logicalReserveAbove = (box.ascent - originalInkAscent).coerceAtLeast(0f)
+        val logicalReserveBelow = (box.descent - originalInkDescent).coerceAtLeast(0f)
+        val refinedInk = geometryExtents(
+            box.width,
+            glyphs,
+            box.rules,
+            box.range,
+            box.constructionPaintGroups,
+        )
+        val refined = refinedInk.copy(
+            ascent = refinedInk.ascent + logicalReserveAbove,
+            descent = refinedInk.descent + logicalReserveBelow,
+        )
+        decision(
+            "TeXFractionChildBoxMetrics",
+            node.range,
+            "role" to role,
+            "policy" to "FontAdapterOutlineInkBoundsPreservingLogicalReserveAndAdvance",
+            "boundsSources" to boundsSources,
+            "logicalAdvanceBeforePx" to box.width,
+            "logicalAdvanceAfterPx" to refined.width,
+            "inkTopBeforePx" to box.inkBounds.top,
+            "inkBottomBeforePx" to box.inkBounds.bottom,
+            "inkTopAfterPx" to refined.inkBounds.top,
+            "inkBottomAfterPx" to refined.inkBounds.bottom,
+            "logicalReserveAbovePx" to logicalReserveAbove,
+            "logicalReserveBelowPx" to logicalReserveBelow,
+        )
+        return refined
     }
 
     private fun addNullFractionDelimiters(stack: MathBox, node: MathFraction): MathBox {
@@ -1645,6 +1708,8 @@ private class MathLayoutPass(
             )
             numeratorShift = max(numeratorShift, numerator.descent + numeratorGap - ruleTop)
             denominatorShift = max(denominatorShift, denominator.ascent + denominatorGap + ruleBottom)
+            val actualNumeratorGap = ruleTop - (-numeratorShift + numerator.descent)
+            val actualDenominatorGap = (denominatorShift - denominator.ascent) - ruleBottom
             rules = listOf(MathRulePlacement(0f, ruleTop, contentWidth, ruleBottom, node.range))
             decision(
                 "OpenTypeMathFractionStack",
@@ -1657,14 +1722,21 @@ private class MathLayoutPass(
                 "denominatorShiftPx" to denominatorShift,
                 "numeratorGapMinPx" to numeratorGap,
                 "denominatorGapMinPx" to denominatorGap,
+                "actualNumeratorGapPx" to actualNumeratorGap,
+                "actualDenominatorGapPx" to actualDenominatorGap,
             )
         } else {
+            // TeX Rule 15c uses num1 in display and num3 otherwise, together with denom1/2,
+            // then enforces stack clearance. XeTeX's same-OTF trace maps that asymmetry to
+            // FractionNumeratorDisplayStyleShiftUp in display, StackTopShiftUp otherwise,
+            // and the corresponding FractionDenominator shift. OpenType's generic
+            // StackTopDisplay/StackBottom shifts do not reproduce TeX's `\atop` box.
             numeratorShift = scale(
-                if (display) constants.stackTopDisplayStyleShiftUp else constants.stackTopShiftUp,
+                if (display) constants.fractionNumeratorDisplayStyleShiftUp else constants.stackTopShiftUp,
                 style,
             )
             denominatorShift = scale(
-                if (display) constants.stackBottomDisplayStyleShiftDown else constants.stackBottomShiftDown,
+                if (display) constants.fractionDenominatorDisplayStyleShiftDown else constants.fractionDenominatorShiftDown,
                 style,
             )
             val minimumGap = scale(
@@ -1675,6 +1747,7 @@ private class MathLayoutPass(
             val missingGap = (minimumGap - actualGap).coerceAtLeast(0f)
             numeratorShift += missingGap / 2f
             denominatorShift += missingGap / 2f
+            val finalGap = (denominatorShift - denominator.ascent) - (-numeratorShift + numerator.descent)
             rules = emptyList()
             decision(
                 "OpenTypeMathFractionStack",
@@ -1685,6 +1758,8 @@ private class MathLayoutPass(
                 "denominatorShiftPx" to denominatorShift,
                 "gapMinPx" to minimumGap,
                 "symmetricGapCorrectionPx" to missingGap / 2f,
+                "actualGapPx" to finalGap,
+                "shiftPolicy" to "TeXRule15cNum1Num3Denom1Denom2WithOpenTypeStackGap",
             )
         }
 
@@ -1702,26 +1777,43 @@ private class MathLayoutPass(
         )
     }
 
-    private fun addBinomialParentheses(stackInput: MathBox, node: MathFraction, style: MathStyle): MathBox {
-        val stack = stackInput
-        val size = fontSize(style)
-        val leftBase = glyphSource.shapeConstructionBase("(", size, node.range)
-        val rightBase = glyphSource.shapeConstructionBase(")", size, node.range)
-        val axisY = -scale(constants.axisHeight, style)
-        // TeX Rule 15e uses a style-selected fixed fraction-noad delimiter size. In this
-        // OpenType slice the font's named fixed subformula height is used directly; future
-        // \left/\right layout must use a separate content-driven policy.
-        val fixedTargetHeight = scale(constants.delimitedSubFormulaMinHeight, style)
-        val axisInkSafetyHeight = 2f * max(
-            axisY - stack.inkBounds.top,
-            stack.inkBounds.bottom - axisY,
-        )
-        val targetHeight = max(fixedTargetHeight, axisInkSafetyHeight)
+    private fun addBinomialParentheses(
+        fractionNoad: MathBox,
+        stack: MathBox,
+        node: MathFraction,
+        style: MathStyle,
+    ): MathBox {
+        val targetReferenceSize = fontSize(style)
+        val targetEmFactor = when (style.level) {
+            MathStyleLevel.Display -> LATEX_XETEX_GENFRAC_DISPLAY_DELIMITER_EM
+            MathStyleLevel.Text -> LATEX_XETEX_GENFRAC_TEXT_DELIMITER_EM
+            MathStyleLevel.Script -> LATEX_XETEX_GENFRAC_SCRIPT_DELIMITER_EM
+            MathStyleLevel.ScriptScript -> LATEX_XETEX_GENFRAC_SCRIPT_SCRIPT_DELIMITER_EM
+        }
+        val targetHeight = targetReferenceSize * targetEmFactor
+
+        // LaTeX2e's XeTeX genfrac fallback creates each delimiter in an inner text-style
+        // formula around a style-selected, zero-width vcenter. The OpenType MATH table has
+        // no fraction delim1/delim2 constants, so these named fallback factors are the same
+        // ones used by amsmath (2.39/1/1.45/1.35 em). This is deliberately separate from
+        // the content-driven \left/\right policy and from DelimitedSubFormulaMinHeight.
+        val delimiterStyle = MathStyle.Text
+        val delimiterFontSize = fontSize(delimiterStyle)
+        val leftBase = glyphSource.shapeOutlineConstructionBase("(", delimiterFontSize, node.range).run
+        val rightBase = glyphSource.shapeOutlineConstructionBase(")", delimiterFontSize, node.range).run
+        val axisY = -scale(constants.axisHeight, delimiterStyle)
 
         fun construction(baseRun: MeasuredMathRun, side: String): MathVerticalConstruction? {
             val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
             val selected = baseGlyphId?.let {
-                selectVerticalConstruction(it, baseRun, targetHeight, size, style, node.range)
+                selectVerticalConstruction(
+                    baseGlyphId = it,
+                    normalRun = baseRun,
+                    targetHeight = targetHeight,
+                    size = delimiterFontSize,
+                    style = delimiterStyle,
+                    range = node.range,
+                )
             }
             if (selected == null) {
                 diagnostics += MathDiagnostic(
@@ -1743,15 +1835,20 @@ private class MathLayoutPass(
             val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
             val assemblyValidation = construction?.assemblyValidation
                 ?: baseGlyphId?.let(glyphSource.mathFont::verticalAssemblyValidation)
+            val componentRuns = construction?.components?.map { component ->
+                component to glyphSource.measureOutlineConstructionGlyph(
+                    component.glyphId,
+                    delimiterFontSize,
+                    delimiterStyle,
+                    node.range,
+                ).run
+            }
             val placedConstruction = construction?.let {
-                val componentRuns = it.components.map { component ->
-                    component to glyphSource.measureGlyph(component.glyphId, size, style, node.range)
-                }
                 placeVerticalConstruction(
                     construction = it,
-                    componentRuns = componentRuns,
-                    size = size,
-                    style = style,
+                    componentRuns = componentRuns.orEmpty(),
+                    size = delimiterFontSize,
+                    style = delimiterStyle,
                     sourceRange = node.range,
                     centerComponentsHorizontally = true,
                 )
@@ -1764,9 +1861,9 @@ private class MathLayoutPass(
                         baselineY = 0f,
                         advance = glyph.advance,
                         inkBounds = glyph.inkBounds.translated(glyph.x, 0f),
-                        fontSizePx = size,
+                        fontSizePx = delimiterFontSize,
                         sourceRange = node.range,
-                        style = style,
+                        style = delimiterStyle,
                     )
                 }
             } else {
@@ -1784,16 +1881,13 @@ private class MathLayoutPass(
             val advance = placedConstruction?.width ?: baseRun.width
             val box = geometryExtents(advance, placements, emptyList(), node.range)
             val achievedAdvance = construction?.let {
-                glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
+                glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, delimiterFontSize)
             } ?: baseRun.ascent + baseRun.descent
             val inkHeight = box.inkBounds.height
-            val coversTop = box.inkBounds.top <= stack.inkBounds.top + GEOMETRY_EPSILON_PX
-            val coversBottom = box.inkBounds.bottom + GEOMETRY_EPSILON_PX >= stack.inkBounds.bottom
-            if (
-                (construction != null && !construction.reachesTarget) ||
-                achievedAdvance + GEOMETRY_EPSILON_PX < targetHeight ||
-                !coversTop ||
-                !coversBottom
+            val coversStackTop = box.inkBounds.top <= stack.inkBounds.top + GEOMETRY_EPSILON_PX
+            val coversStackBottom = box.inkBounds.bottom + GEOMETRY_EPSILON_PX >= stack.inkBounds.bottom
+            if ((construction != null && !construction.reachesTarget) ||
+                achievedAdvance + GEOMETRY_EPSILON_PX < targetHeight
             ) {
                 diagnostics += MathDiagnostic(
                     DiagnosticCode.MathVariantTooShort,
@@ -1807,20 +1901,30 @@ private class MathLayoutPass(
                 node.range,
                 "side" to side,
                 "style" to style,
+                "delimiterStyle" to delimiterStyle,
                 "baseGlyphId" to baseGlyphId,
                 "construction" to (construction?.kind ?: "BaseGlyph"),
-                "targetPolicy" to "TeXFractionNoadFixedWithAxisInkSafety",
-                "fixedTargetPx" to fixedTargetHeight,
-                "axisInkSafetyTargetPx" to axisInkSafetyHeight,
+                "targetPolicy" to "LaTeX2eXeTeXGenfracFixedStyleTarget",
+                "targetSource" to "amsmath-genfrac-XeTeX-fallback-no-OpenType-delim1-delim2",
+                "targetEmFactor" to targetEmFactor,
+                "targetReferenceFontSizePx" to targetReferenceSize,
+                "delimiterFontSizePx" to delimiterFontSize,
+                "delimiterAxisPolicy" to "InnerTextStyleVarDelimiterAxis",
+                "axisY" to axisY,
+                "boundsSource" to (componentRuns?.joinToString(",") { it.second.boundsSource.toString() }
+                    ?: baseRun.boundsSource.toString()),
+                "delimitedSubFormulaMinHeightUsed" to false,
                 "targetPx" to targetHeight,
                 "achievedAdvancePx" to achievedAdvance,
+                "reachesTarget" to (achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight),
                 "inkHeightPx" to inkHeight,
                 "stackTopPx" to stack.inkBounds.top,
                 "stackBottomPx" to stack.inkBounds.bottom,
                 "delimiterTopPx" to box.inkBounds.top,
                 "delimiterBottomPx" to box.inkBounds.bottom,
-                "coversTop" to coversTop,
-                "coversBottom" to coversBottom,
+                "stackCoverageRequired" to false,
+                "coversStackTop" to coversStackTop,
+                "coversStackBottom" to coversStackBottom,
                 "extenderRepetitions" to construction?.extenderRepetitions,
                 "connectorOverlaps" to construction?.connectorOverlaps,
                 "placementOrigin" to (placedConstruction?.placementOrigin ?: "normal-glyph-baseline"),
@@ -1841,33 +1945,41 @@ private class MathLayoutPass(
 
         val leftBox = delimiterBox("left", leftConstruction, leftBase)
         val rightBox = delimiterBox("right", rightConstruction, rightBase)
-        val initialStackX = leftBox.width
-        val leftCollisionKern = (
-            leftBox.inkBounds.right - (initialStackX + stack.inkBounds.left)
-            ).coerceAtLeast(0f)
-        val stackX = initialStackX + leftCollisionKern
-        val initialRightX = stackX + stack.width
-        val rightCollisionKern = (
-            stackX + stack.inkBounds.right - (initialRightX + rightBox.inkBounds.left)
-            ).coerceAtLeast(0f)
-        val rightX = initialRightX + rightCollisionKern
-        val shiftedStack = stack.translated(stackX, 0f)
+        // The primitive fraction noad contains a null delimiter box on both sides. LaTeX2e's
+        // XeTeX genfrac wrapper places real delimiters outside it and cancels those two spaces
+        // with explicit negative kerns. The visible stack therefore starts at leftBox.width and
+        // the right delimiter starts at leftBox.width + stack.width; ink never changes advance.
+        val fractionNoadX = leftBox.width - nullDelimiterSpacePx
+        val stackX = fractionNoadX + nullDelimiterSpacePx
+        val rightX = fractionNoadX + fractionNoad.width - nullDelimiterSpacePx
+        val shiftedFractionNoad = fractionNoad.translated(fractionNoadX, 0f)
         val shiftedRight = rightBox.translated(rightX, 0f)
         decision(
-            "BinomialHorizontalCollisionKern",
+            "TeXBinomialFractionNoadPacking",
             node.range,
-            "leftPx" to leftCollisionKern,
-            "rightPx" to rightCollisionKern,
-            "policy" to "logical-advance-preserved-ink-collision-only",
+            "leftDelimiterX" to 0f,
+            "leftDelimiterAdvancePx" to leftBox.width,
+            "leftNullDelimiterSpacePx" to nullDelimiterSpacePx,
+            "leftCancellationKernPx" to -nullDelimiterSpacePx,
+            "fractionNoadX" to fractionNoadX,
+            "fractionNoadAdvancePx" to fractionNoad.width,
+            "stackX" to stackX,
+            "stackAdvancePx" to stack.width,
+            "rightNullDelimiterSpacePx" to nullDelimiterSpacePx,
+            "rightCancellationKernPx" to -nullDelimiterSpacePx,
+            "rightDelimiterX" to rightX,
+            "rightDelimiterAdvancePx" to rightBox.width,
+            "totalAdvancePx" to (rightX + rightBox.width),
+            "policy" to "TeXFractionNullDelimiterCancellationNoInkCollisionKern",
         )
         return geometryExtentsPreservingLogicalChildren(
             rightX + rightBox.width,
-            leftBox.glyphs + shiftedStack.glyphs + shiftedRight.glyphs,
-            leftBox.rules + shiftedStack.rules + shiftedRight.rules,
+            leftBox.glyphs + shiftedFractionNoad.glyphs + shiftedRight.glyphs,
+            leftBox.rules + shiftedFractionNoad.rules + shiftedRight.rules,
             node.range,
             listOf(
                 leftBox to 0f,
-                stack to 0f,
+                fractionNoad to 0f,
                 rightBox to 0f,
             ),
         )
@@ -2348,6 +2460,10 @@ private class MathLayoutPass(
 
     private companion object {
         const val GEOMETRY_EPSILON_PX = 0.02f
+        const val LATEX_XETEX_GENFRAC_DISPLAY_DELIMITER_EM = 2.39f
+        const val LATEX_XETEX_GENFRAC_TEXT_DELIMITER_EM = 1f
+        const val LATEX_XETEX_GENFRAC_SCRIPT_DELIMITER_EM = 1.45f
+        const val LATEX_XETEX_GENFRAC_SCRIPT_SCRIPT_DELIMITER_EM = 1.35f
 
         val binaryLeftCanceller = setOf(
             MathAtomClass.Binary,

@@ -7,11 +7,9 @@ Lete Sans Math	variable-pair	x+y	82.703	-21.953	7.875	xRight=19.086;plusLeft=27.
 Lete Sans Math	variable-run	abc	59.219	-28.437	1.313	aRight=20.047;bLeft=20.047;bRight=41.172;cLeft=41.172
 Lete Sans Math	paired-scripts	x_1^2	37.727	-36.062	11.102	baseRight=19.086;subLeft=19.086;supLeft=19.086;supBottom=-15.797;subTop=-9.000
 Lete Sans Math	fraction-adjacency	a\frac{b}{c}d	58.438	-37.602	20.391	leftRight=20.047;fracLeft=20.047;fracRight=36.836;rightLeft=36.836
-Lete Sans Math	ruleless-stack	\binom{n}{k}	67.391	-43.133	22.742	leftBottom=22.742;leftTop=-43.133;stackBottom=20.195;stackTop=-31.391;rightBottom=22.742;rightTop=-43.133
 Lete Sans Math	italic-upright	x / \mathrm{x}	79.008	-19.234	1.000	italicWidth=19.086;uprightWidth=19.922
 STIX Two Math	variable-pair	x+y	89.344	-21.312	10.398	xRight=22.367;plusLeft=31.250;plusRight=60.055;yLeft=68.938
 STIX Two Math	variable-run	abc	59.492	-27.234	1.398	aRight=22.203;bLeft=22.203;bRight=42.930;cLeft=42.930
 STIX Two Math	paired-scripts	x_1^2	37.828	-32.227	9.695	baseRight=22.367;subLeft=22.367;supLeft=22.367;supBottom=-14.195;subTop=-8.195
 STIX Two Math	fraction-adjacency	a\frac{b}{c}d	60.953	-42.164	24.672	leftRight=22.203;fracLeft=22.203;fracRight=38.711;rightLeft=38.711
-STIX Two Math	ruleless-stack	\binom{n}{k}	68.445	-37.828	19.203	leftBottom=19.203;leftTop=-37.828;stackBottom=16.398;stackTop=-31.375;rightBottom=19.203;rightTop=-37.828
 STIX Two Math	italic-upright	x / \mathrm{x}	81.531	-17.914	1.000	italicWidth=22.367;uprightWidth=19.164

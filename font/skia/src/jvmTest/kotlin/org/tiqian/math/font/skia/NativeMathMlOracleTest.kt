@@ -40,23 +40,21 @@ class NativeMathMlOracleTest {
         // Chrome and Skia expose slightly different fractional advances, while both consume
         // the same font. Native MathML does not expose TeX's terminal italic-correction kern,
         // so compare the shared nucleus width rather than erasing that named TeX geometry.
-        if (oracle.case != "ruleless-stack") {
-            val terminalCorrection = actual.fragments.lastOrNull()?.trailingItalicCorrectionPx ?: 0f
-            val adjacencyExtras = if (oracle.case == "fraction-adjacency") {
-                val nullDelimiters = actual.decisions.single { it.name == "TeXFractionNullDelimiters" }
-                actual.fragments.first().trailingItalicCorrectionPx +
-                    nullDelimiters.details.getValue("leftSpacePx").toFloat() +
-                    nullDelimiters.details.getValue("rightSpacePx").toFloat()
-            } else {
-                0f
-            }
-            assertNearCssPixel(
-                oracle.width,
-                actual.box.width - terminalCorrection - adjacencyExtras,
-                5.0f,
-                "$oracle logical nucleus width",
-            )
+        val terminalCorrection = actual.fragments.lastOrNull()?.trailingItalicCorrectionPx ?: 0f
+        val adjacencyExtras = if (oracle.case == "fraction-adjacency") {
+            val nullDelimiters = actual.decisions.single { it.name == "TeXFractionNullDelimiters" }
+            actual.fragments.first().trailingItalicCorrectionPx +
+                nullDelimiters.details.getValue("leftSpacePx").toFloat() +
+                nullDelimiters.details.getValue("rightSpacePx").toFloat()
+        } else {
+            0f
         }
+        assertNearCssPixel(
+            oracle.width,
+            actual.box.width - terminalCorrection - adjacencyExtras,
+            5.0f,
+            "$oracle logical nucleus width",
+        )
         // Chrome and Skia choose slightly different absolute script shifts; the reviewed
         // relative gaps and baselines below are correspondingly much tighter.
         assertNearCssPixel(oracle.bottom - oracle.top, actual.box.inkBounds.height, 6.5f, "$oracle vertical ink")
@@ -137,19 +135,6 @@ class NativeMathMlOracleTest {
                 oracle.assertProbe("fracLeft", left.x + left.advance, 0.1f)
                 oracle.assertProbe("fracRight", right.x - leftCorrection - nullDelimiterWidth, 2f)
                 oracle.assertProbe("rightLeft", right.x - leftCorrection - nullDelimiterWidth, 2f)
-            }
-            "ruleless-stack" -> {
-                val delimiters = actual.decisions.filter { it.name == "BinomialDelimiter" }
-                assertEquals(2, delimiters.size, oracle.toString())
-                assertTrue(delimiters.all { it.details["coversTop"] == "true" && it.details["coversBottom"] == "true" })
-                val left = delimiters.single { it.details["side"] == "left" }
-                val right = delimiters.single { it.details["side"] == "right" }
-                oracle.assertProbe("leftTop", left.details.getValue("delimiterTopPx").toFloat(), 3.5f)
-                oracle.assertProbe("leftBottom", left.details.getValue("delimiterBottomPx").toFloat(), 3.5f)
-                oracle.assertProbe("stackTop", left.details.getValue("stackTopPx").toFloat(), 3.5f)
-                oracle.assertProbe("stackBottom", left.details.getValue("stackBottomPx").toFloat(), 3.5f)
-                oracle.assertProbe("rightTop", right.details.getValue("delimiterTopPx").toFloat(), 3.5f)
-                oracle.assertProbe("rightBottom", right.details.getValue("delimiterBottomPx").toFloat(), 3.5f)
             }
         }
     }

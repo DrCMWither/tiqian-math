@@ -87,7 +87,7 @@ private fun PreviewScreen() {
                 Text("Ordinary side scripts · ink-constrained placement", fontSize = 13.sp)
                 SideScriptSample("Lete Sans Math", lete)
                 SideScriptSample("STIX Two Math", stix)
-                Text("Script-style binomial coverage · real base glyph variants", fontSize = 13.sp)
+                Text("TeX fraction noad · fixed-style binomial delimiters", fontSize = 13.sp)
                 ScriptBinomialSample("Lete Sans Math", lete)
                 ScriptBinomialSample("STIX Two Math", stix)
                 Text("Operator-trailing line breaks · 260 px host width", fontSize = 13.sp)
@@ -285,7 +285,63 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("radical-degree-oracle=${output.absolutePath} bytes=${output.length()}")
     }
+    ImageComposeScene(width = 900, height = 960) { FractionNoadOracleScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-fraction-noad.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("fraction-noad-oracle=${output.absolutePath} bytes=${output.length()}")
+    }
     renderRadicalSeamReport()
+}
+
+@Composable
+private fun FractionNoadOracleScreen() {
+    val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
+    DisposableEffect(lete, stix) {
+        onDispose {
+            lete.close()
+            stix.close()
+        }
+    }
+    MaterialTheme {
+        Surface(color = Color.White) {
+            Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Tiqian · inline host · nominal 32 px · exact repository OTF", fontSize = 13.sp)
+                Text(
+                    "genfrac targets: D 2.39em · T 1em · S 1.45em · SS 1.35em · null delimiter 1.2pt",
+                    fontSize = 10.sp,
+                    color = Color(0xFF55504A),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(26.dp)) {
+                    FractionNoadFontColumn("Lete Sans Math", lete)
+                    FractionNoadFontColumn("STIX Two Math", stix)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FractionNoadFontColumn(label: String, face: SkiaMathFontFace) {
+    Column(Modifier.width(410.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+        FRACTION_NOAD_PREVIEW_CASES.forEach { (caseLabel, source) ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("$caseLabel · $source", fontSize = 9.sp, color = Color(0xFF6B655E))
+                TiqianMath(
+                    source = source,
+                    modifier = Modifier.background(Color(0xFFF7F5F1)).padding(4.dp),
+                    mode = MathMode.Inline,
+                    fontFace = face,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 32.sp, lineHeight = 44.sp),
+                    nullDelimiterSpacePx = TECTONIC_NULL_DELIMITER_SPACE_PX,
+                    softWrap = false,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -591,6 +647,17 @@ private fun Float.fmt(): String = "%.4f".format(this)
 private const val SEAM_CROP_LEFT_OF_SEAM_PX = 12
 private const val SEAM_CROP_WIDTH_PX = 30
 private const val SEAM_CROP_HEIGHT_PX = 12
+private const val TECTONIC_NULL_DELIMITER_SPACE_PX = 1.2f * 96f / 72.27f
+
+private val FRACTION_NOAD_PREVIEW_CASES = listOf(
+    "inline fraction" to "\\frac{a}{b}",
+    "display fraction" to "\\displaystyle\\frac{a}{b}",
+    "inline binomial" to "\\binom{n}{k}",
+    "display binomial" to "\\displaystyle\\binom{n}{k}",
+    "script binomial" to "\\scriptstyle\\binom{n}{k}",
+    "tall binomial" to "\\binom{\\frac{\\frac{a}{b}}{c}}{\\frac{d}{\\frac{e}{f}}}",
+    "nested fraction/binomial" to "\\frac{\\binom{n}{k}}{\\binom{2n}{n-k}}",
+)
 
 private const val RADICAL_BASE_SOURCE = "\\sqrt[3]{x}"
 private const val RADICAL_VARIANT_SOURCE = "\\sqrt{\\frac{a}{b}}"

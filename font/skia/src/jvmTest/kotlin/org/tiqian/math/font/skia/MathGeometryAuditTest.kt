@@ -11,6 +11,8 @@ import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
+import org.tiqian.math.font.opentype.MathGlyphAssembly
+import org.tiqian.math.font.opentype.MathGlyphAssemblyPart
 import org.tiqian.math.font.opentype.MathGlyphKernInfo
 import org.tiqian.math.font.opentype.MathGlyphConstruction
 import org.tiqian.math.font.opentype.MathGlyphVariant
@@ -23,6 +25,7 @@ import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.MathOperatorGlyphRequest
 import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.layout.MeasuredOutlineConstructionRun
 import org.tiqian.math.layout.ResolvedMathSymbol
 import org.tiqian.math.layout.ResolvedMathSymbolRun
 import org.tiqian.math.layout.ResolvedMathOperator
@@ -40,8 +43,8 @@ class MathGeometryAuditTest {
         SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
             val size = 40f
             val range = SourceRange(0, 1)
-            val left = delegate.shapeConstructionBase("(", size, range).glyphs.single().glyphId
-            val right = delegate.shapeConstructionBase(")", size, range).glyphs.single().glyphId
+            val left = delegate.shapeOutlineConstructionBase("(", size, range).run.glyphs.single().glyphId
+            val right = delegate.shapeOutlineConstructionBase(")", size, range).run.glyphs.single().glyphId
             val unrelated = delegate.shapeConstructionBase("√", size, range).glyphs.single().glyphId
             val constants = delegate.mathFont.constants.copy(
                 delimitedSubFormulaMinHeight = 0,
@@ -61,15 +64,59 @@ class MathGeometryAuditTest {
             )
             val result = MathLayoutEngine(FontOverrideFace(delegate, font)).layout(
                 "\\binom{}{}",
-                MathLayoutOptions(MathMode.Inline, size),
+                MathLayoutOptions(MathMode.Inline, size, initialStyle = MathStyle.ScriptScript),
             )
             val delimiters = result.decisions.filter { it.name == "BinomialDelimiter" }
             assertEquals(2, delimiters.size)
             delimiters.forEach { decision ->
                 assertEquals("BaseGlyph", decision.details["construction"])
                 assertEquals("MathMLCore5.3.2NormalGlyph", decision.details["constructionPolicy"])
+                assertEquals("1.35", decision.details["targetEmFactor"])
             }
             assertTrue(result.box.glyphs.none { it.glyphId == unrelated })
+        }
+    }
+
+    @Test
+    fun binomialFixedTargetCanSelectAValidatedAssemblyWithoutUsingStackHeight() {
+        SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
+            val size = 40f
+            val range = SourceRange(0, 1)
+            val left = delegate.shapeConstructionBase("(", size, range).glyphs.single().glyphId
+            val right = delegate.shapeConstructionBase(")", size, range).glyphs.single().glyphId
+            val extender = delegate.shapeConstructionBase("√", size, range).glyphs.single().glyphId
+            val assembly = MathGlyphAssembly(
+                parts = listOf(
+                    MathGlyphAssemblyPart(left, 0, 300, 1_000, false),
+                    MathGlyphAssemblyPart(extender, 300, 300, 1_000, true),
+                    MathGlyphAssemblyPart(left, 300, 0, 1_000, false),
+                ),
+                minimumConnectorOverlap = 100,
+            )
+            val rightAssembly = assembly.copy(
+                parts = assembly.parts.map { part ->
+                    part.copy(glyphId = if (part.glyphId == left) right else part.glyphId)
+                },
+            )
+            val font = delegate.mathFont.copy(
+                verticalConstructions = delegate.mathFont.verticalConstructions + mapOf(
+                    left to MathGlyphConstruction(emptyList(), assembly),
+                    right to MathGlyphConstruction(emptyList(), rightAssembly),
+                ),
+            )
+            val result = MathLayoutEngine(FontOverrideFace(delegate, font)).layout(
+                "\\binom{n}{k}",
+                MathLayoutOptions(MathMode.Display, size),
+            )
+            val delimiters = result.decisions.filter { it.name == "BinomialDelimiter" }
+            assertEquals(2, delimiters.size)
+            assertTrue(delimiters.all {
+                it.details["construction"] == "Assembly" &&
+                    abs(it.details.getValue("targetPx").toFloat() - 95.6f) <= 0.02f &&
+                    it.details["stackCoverageRequired"] == "false"
+            }, delimiters.toString())
+            assertTrue(delimiters.all { it.details.getValue("extenderRepetitions").toInt() >= 1 })
+            assertTrue(result.decisions.any { it.name == "TeXBinomialFractionNoadPacking" })
         }
     }
 
@@ -167,7 +214,7 @@ class MathGeometryAuditTest {
     }
 
     @Test
-    fun scriptAndScriptScriptBinomialsUseBaseGlyphMathCoverageForBothFonts() = withAuditFaces { label, face ->
+    fun scriptAndScriptScriptBinomialsUseFixedTargetsAndTextStyleDelimiterSelection() = withAuditFaces { label, face ->
         val size = 40f
         val cases = listOf(
             "inline-denominator" to "\\frac{a}{\\binom{n}{k}}",
@@ -185,35 +232,25 @@ class MathGeometryAuditTest {
             val delimiters = result.decisions.filter { it.name == "BinomialDelimiter" }
             assertEquals(2, delimiters.size, "$label/$case has two delimiter decisions")
             delimiters.forEach { decision ->
-                assertTrue(decision.details["construction"] != "BaseGlyph", "$label/$case stretches ${decision.details}")
                 assertAtLeast(
                     decision.details.getValue("achievedAdvancePx").toFloat(),
                     decision.details.getValue("targetPx").toFloat(),
                     "$label/$case reaches target",
                 )
                 assertTrue(decision.details.getValue("baseGlyphId").toInt() > 0)
+                assertEquals("Text", decision.details["delimiterStyle"])
+                assertEquals(size.toString(), decision.details["delimiterFontSizePx"])
+                assertEquals("false", decision.details["stackCoverageRequired"])
             }
-            val delimiterGlyphs = result.box.glyphs.filter { it.sourceRange == delimiters.first().range }
-            val contentGlyphs = result.box.glyphs.filter {
-                it.sourceRange != delimiters.first().range &&
-                    it.sourceRange.start >= delimiters.first().range.start &&
-                    it.sourceRange.endExclusive <= delimiters.first().range.endExclusive
-            }
-            val left = delimiterGlyphs.filter { it.inkBounds.right <= result.box.width / 2f }
-            val right = delimiterGlyphs.filter { it.inkBounds.left >= result.box.width / 2f }
-            assertTrue(left.isNotEmpty() && right.isNotEmpty(), "$label/$case separates both delimiters")
-            val leftRight = left.maxOf { it.inkBounds.right }
-            val contentLeft = contentGlyphs.minOf { it.inkBounds.left }
-            val contentRight = contentGlyphs.maxOf { it.inkBounds.right }
-            val rightLeft = right.minOf { it.inkBounds.left }
-            assertTrue(leftRight <= contentLeft + 0.03f, "$label/$case left=$leftRight content=$contentLeft")
-            assertTrue(contentRight <= rightLeft + 0.03f, "$label/$case content=$contentRight right=$rightLeft")
+            val expectedFactor = if (case == "scriptscript") 1.35f else 1.45f
+            assertTrue(delimiters.all { it.details["targetEmFactor"] == expectedFactor.toString() })
+            assertTrue(result.decisions.any { it.name == "TeXBinomialFractionNoadPacking" })
         }
 
         if (label == "Lete Sans Math") {
             val scriptSize = size * face.mathFont.constants.scriptPercentScaleDown / 100f
             val styled = face.shape("(", scriptSize, MathStyle.ScriptCramped, SourceRange(0, 1)).glyphs.single().glyphId
-            val coverageBase = face.shapeConstructionBase("(", scriptSize, SourceRange(0, 1)).glyphs.single().glyphId
+            val coverageBase = face.shapeConstructionBase("(", size, SourceRange(0, 1)).glyphs.single().glyphId
             assertTrue(styled != coverageBase, "Lete regression fixture must exercise the ssty/base glyph distinction")
             val inline = MathLayoutEngine(face).layout("\\frac{a}{\\binom{n}{k}}", MathLayoutOptions(fontSizePx = size))
             val left = inline.decisions.first { it.name == "BinomialDelimiter" && it.details["side"] == "left" }
@@ -222,44 +259,29 @@ class MathGeometryAuditTest {
     }
 
     @Test
-    fun veryTallRealFontAssembliesReachTargetsWithNoGeometricSeam() = withAuditFaces { label, face ->
+    fun veryTallBinomialContentDoesNotChangeTheFixedFractionDelimiter() = withAuditFaces { label, face ->
         var tallNumerator = "a"
         repeat(10) { tallNumerator = "\\frac{$tallNumerator}{b}" }
         val source = "\\binom{$tallNumerator}{k}"
-        val result = MathLayoutEngine(face).layout(source, MathLayoutOptions(MathMode.Display, 54f))
+        val engine = MathLayoutEngine(face)
+        val result = engine.layout(source, MathLayoutOptions(MathMode.Display, 54f))
+        val simple = engine.layout("\\binom{n}{k}", MathLayoutOptions(MathMode.Display, 54f))
         val decisions = result.decisions.filter { it.name == "BinomialDelimiter" }
+        val simpleDecisions = simple.decisions.filter { it.name == "BinomialDelimiter" }
         assertEquals(2, decisions.size)
-        decisions.forEach { decision ->
-            assertEquals("Assembly", decision.details["construction"], "$label tall delimiter uses assembly")
-            assertTrue(decision.details.getValue("extenderRepetitions").toInt() >= 1)
-            assertAtLeast(
-                decision.details.getValue("achievedAdvancePx").toFloat(),
-                decision.details.getValue("targetPx").toFloat(),
-                "$label tall assembly coverage",
-            )
-        }
-        assertFalse(result.diagnostics.any { it.code == DiagnosticCode.MathVariantTooShort }, "$label tall coverage")
-        val components = result.box.glyphs.filter { it.sourceRange == SourceRange(0, source.length) }
-        val bySide = listOf(
-            components.filter { it.inkBounds.right <= result.box.width / 2f },
-            components.filter { it.inkBounds.left >= result.box.width / 2f },
-        )
-        bySide.forEachIndexed { side, glyphs ->
-            assertTrue(glyphs.size >= 3, "$label side $side has an assembled delimiter")
-            glyphs.sortedBy { it.inkBounds.top }.zipWithNext().forEach { (upper, lower) ->
-                assertTrue(
-                    upper.inkBounds.bottom + 0.55f >= lower.inkBounds.top,
-                    "$label side $side has no raster-scale connector gap: ${upper.inkBounds} then ${lower.inkBounds}",
-                )
-            }
-        }
+        assertEquals(simpleDecisions.map { it.details["construction"] }, decisions.map { it.details["construction"] })
+        assertEquals(simpleDecisions.map { it.details["targetPx"] }, decisions.map { it.details["targetPx"] })
+        assertTrue(decisions.all {
+            it.details["stackCoverageRequired"] == "false" &&
+                !(it.details["coversStackTop"] == "true" && it.details["coversStackBottom"] == "true")
+        }, "$label $decisions")
+        assertFalse(result.diagnostics.any { it.code == DiagnosticCode.MathVariantTooShort }, "$label fixed target is reached")
     }
 
     @Test
     fun delimiterCoverageFailureIsNeverSilent() {
         SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
             val font = delegate.mathFont.copy(
-                constants = delegate.mathFont.constants.copy(delimitedSubFormulaMinHeight = 4000),
                 verticalConstructions = emptyMap(),
             )
             val result = MathLayoutEngine(FontOverrideFace(delegate, font)).layout(
@@ -270,6 +292,7 @@ class MathGeometryAuditTest {
             assertEquals(2, result.diagnostics.count { it.code == DiagnosticCode.MathVariantTooShort })
             assertTrue(result.debugDump.contains("diagnostic Error/MissingMathConstruction"))
             assertTrue(result.debugDump.contains("construction=BaseGlyph"))
+            assertTrue(result.debugDump.contains("delimitedSubFormulaMinHeightUsed=false"))
         }
     }
 
@@ -402,6 +425,27 @@ private class FontOverrideFace(
         style: MathStyle,
         sourceRange: SourceRange,
     ): MeasuredMathRun = delegate.measureGlyph(glyphId, fontSizePx, style, sourceRange)
+
+    override fun measureGlyphOutlineBounds(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = delegate.measureGlyphOutlineBounds(glyphId, fontSizePx, style, sourceRange)
+
+    override fun shapeOutlineConstructionBase(
+        text: String,
+        fontSizePx: Float,
+        sourceRange: SourceRange,
+    ): MeasuredOutlineConstructionRun = delegate.shapeOutlineConstructionBase(text, fontSizePx, sourceRange)
+
+    override fun measureOutlineConstructionGlyph(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredOutlineConstructionRun =
+        delegate.measureOutlineConstructionGlyph(glyphId, fontSizePx, style, sourceRange)
 }
 
 private inline fun withAuditFaces(block: (String, SkiaMathFontFace) -> Unit) {

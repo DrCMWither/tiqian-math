@@ -57,6 +57,8 @@ fun TiqianMath(
     style: TextStyle = LocalTextStyle.current,
     /** Compatibility override; prefer [style].fontSize so density and fontScale are honored. */
     fontSizePx: Float? = null,
+    /** Explicit TeX `\nulldelimiterspace` in layout pixels; null retains the engine policy. */
+    nullDelimiterSpacePx: Float? = null,
     color: Color = Color.Unspecified,
     softWrap: Boolean = true,
     fontFace: SkiaMathFontFace? = null,
@@ -80,8 +82,11 @@ fun TiqianMath(
     }
     val defaultFace = if (fontFace == null) rememberLeteMathFontFace() else null
     val resolvedFace = fontFace ?: checkNotNull(defaultFace)
-    val result = remember(source, mode, resolvedFontSizePx, resolvedFace) {
-        MathLayoutEngine(resolvedFace).layout(source, MathLayoutOptions(mode, resolvedFontSizePx))
+    val result = remember(source, mode, resolvedFontSizePx, nullDelimiterSpacePx, resolvedFace) {
+        MathLayoutEngine(resolvedFace).layout(
+            source,
+            MathLayoutOptions(mode, resolvedFontSizePx, nullDelimiterSpacePx = nullDelimiterSpacePx),
+        )
     }
     SideEffect { onMathLayout(result) }
 

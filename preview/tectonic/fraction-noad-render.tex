@@ -1,0 +1,88 @@
+\documentclass{article}
+\usepackage{unicode-math}
+\usepackage[
+  paperwidth=675bp,
+  paperheight=720bp,
+  margin=0bp
+]{geometry}
+\pagestyle{empty}
+
+\newbox\leteInlineFrac
+\newbox\leteDisplayFrac
+\newbox\leteInlineBinom
+\newbox\leteDisplayBinom
+\newbox\leteScriptBinom
+\newbox\leteTallBinom
+\newbox\leteNested
+\newbox\stixInlineFrac
+\newbox\stixDisplayFrac
+\newbox\stixInlineBinom
+\newbox\stixDisplayBinom
+\newbox\stixScriptBinom
+\newbox\stixTallBinom
+\newbox\stixNested
+
+\newcommand{\oraclebox}[2]{%
+  \setbox#1=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+}
+\newcommand{\oraclerow}[2]{%
+  \hbox{\fontsize{6.75bp}{8bp}\selectfont\ttfamily #1}%
+  \vskip1bp
+  \hbox{#2}%
+  \vskip7bp
+}
+
+\begin{document}
+\setmathfont[
+  Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/
+]{LeteSansMath-Regular.otf}
+\oraclebox{\leteInlineFrac}{\frac{a}{b}}
+\oraclebox{\leteDisplayFrac}{\displaystyle\frac{a}{b}}
+\oraclebox{\leteInlineBinom}{\binom{n}{k}}
+\oraclebox{\leteDisplayBinom}{\displaystyle\binom{n}{k}}
+\oraclebox{\leteScriptBinom}{\scriptstyle\binom{n}{k}}
+\oraclebox{\leteTallBinom}{\binom{\frac{\frac{a}{b}}{c}}{\frac{d}{\frac{e}{f}}}}
+\oraclebox{\leteNested}{\frac{\binom{n}{k}}{\binom{2n}{n-k}}}
+
+\setmathfont[
+  Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/
+]{STIXTwoMath-Regular.otf}
+\oraclebox{\stixInlineFrac}{\frac{a}{b}}
+\oraclebox{\stixDisplayFrac}{\displaystyle\frac{a}{b}}
+\oraclebox{\stixInlineBinom}{\binom{n}{k}}
+\oraclebox{\stixDisplayBinom}{\displaystyle\binom{n}{k}}
+\oraclebox{\stixScriptBinom}{\scriptstyle\binom{n}{k}}
+\oraclebox{\stixTallBinom}{\binom{\frac{\frac{a}{b}}{c}}{\frac{d}{\frac{e}{f}}}}
+\oraclebox{\stixNested}{\frac{\binom{n}{k}}{\binom{2n}{n-k}}}
+
+\vspace*{13.5bp}
+\noindent\hspace*{13.5bp}\vbox{%
+  \hbox{\fontsize{9.75bp}{11bp}\selectfont Tectonic 0.17.0 / XeTeX · inline host · 24bp (32px) · exact repository OTF}%
+  \vskip4bp
+  \hbox{\fontsize{7.5bp}{9bp}\selectfont LaTeX2e genfrac targets: D 2.39em · T 1em · S 1.45em · SS 1.35em}%
+  \vskip8bp
+  \hbox to 648bp{%
+    \vtop{\hsize=310bp
+      \hbox{\fontsize{8.25bp}{10bp}\selectfont Lete Sans Math}\vskip6bp
+      \oraclerow{inline \string\frac\{a\}\{b\}}{\copy\leteInlineFrac}
+      \oraclerow{\string\displaystyle\string\frac\{a\}\{b\}}{\copy\leteDisplayFrac}
+      \oraclerow{inline \string\binom\{n\}\{k\}}{\copy\leteInlineBinom}
+      \oraclerow{\string\displaystyle\string\binom\{n\}\{k\}}{\copy\leteDisplayBinom}
+      \oraclerow{\string\scriptstyle\string\binom\{n\}\{k\}}{\copy\leteScriptBinom}
+      \oraclerow{\string\binom\{\string\frac\{\string\frac\{a\}\{b\}\}\{c\}\}\{\string\frac\{d\}\{\string\frac\{e\}\{f\}\}\}}{\copy\leteTallBinom}
+      \oraclerow{\string\frac\{\string\binom\{n\}\{k\}\}\{\string\binom\{2n\}\{n-k\}\}}{\copy\leteNested}
+    }%
+    \hfil
+    \vtop{\hsize=310bp
+      \hbox{\fontsize{8.25bp}{10bp}\selectfont STIX Two Math}\vskip6bp
+      \oraclerow{inline \string\frac\{a\}\{b\}}{\copy\stixInlineFrac}
+      \oraclerow{\string\displaystyle\string\frac\{a\}\{b\}}{\copy\stixDisplayFrac}
+      \oraclerow{inline \string\binom\{n\}\{k\}}{\copy\stixInlineBinom}
+      \oraclerow{\string\displaystyle\string\binom\{n\}\{k\}}{\copy\stixDisplayBinom}
+      \oraclerow{\string\scriptstyle\string\binom\{n\}\{k\}}{\copy\stixScriptBinom}
+      \oraclerow{\string\binom\{\string\frac\{\string\frac\{a\}\{b\}\}\{c\}\}\{\string\frac\{d\}\{\string\frac\{e\}\{f\}\}\}}{\copy\stixTallBinom}
+      \oraclerow{\string\frac\{\string\binom\{n\}\{k\}\}\{\string\binom\{2n\}\{n-k\}\}}{\copy\stixNested}
+    }%
+  }%
+}
+\end{document}
