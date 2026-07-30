@@ -65,6 +65,42 @@ data class MathConstructionPaintGroup(
     val outlinePolicy: MathConstructionOutlinePolicy,
 )
 
+enum class MathTeXCleanBoxPolicy {
+    /** Height/depth are the exact available glyph-outline and rule union. */
+    GlyphOutlineUnion,
+
+    /** Height/depth are the completed TeX box assembled from positioned child boxes. */
+    CompletedLayoutBox,
+}
+
+enum class MathTeXCleanBoxEvidence {
+    GlyphOutline,
+    FontReportedGlyphBounds,
+    RuleGeometry,
+    CompletedChildBox,
+    Empty,
+}
+
+/**
+ * Replayable TeX `clean_box` height/depth, kept independently from host line reserve and
+ * painted ink. Composite noads carry their completed child-box metrics instead of being
+ * reverse-engineered later from flattened glyphs.
+ */
+data class MathTeXCleanBoxMetrics(
+    val ascent: Float,
+    val descent: Float,
+    val policy: MathTeXCleanBoxPolicy,
+    val evidence: Set<MathTeXCleanBoxEvidence>,
+) {
+    init {
+        require(ascent >= 0f) { "clean-box ascent must not be negative" }
+        require(descent >= 0f) { "clean-box descent must not be negative" }
+        require(evidence.isNotEmpty()) { "clean-box evidence must not be empty" }
+    }
+
+    val height: Float get() = ascent + descent
+}
+
 data class MathBox(
     /** TeX logical advance. Ink may overhang either horizontal edge. */
     val width: Float,
@@ -76,6 +112,12 @@ data class MathBox(
     val rules: List<MathRulePlacement>,
     val range: SourceRange,
     val constructionPaintGroups: List<MathConstructionPaintGroup> = emptyList(),
+    val texCleanBoxMetrics: MathTeXCleanBoxMetrics = MathTeXCleanBoxMetrics(
+        ascent = ascent,
+        descent = descent,
+        policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+        evidence = setOf(MathTeXCleanBoxEvidence.FontReportedGlyphBounds),
+    ),
 ) {
     init {
         require(width >= 0f) { "box width must not be negative" }

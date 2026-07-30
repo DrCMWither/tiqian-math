@@ -152,6 +152,70 @@ class MathAssemblyAndKernTest {
     }
 
     @Test
+    fun xetexAssemblyUsesExactGlyphBoxesAndStretchesEachConnectorFromItsMaximum() {
+        val font = LeteSansMath.load().copy(
+            verticalConstructions = mapOf(TEST_GLYPH to construction(withExtender = true)),
+        )
+        val selected = assertNotNull(
+            font.testVerticalConstruction(
+                target = 220f,
+                assemblyPolicy = MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
+                glyphVerticalExtents = mapOf(
+                    10.toUShort() to 90f,
+                    11.toUShort() to 50f,
+                    12.toUShort() to 110f,
+                ),
+            ),
+        )
+
+        assertEquals(MathConstructionKind.Assembly, selected.kind)
+        assertEquals("Tectonic0.17.0XeTeXBuildOpenTypeAssemblyStretchGlue", selected.constructionPolicy)
+        assertEquals(1, selected.extenderRepetitions)
+        assertEquals(listOf(10.toUShort(), 11.toUShort(), 12.toUShort()), selected.components.map { it.glyphId })
+        assertEquals(listOf(90f, 50f, 110f), selected.assemblyGlyphExtents)
+        assertEquals(listOf(30f, 30f), selected.assemblyMaximumConnectorOverlaps)
+        assertEquals(listOf(10f, 10f), selected.assemblyMinimumConnectorOverlaps)
+        assertNear(190f, assertNotNull(selected.assemblyNaturalAdvance))
+        assertNear(40f, assertNotNull(selected.assemblyStretchCapacity))
+        assertNear(30f, assertNotNull(selected.assemblyAppliedStretch))
+        assertEquals(listOf(15f, 15f), selected.connectorOverlaps)
+        assertEquals(listOf(0f, 75f, 110f), selected.components.map { it.offset })
+        assertNear(220f, selected.advanceMeasurement)
+        assertNull(selected.uniformConnectorOverlap)
+    }
+
+    @Test
+    fun xetexAssemblyRepeatsExtendersBeforeSolvingStretchGlue() {
+        val font = LeteSansMath.load().copy(
+            verticalConstructions = mapOf(TEST_GLYPH to construction(withExtender = true)),
+        )
+        val selected = assertNotNull(
+            font.testVerticalConstruction(
+                target = 250f,
+                assemblyPolicy = MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
+                glyphVerticalExtents = mapOf(
+                    10.toUShort() to 90f,
+                    11.toUShort() to 50f,
+                    12.toUShort() to 110f,
+                ),
+            ),
+        )
+
+        assertEquals(2, selected.extenderRepetitions)
+        assertEquals(listOf(10.toUShort(), 11.toUShort(), 11.toUShort(), 12.toUShort()), selected.components.map { it.glyphId })
+        assertEquals(listOf(30f, 30f, 30f), selected.assemblyMaximumConnectorOverlaps)
+        assertEquals(listOf(10f, 10f, 10f), selected.assemblyMinimumConnectorOverlaps)
+        assertNear(210f, assertNotNull(selected.assemblyNaturalAdvance))
+        assertNear(60f, assertNotNull(selected.assemblyStretchCapacity))
+        assertNear(40f, assertNotNull(selected.assemblyAppliedStretch))
+        selected.connectorOverlaps.forEach { assertNear(50f / 3f, it) }
+        listOf(0f, 220f / 3f, 320f / 3f, 140f)
+            .zip(selected.components.map { it.offset })
+            .forEach { (expected, actual) -> assertNear(expected, actual) }
+        assertNear(250f, selected.advanceMeasurement)
+    }
+
+    @Test
     fun normalGlyphPrecedesLargerVariantAndDoesNotRequireAConstructionTable() {
         val noTable = LeteSansMath.load().copy(verticalConstructions = emptyMap())
         val normal = assertNotNull(
@@ -237,6 +301,8 @@ private fun OpenTypeMathFont.testVerticalConstruction(
     normalHeight: Float = 0f,
     normalWidth: Float = 20f,
     glyphWidths: Map<UShort, Float> = emptyMap(),
+    assemblyPolicy: MathVerticalAssemblyPolicy = MathVerticalAssemblyPolicy.MathMLCoreUniformOverlap,
+    glyphVerticalExtents: Map<UShort, Float> = emptyMap(),
 ): MathVerticalConstruction? = verticalConstruction(
     MathVerticalConstructionRequest(
         baseGlyphId = 1u,
@@ -244,7 +310,9 @@ private fun OpenTypeMathFont.testVerticalConstruction(
         fontSizePx = 1000f,
         normalGlyphHeightPx = normalHeight,
         normalGlyphAdvanceWidthPx = normalWidth,
+        assemblyPolicy = assemblyPolicy,
     ),
+    glyphVerticalExtentPx = { glyphId -> glyphVerticalExtents[glyphId] ?: 20f },
 ) { glyphId -> glyphWidths[glyphId] ?: 20f }
 
 private fun <T> assertCompletesWithinOneSecond(block: () -> T): T {

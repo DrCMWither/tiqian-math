@@ -121,12 +121,18 @@ enum class MathConstructionKind {
     Assembly,
 }
 
+enum class MathVerticalAssemblyPolicy {
+    MathMLCoreUniformOverlap,
+    TectonicXeTeXStretchGlue,
+}
+
 data class MathVerticalConstructionRequest(
     val baseGlyphId: UShort,
     val targetSizePx: Float,
     val fontSizePx: Float,
     val normalGlyphHeightPx: Float,
     val normalGlyphAdvanceWidthPx: Float,
+    val assemblyPolicy: MathVerticalAssemblyPolicy = MathVerticalAssemblyPolicy.MathMLCoreUniformOverlap,
 )
 
 data class MathGlyphComponent(
@@ -153,6 +159,13 @@ data class MathVerticalConstruction(
     val uniformConnectorOverlap: Float? = null,
     /** Advance in the direction orthogonal to stretching; pixels at the requested size. */
     val orthogonalAdvancePx: Float,
+    /** XeTeX assembly evidence, in design units; null for variants and MathML assemblies. */
+    val assemblyNaturalAdvance: Float? = null,
+    val assemblyStretchCapacity: Float? = null,
+    val assemblyAppliedStretch: Float? = null,
+    val assemblyGlyphExtents: List<Float> = emptyList(),
+    val assemblyMaximumConnectorOverlaps: List<Float> = emptyList(),
+    val assemblyMinimumConnectorOverlaps: List<Float> = emptyList(),
 )
 
 enum class MathGlyphAssemblyInvalidReason {
@@ -220,6 +233,7 @@ data class OpenTypeMathFont(
 
     fun verticalConstruction(
         request: MathVerticalConstructionRequest,
+        glyphVerticalExtentPx: ((UShort) -> Float)? = null,
         glyphAdvanceWidthPx: (UShort) -> Float,
     ): MathVerticalConstruction? {
         if (request.normalGlyphHeightPx >= request.targetSizePx) {
@@ -247,7 +261,21 @@ data class OpenTypeMathFont(
         val assembly = construction.assembly
         val assemblyValidation = assembly?.let(::validateAssembly)
         if (assembly != null && assemblyValidation?.valid == true) {
-            return assemble(assembly, assemblyValidation, target, glyphAdvanceWidthPx)
+            return when (request.assemblyPolicy) {
+                MathVerticalAssemblyPolicy.MathMLCoreUniformOverlap ->
+                    assemble(assembly, assemblyValidation, target, glyphAdvanceWidthPx)
+                MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue ->
+                    assembleXeTeX(
+                        assembly = assembly,
+                        validation = assemblyValidation,
+                        target = target,
+                        fontSizePx = request.fontSizePx,
+                        glyphVerticalExtentPx = checkNotNull(glyphVerticalExtentPx) {
+                            "XeTeX assembly requires exact glyph vertical extents"
+                        },
+                        glyphAdvanceWidthPx = glyphAdvanceWidthPx,
+                    )
+            }
         }
         val last = construction.variants.lastOrNull() ?: return null
         return MathVerticalConstruction(
@@ -373,6 +401,101 @@ data class OpenTypeMathFont(
             // MathML Core 5.3.1 defines the vertical assembly's orthogonal width from
             // every part record, including an extender skipped when rMin is zero.
             orthogonalAdvancePx = assembly.parts.maxOf { glyphAdvanceWidthPx(it.glyphId) },
+        )
+    }
+
+    /**
+     * Replays Tectonic 0.17.0/XeTeX `build_opentype_assembly`: extender repetition is selected
+     * from OpenType full advances at minimum overlap, then TeX glue starts at each connection's
+     * maximum overlap and stretches toward the font minimum. The completed vbox therefore uses
+     * exact native-glyph height/depth rather than treating `fullAdvance` as a glyph bbox.
+     */
+    private fun assembleXeTeX(
+        assembly: MathGlyphAssembly,
+        validation: MathGlyphAssemblyValidation,
+        target: Float,
+        fontSizePx: Float,
+        glyphVerticalExtentPx: (UShort) -> Float,
+        glyphAdvanceWidthPx: (UShort) -> Float,
+    ): MathVerticalConstruction {
+        check(validation.valid)
+        var repetitions = -1
+        var maximumSize: Float
+        do {
+            repetitions += 1
+            maximumSize = 0f
+            var previousEndConnector = 0f
+            assembly.parts.forEach { part ->
+                val count = if (part.extender) repetitions else 1
+                repeat(count) {
+                    val overlap = minOf(
+                        part.startConnectorLength.toFloat(),
+                        assembly.minimumConnectorOverlap.toFloat(),
+                        previousEndConnector,
+                    )
+                    maximumSize += part.fullAdvance - overlap
+                    previousEndConnector = part.endConnectorLength.toFloat()
+                }
+            }
+        } while (maximumSize < target)
+
+        val sequence = buildList {
+            assembly.parts.forEach { part ->
+                if (part.extender) repeat(repetitions) { add(part) } else add(part)
+            }
+        }
+        check(sequence.isNotEmpty())
+        val glyphExtents = sequence.map { part ->
+            glyphVerticalExtentPx(part.glyphId) * unitsPerEm / fontSizePx
+        }
+        val maximumOverlaps = mutableListOf<Float>()
+        val minimumOverlaps = mutableListOf<Float>()
+        var previousEndConnector = 0f
+        sequence.forEachIndexed { index, part ->
+            val maximumOverlap = minOf(part.startConnectorLength.toFloat(), previousEndConnector)
+            if (index > 0) {
+                maximumOverlaps += maximumOverlap
+                minimumOverlaps += minOf(maximumOverlap, assembly.minimumConnectorOverlap.toFloat())
+            }
+            previousEndConnector = part.endConnectorLength.toFloat()
+        }
+        val naturalAdvance = glyphExtents.sum() - maximumOverlaps.sum()
+        val stretchCapacity = maximumOverlaps.zip(minimumOverlaps).sumOf { (maximum, minimum) ->
+            (maximum - minimum).toDouble()
+        }.toFloat()
+        val appliedStretch = (target - naturalAdvance).coerceIn(0f, stretchCapacity)
+        val glueRatio = if (stretchCapacity > 0f) appliedStretch / stretchCapacity else 0f
+        val actualOverlaps = maximumOverlaps.zip(minimumOverlaps).map { (maximum, minimum) ->
+            maximum - glueRatio * (maximum - minimum)
+        }
+
+        var offset = 0f
+        val components = sequence.mapIndexed { index, part ->
+            MathGlyphComponent(part.glyphId, offset).also {
+                if (index < sequence.lastIndex) {
+                    offset += glyphExtents[index] - actualOverlaps[index]
+                }
+            }
+        }
+        val actualAdvance = naturalAdvance + appliedStretch
+        return MathVerticalConstruction(
+            kind = MathConstructionKind.Assembly,
+            components = components,
+            advanceMeasurement = actualAdvance,
+            reachesTarget = actualAdvance + ASSEMBLY_REACH_EPSILON_DESIGN_UNITS >= target,
+            connectorOverlaps = actualOverlaps,
+            extenderRepetitions = repetitions,
+            assemblyItalicCorrection = assembly.italicCorrection,
+            assemblyValidation = validation,
+            constructionPolicy = "Tectonic0.17.0XeTeXBuildOpenTypeAssemblyStretchGlue",
+            uniformConnectorOverlap = null,
+            orthogonalAdvancePx = assembly.parts.maxOf { glyphAdvanceWidthPx(it.glyphId) },
+            assemblyNaturalAdvance = naturalAdvance,
+            assemblyStretchCapacity = stretchCapacity,
+            assemblyAppliedStretch = appliedStretch,
+            assemblyGlyphExtents = glyphExtents,
+            assemblyMaximumConnectorOverlaps = maximumOverlaps,
+            assemblyMinimumConnectorOverlaps = minimumOverlaps,
         )
     }
 

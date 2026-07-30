@@ -317,7 +317,7 @@ private fun RadicalVerticalOracleScreen() {
             Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Tiqian · nominal 32 px · exact repository OTF · Tectonic 0.17.0 trace sources", fontSize = 13.sp)
                 Text(
-                    "clean_box h+d → construction advance → TeX clearance/rule/outer box",
+                    "clean_box h+d → construction advance → TeX clearance/rule/outer box · null delimiter 1.2pt",
                     fontSize = 10.sp,
                     color = Color(0xFF55504A),
                 )
@@ -343,6 +343,7 @@ private fun RadicalVerticalFontColumn(label: String, face: SkiaMathFontFace) {
                     mode = case.mode,
                     fontFace = face,
                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = 32.sp, lineHeight = 44.sp),
+                    nullDelimiterSpacePx = TECTONIC_NULL_DELIMITER_SPACE_PX,
                     softWrap = false,
                 )
             }
@@ -474,7 +475,12 @@ private fun auditRadicalPreviewTiers() {
                         "${geometry.details["actualRadicalGapPx"]} " +
                         "bounds=${geometry.details["radicalGlyphBoundsSources"]} " +
                         "advancePolicy=${geometry.details["radicalLogicalAdvancePolicy"]} " +
-                        "achievedAdvance=${construction.details["achievedAdvancePx"]} source=$source",
+                        "clean=${geometry.details["radicandAscentPx"]}+" +
+                        "${geometry.details["radicandDescentPx"]} " +
+                        "target=${construction.details["targetHeightPx"]} " +
+                        "achievedAdvance=${construction.details["achievedAdvancePx"]} " +
+                        "B=${geometry.details["unindexedAscentPx"]}+" +
+                        "${geometry.details["unindexedDescentPx"]} source=$source",
                 )
             }
             listOf(

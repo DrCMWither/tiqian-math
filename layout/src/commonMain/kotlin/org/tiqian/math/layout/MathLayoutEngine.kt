@@ -6,6 +6,7 @@ import org.tiqian.math.font.opentype.MathGlyphComponent
 import org.tiqian.math.font.opentype.MathKernCorner
 import org.tiqian.math.font.opentype.MathVerticalConstruction
 import org.tiqian.math.font.opentype.MathVerticalConstructionRequest
+import org.tiqian.math.font.opentype.MathVerticalAssemblyPolicy
 import org.tiqian.math.font.opentype.OpenTypeMathConstants
 import org.tiqian.math.parser.MacroExpansionLimits
 import org.tiqian.math.parser.MathMacroDefinition
@@ -566,6 +567,7 @@ private class MathLayoutPass(
         size: Float,
         style: MathStyle,
         range: SourceRange,
+        assemblyPolicy: MathVerticalAssemblyPolicy = MathVerticalAssemblyPolicy.MathMLCoreUniformOverlap,
     ): MathVerticalConstruction? = glyphSource.mathFont.verticalConstruction(
         MathVerticalConstructionRequest(
             baseGlyphId = baseGlyphId,
@@ -573,7 +575,13 @@ private class MathLayoutPass(
             fontSizePx = size,
             normalGlyphHeightPx = normalRun.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f,
             normalGlyphAdvanceWidthPx = normalRun.width,
+            assemblyPolicy = assemblyPolicy,
         ),
+        glyphVerticalExtentPx = { glyphId ->
+            glyphSource.measureGlyphOutlineBounds(glyphId, size, style, range)
+                .glyphs.singleOrNull()?.inkBounds?.height
+                ?: glyphSource.measureGlyph(glyphId, size, style, range).let { it.ascent + it.descent }
+        },
     ) { glyphId ->
         glyphSource.measureGlyph(glyphId, size, style, range).width
     }
@@ -724,63 +732,41 @@ private class MathLayoutPass(
         )
     }
 
-    /**
-     * Replays glyph-outline bounds for XeTeX's clean_box metrics when the font adapter exposes
-     * them, with an explicit reported-bounds fallback. Compound logical reserve and logical
-     * advance are never replaced by a visible-ink union.
-     */
+    /** Uses the composable TeX box metric produced with the radicand; no content guessing. */
     private fun refineRadicalCleanBox(box: MathBox, node: MathRadical): MathBox {
-        val boundsSources = mutableSetOf<MathGlyphBoundsSource>()
-        val glyphs = box.glyphs.map { placement ->
-            val measured = glyphSource.measureGlyphOutlineBounds(
+        val clean = box.texCleanBoxMetrics
+        // Keep the radical's replayed paint bounds on the same exact-outline evidence as XeTeX's
+        // native glyph boxes, without changing logical advances or the rest of the layout tree.
+        val paintedGlyphs = box.glyphs.map { placement ->
+            val glyph = glyphSource.measureGlyphOutlineBounds(
                 placement.glyphId,
                 placement.fontSizePx,
                 placement.style,
                 placement.sourceRange,
-            )
-            boundsSources += measured.boundsSource
-            val glyph = measured.glyphs.singleOrNull() ?: return@map placement
+            ).glyphs.singleOrNull() ?: return@map placement
             placement.copy(inkBounds = glyph.inkBounds.translated(placement.x, placement.baselineY))
         }
-        val originalInkAscent = (-box.inkBounds.top).coerceAtLeast(0f)
-        val originalInkDescent = box.inkBounds.bottom.coerceAtLeast(0f)
-        // A flattened glyph-only mlist has no non-ink TeX box reserve: differences here come
-        // from the adapter's rounded reported bounds and must be replaced by the outline bbox.
-        // Rules and semantic constructions do carry replayable logical reserve (fraction gaps,
-        // radical overbar reserve, and assembly box extents), which clean_box must retain.
-        val preserveCompoundReserve = box.rules.isNotEmpty() || box.constructionPaintGroups.isNotEmpty()
-        val logicalReserveAbove = if (preserveCompoundReserve) {
-            (box.ascent - originalInkAscent).coerceAtLeast(0f)
-        } else {
-            0f
-        }
-        val logicalReserveBelow = if (preserveCompoundReserve) {
-            (box.descent - originalInkDescent).coerceAtLeast(0f)
-        } else {
-            0f
-        }
-        val refinedInk = geometryExtents(
+        val painted = geometryExtents(
             box.width,
-            glyphs,
+            paintedGlyphs,
             box.rules,
             box.range,
             box.constructionPaintGroups,
         )
-        val refined = refinedInk.copy(
-            ascent = refinedInk.ascent + logicalReserveAbove,
-            descent = refinedInk.descent + logicalReserveBelow,
+        val refined = painted.copy(
+            ascent = clean.ascent,
+            descent = clean.descent,
+            texCleanBoxMetrics = clean,
         )
-        val exactOutlineBoundsAvailable = glyphs.isNotEmpty() &&
-            boundsSources.all { it == MathGlyphBoundsSource.Outline }
+        val exactOutlineBoundsAvailable =
+            MathTeXCleanBoxEvidence.FontReportedGlyphBounds !in clean.evidence
+        val cleanMinusPaintedInkAbove = clean.ascent - (-box.inkBounds.top).coerceAtLeast(0f)
+        val cleanMinusPaintedInkBelow = clean.descent - box.inkBounds.bottom.coerceAtLeast(0f)
         decision(
             "TeXRadicalCleanBox",
             node.radicand.range,
-            "policy" to if (exactOutlineBoundsAvailable) {
-                "ExactGlyphOutlineBoundsWithCompoundLogicalReserve"
-            } else {
-                "FontReportedBoundsFallbackWithCompoundLogicalReserve"
-            },
-            "boundsSources" to boundsSources,
+            "policy" to clean.policy,
+            "evidence" to clean.evidence,
             "exactGlyphOutlineBoundsAvailable" to exactOutlineBoundsAvailable,
             "logicalAdvanceBeforePx" to box.width,
             "logicalAdvanceAfterPx" to refined.width,
@@ -793,9 +779,10 @@ private class MathLayoutPass(
             "cleanHeightPx" to refined.height,
             "inkTopAfterPx" to refined.inkBounds.top,
             "inkBottomAfterPx" to refined.inkBounds.bottom,
-            "logicalReserveAbovePx" to logicalReserveAbove,
-            "logicalReserveBelowPx" to logicalReserveBelow,
-            "compoundReservePreserved" to preserveCompoundReserve,
+            "cleanMinusPaintedInkAbovePx" to cleanMinusPaintedInkAbove,
+            "cleanMinusPaintedInkBelowPx" to cleanMinusPaintedInkBelow,
+            "completedChildBoxMetricsPreserved" to
+                (clean.policy == MathTeXCleanBoxPolicy.CompletedLayoutBox),
         )
         return refined
     }
@@ -842,7 +829,15 @@ private class MathLayoutPass(
         val baseRadical = measuredRunBox(baseRun, node.commandRange, style, size)
         val baseGlyphHeight = baseRadical.inkBounds.height
         val construction = baseGlyphId?.let {
-            selectVerticalConstruction(it, baseRun, targetHeight, size, style, node.commandRange)
+            selectVerticalConstruction(
+                baseGlyphId = it,
+                normalRun = baseRun,
+                targetHeight = targetHeight,
+                size = size,
+                style = style,
+                range = node.commandRange,
+                assemblyPolicy = MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
+            )
         }
         val baseGlyphCoversTarget = construction?.kind == MathConstructionKind.BaseGlyph
         val constructionMeasurements = construction?.components?.map { component ->
@@ -871,6 +866,9 @@ private class MathLayoutPass(
         }
         val assemblyValidation = construction?.assemblyValidation
             ?: baseGlyphId?.let(glyphSource.mathFont::verticalAssemblyValidation)
+        val assemblyTable = baseGlyphId?.let {
+            glyphSource.mathFont.verticalConstructions[it]?.assembly
+        }
         val achievedAdvance = construction?.let {
             glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
         } ?: baseGlyphHeight
@@ -1021,6 +1019,13 @@ private class MathLayoutPass(
         val unindexedBox = unindexedGeometry.copy(
             ascent = unindexedAscent,
             descent = unindexedDescent,
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = unindexedAscent,
+                descent = unindexedDescent,
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = unindexedGeometry.texCleanBoxMetrics.evidence +
+                    MathTeXCleanBoxEvidence.CompletedChildBox,
+            ),
         )
 
         // unicode-math's XeTeX root wrapper supplies signed MATH kerns and raises the degree by
@@ -1105,6 +1110,11 @@ private class MathLayoutPass(
             "componentOffsetsDesignUnits" to construction?.components?.joinToString(",") { it.offset.toString() },
             "connectorOverlapsDesignUnits" to construction?.connectorOverlaps,
             "extenderRepetitions" to construction?.extenderRepetitions,
+            "assemblyMinimumConnectorOverlapDesignUnits" to assemblyTable?.minimumConnectorOverlap,
+            "assemblySourcePartRecords" to assemblyTable?.parts?.joinToString(";") {
+                "${it.glyphId}:${it.startConnectorLength}:${it.endConnectorLength}:" +
+                    "${it.fullAdvance}:${it.extender}"
+            },
             "constructionPolicy" to (construction?.constructionPolicy ?: if (assemblyValidation?.valid == false) {
                 "MathMLCore5.3.2FailureAfterInvalidAssembly"
             } else null),
@@ -1114,6 +1124,14 @@ private class MathLayoutPass(
             "assemblySpecificationDivergence" to assemblyValidation?.specificationDivergence,
             "assemblyCheckedConnectionCount" to assemblyValidation?.checkedConnectionCount,
             "uniformConnectorOverlapDesignUnits" to construction?.uniformConnectorOverlap,
+            "assemblyNaturalAdvanceDesignUnits" to construction?.assemblyNaturalAdvance,
+            "assemblyStretchCapacityDesignUnits" to construction?.assemblyStretchCapacity,
+            "assemblyAppliedStretchDesignUnits" to construction?.assemblyAppliedStretch,
+            "assemblyGlyphExtentsDesignUnits" to construction?.assemblyGlyphExtents,
+            "assemblyMaximumConnectorOverlapsDesignUnits" to
+                construction?.assemblyMaximumConnectorOverlaps,
+            "assemblyMinimumConnectorOverlapsDesignUnits" to
+                construction?.assemblyMinimumConnectorOverlaps,
             "orthogonalAdvancePx" to construction?.orthogonalAdvancePx,
             "selectionStep" to selectionStep,
             "selectionPolicy" to "MathMLCore5.3.2NormalGlyphFirst",
@@ -1460,8 +1478,17 @@ private class MathLayoutPass(
             appliesBaselineDrop = appliesBaselineDrop,
             constraints = verticalConstraints,
         )
+        val cleanVerticalPlacement = resolveSideScriptVerticalPlacement(
+            base = base.box.texCleanSideScriptVerticalMetrics(),
+            superscript = superscript?.box?.texCleanSideScriptVerticalMetrics(),
+            subscript = subscript?.box?.texCleanSideScriptVerticalMetrics(),
+            appliesBaselineDrop = appliesBaselineDrop,
+            constraints = verticalConstraints,
+        )
         val superscriptShift = verticalPlacement.superscriptShiftPx
         val subscriptShift = verticalPlacement.subscriptShiftPx
+        val cleanSuperscriptShift = cleanVerticalPlacement.superscriptShiftPx
+        val cleanSubscriptShift = cleanVerticalPlacement.subscriptShiftPx
 
         val superscriptKern = superscript?.let { superscriptMathKern(base, it, superscriptShift, node.range) } ?: 0f
         val subscriptKern = subscript?.let { subscriptMathKern(base, it, subscriptShift, node.range) } ?: 0f
@@ -1539,20 +1566,46 @@ private class MathLayoutPass(
             "subscriptInkTopAfterShiftPx" to subscriptVerticalMetrics?.let {
                 subscriptShift + it.inkTopPx
             },
+            "texCleanBoxPlacementPolicy" to "TeXCompletedChildBoxMetrics",
+            "texCleanBoxSuperscriptShiftPx" to cleanSuperscriptShift,
+            "texCleanBoxSubscriptShiftPx" to cleanSubscriptShift,
             "boxKernPolicy" to "single-glyph-corners-else-zero",
+        )
+        val scriptBox = geometryExtentsPreservingLogicalChildren(
+            width,
+            glyphs,
+            rules,
+            node.range,
+            buildList {
+                add(base.box to 0f)
+                superscript?.let { add(it.box to -superscriptShift) }
+                subscript?.let { add(it.box to subscriptShift) }
+            },
+        )
+        val cleanAscent = maxOf(
+            base.box.texCleanBoxMetrics.ascent,
+            superscript?.let { it.box.texCleanBoxMetrics.ascent + cleanSuperscriptShift } ?: 0f,
+            subscript?.let {
+                (it.box.texCleanBoxMetrics.ascent - cleanSubscriptShift).coerceAtLeast(0f)
+            } ?: 0f,
+        )
+        val cleanDescent = maxOf(
+            base.box.texCleanBoxMetrics.descent,
+            superscript?.let {
+                (it.box.texCleanBoxMetrics.descent - cleanSuperscriptShift).coerceAtLeast(0f)
+            } ?: 0f,
+            subscript?.let { it.box.texCleanBoxMetrics.descent + cleanSubscriptShift } ?: 0f,
         )
         return LaidNode(
             node = node,
-            box = geometryExtentsPreservingLogicalChildren(
-                width,
-                glyphs,
-                rules,
-                node.range,
-                buildList {
-                    add(base.box to 0f)
-                    superscript?.let { add(it.box to -superscriptShift) }
-                    subscript?.let { add(it.box to subscriptShift) }
-                },
+            box = scriptBox.copy(
+                texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                    ascent = cleanAscent,
+                    descent = cleanDescent,
+                    policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                    evidence = scriptBox.texCleanBoxMetrics.evidence +
+                        MathTeXCleanBoxEvidence.CompletedChildBox,
+                ),
             ),
             atomClass = base.atomClass,
             italicCorrectionPx = 0f,
@@ -1727,6 +1780,13 @@ private class MathLayoutPass(
         val refined = refinedInk.copy(
             ascent = refinedInk.ascent + logicalReserveAbove,
             descent = refinedInk.descent + logicalReserveBelow,
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = refinedInk.ascent + logicalReserveAbove,
+                descent = refinedInk.descent + logicalReserveBelow,
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = refinedInk.texCleanBoxMetrics.evidence +
+                    MathTeXCleanBoxEvidence.CompletedChildBox,
+            ),
         )
         decision(
             "TeXFractionChildBoxMetrics",
@@ -2365,19 +2425,65 @@ private class MathLayoutPass(
         range: SourceRange,
         constructionPaintGroups: List<MathConstructionPaintGroup> = emptyList(),
     ): MathBox {
-        val left = minOf(glyphs.minOfOrNull { it.inkBounds.left } ?: 0f, rules.minOfOrNull { it.left } ?: 0f)
-        val top = minOf(glyphs.minOfOrNull { it.inkBounds.top } ?: 0f, rules.minOfOrNull { it.top } ?: 0f)
-        val right = maxOf(glyphs.maxOfOrNull { it.inkBounds.right } ?: 0f, rules.maxOfOrNull { it.right } ?: 0f)
-        val bottom = maxOf(glyphs.maxOfOrNull { it.inkBounds.bottom } ?: 0f, rules.maxOfOrNull { it.bottom } ?: 0f)
+        val cleanEvidence = mutableSetOf<MathTeXCleanBoxEvidence>()
+        val cleanGlyphs = glyphs.map { placement ->
+            val measured = glyphSource.measureGlyphOutlineBounds(
+                placement.glyphId,
+                placement.fontSizePx,
+                placement.style,
+                placement.sourceRange,
+            )
+            cleanEvidence += if (measured.boundsSource == MathGlyphBoundsSource.Outline) {
+                MathTeXCleanBoxEvidence.GlyphOutline
+            } else {
+                MathTeXCleanBoxEvidence.FontReportedGlyphBounds
+            }
+            val glyph = measured.glyphs.singleOrNull() ?: return@map placement
+            placement.copy(inkBounds = glyph.inkBounds.translated(placement.x, placement.baselineY))
+        }
+        if (rules.isNotEmpty()) cleanEvidence += MathTeXCleanBoxEvidence.RuleGeometry
+        if (cleanGlyphs.isEmpty() && rules.isEmpty()) cleanEvidence += MathTeXCleanBoxEvidence.Empty
+        val left = minOf(
+            glyphs.minOfOrNull { it.inkBounds.left } ?: 0f,
+            rules.minOfOrNull { it.left } ?: 0f,
+        )
+        val top = minOf(
+            glyphs.minOfOrNull { it.inkBounds.top } ?: 0f,
+            rules.minOfOrNull { it.top } ?: 0f,
+        )
+        val right = maxOf(
+            glyphs.maxOfOrNull { it.inkBounds.right } ?: 0f,
+            rules.maxOfOrNull { it.right } ?: 0f,
+        )
+        val bottom = maxOf(
+            glyphs.maxOfOrNull { it.inkBounds.bottom } ?: 0f,
+            rules.maxOfOrNull { it.bottom } ?: 0f,
+        )
+        val ascent = (-top).coerceAtLeast(0f)
+        val descent = bottom.coerceAtLeast(0f)
+        val cleanTop = minOf(
+            cleanGlyphs.minOfOrNull { it.inkBounds.top } ?: 0f,
+            rules.minOfOrNull { it.top } ?: 0f,
+        )
+        val cleanBottom = maxOf(
+            cleanGlyphs.maxOfOrNull { it.inkBounds.bottom } ?: 0f,
+            rules.maxOfOrNull { it.bottom } ?: 0f,
+        )
         return MathBox(
             width,
-            (-top).coerceAtLeast(0f),
-            bottom.coerceAtLeast(0f),
+            ascent,
+            descent,
             MathRect(left, top, right, bottom),
             glyphs,
             rules,
             range,
             constructionPaintGroups.distinctBy { it.id },
+            MathTeXCleanBoxMetrics(
+                ascent = (-cleanTop).coerceAtLeast(0f),
+                descent = cleanBottom.coerceAtLeast(0f),
+                policy = MathTeXCleanBoxPolicy.GlyphOutlineUnion,
+                evidence = cleanEvidence,
+            ),
         )
     }
 
@@ -2402,9 +2508,26 @@ private class MathLayoutPass(
         val logicalDescent = children.maxOfOrNull { (box, baselineY) ->
             (box.descent + baselineY).coerceAtLeast(0f)
         } ?: 0f
+        // The child boxes are the TeX box list. The flattened glyph/rule list replays paint at
+        // its renderer placement and must not override a child's independent clean-box metric
+        // (notably when ordinary scripts have different OpenType ink and TeX box constraints).
+        val cleanAscent = children.maxOfOrNull { (box, baselineY) ->
+            (box.texCleanBoxMetrics.ascent - baselineY).coerceAtLeast(0f)
+        } ?: inkBox.texCleanBoxMetrics.ascent
+        val cleanDescent = children.maxOfOrNull { (box, baselineY) ->
+            (box.texCleanBoxMetrics.descent + baselineY).coerceAtLeast(0f)
+        } ?: inkBox.texCleanBoxMetrics.descent
         return inkBox.copy(
             ascent = max(inkBox.ascent, logicalAscent),
             descent = max(inkBox.descent, logicalDescent),
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = cleanAscent,
+                descent = cleanDescent,
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = inkBox.texCleanBoxMetrics.evidence +
+                    children.flatMap { it.first.texCleanBoxMetrics.evidence } +
+                    MathTeXCleanBoxEvidence.CompletedChildBox,
+            ),
         )
     }
 
@@ -2416,6 +2539,12 @@ private class MathLayoutPass(
         emptyList(),
         emptyList(),
         range,
+        texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+            0f,
+            0f,
+            MathTeXCleanBoxPolicy.GlyphOutlineUnion,
+            setOf(MathTeXCleanBoxEvidence.Empty),
+        ),
     )
 
     private fun decision(name: String, range: SourceRange, vararg details: Pair<String, Any?>) {
@@ -2601,6 +2730,14 @@ private fun MathBox.sideScriptVerticalMetrics(): SideScriptBoxVerticalMetrics =
         logicalDescentPx = descent,
         inkTopPx = inkBounds.top,
         inkBottomPx = inkBounds.bottom,
+    )
+
+private fun MathBox.texCleanSideScriptVerticalMetrics(): SideScriptBoxVerticalMetrics =
+    SideScriptBoxVerticalMetrics(
+        logicalAscentPx = texCleanBoxMetrics.ascent,
+        logicalDescentPx = texCleanBoxMetrics.descent,
+        inkTopPx = -texCleanBoxMetrics.ascent,
+        inkBottomPx = texCleanBoxMetrics.descent,
     )
 
 private fun MathBox.translated(dx: Float, dy: Float): MathBox = copy(

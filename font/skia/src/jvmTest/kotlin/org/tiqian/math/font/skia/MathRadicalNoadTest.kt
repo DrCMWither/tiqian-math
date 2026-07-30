@@ -27,6 +27,7 @@ import org.tiqian.math.font.opentype.MathGlyphAssembly
 import org.tiqian.math.font.opentype.MathGlyphAssemblyPart
 import org.tiqian.math.font.opentype.MathGlyphConstruction
 import org.tiqian.math.font.opentype.MathGlyphVariant
+import org.tiqian.math.font.opentype.MathVerticalAssemblyPolicy
 import org.tiqian.math.font.opentype.OpenTypeMathConstants
 import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.font.stix.StixTwoMath
@@ -377,7 +378,10 @@ class MathRadicalNoadTest {
             assertEquals("Assembly", construction.details["construction"])
             assertEquals("shared-font-x/bottom", construction.details["placementOrigin"])
             assertEquals("MathMLCore5.3.1SharedFontOriginBottom", construction.details["placementPolicy"])
-            assertEquals("MathMLCore5.3.1UniformOverlap", construction.details["constructionPolicy"])
+            assertEquals(
+                "Tectonic0.17.0XeTeXBuildOpenTypeAssemblyStretchGlue",
+                construction.details["constructionPolicy"],
+            )
             assertEquals("true", construction.details["assemblyValid"])
             assertEquals(
                 "TiqianOpenTypeTerminalConnectorCompatibility",
@@ -599,6 +603,7 @@ class MathRadicalNoadTest {
                     rootGlyph,
                     assembled.radicalConstructionDecision().float("targetHeightPx"),
                     size,
+                    assemblyPolicy = MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
                 ),
             )
             assertEquals("Assembly", assembled.radicalConstructionDecision().details["construction"])
