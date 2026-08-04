@@ -121,7 +121,7 @@ class MathFormulaSafetyTest {
             var mathLayoutCalls = 0
             val exception = assertFailsWith<MathFormulaStrictException> {
                 ImageComposeScene(width = 120, height = 80, density = Density(1f)) {
-                    TiqianMath(
+                    StrictTiqianMath(
                         source = "\\sqrt{x}+\\text{bad}",
                         fontSizePx = 32f,
                         fontFace = face,

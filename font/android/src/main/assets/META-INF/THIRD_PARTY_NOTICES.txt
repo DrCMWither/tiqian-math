@@ -1,0 +1,19 @@
+math-compose Android native backend third-party notices
+
+FreeType 2.13.2
+Copyright 1996-2023 by David Turner, Robert Wilhelm, and Werner Lemberg.
+Distributed under the FreeType Project License (FTL), or alternatively the
+GNU General Public License version 2. This artifact uses the FTL option; its
+complete text is packaged at META-INF/FTL.TXT.
+
+HarfBuzz 8.3.0
+Copyright The HarfBuzz Project Authors.
+Distributed under the Old MIT license. Its complete text is packaged at
+META-INF/HARFBUZZ-COPYING.
+
+Lete Sans Math
+Distributed under the SIL Open Font License 1.1. The complete OFL text is
+packaged at assets/org/tiqian/math/fonts/OFL.txt.
+
+The native binaries in this Android artifact are built from the pinned
+FreeType and HarfBuzz versions above.

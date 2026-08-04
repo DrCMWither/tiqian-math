@@ -2,37 +2,28 @@ package org.tiqian.math.compose
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.skiaCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
-import org.jetbrains.skia.Font
-import org.jetbrains.skia.Paint
-import org.jetbrains.skia.Point
-import org.jetbrains.skia.Rect
-import org.jetbrains.skia.TextBlobBuilder
 import org.tiqian.math.core.MathBox
 import org.tiqian.math.core.MathBrokenLayout
 import org.tiqian.math.core.MathLayoutResult
 import org.tiqian.math.core.MathMode
-import org.tiqian.math.font.opentype.LeteSansMath
-import org.tiqian.math.font.skia.SkiaMathFontFace
-import org.tiqian.math.font.skia.MathConstructionOutlineResult
-import org.tiqian.math.font.skia.MathConstructionOutlineUnavailableException
-import org.tiqian.math.font.skia.formulaCapabilityEngine
+import org.tiqian.math.layout.MathComposeFontFace
 import org.tiqian.math.layout.MathFormulaCapabilityEngine
 import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathFormulaStrictException
@@ -40,18 +31,14 @@ import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.breakIntoLines
 import kotlin.math.ceil
 
-/** Loads Tiqian's product-default face. Explicit caller-supplied faces remain caller-owned. */
+/** Loads Tiqian's platform-native product-default Lete face and owns its native lifetime. */
 @Composable
-fun rememberLeteMathFontFace(): SkiaMathFontFace {
-    val face = remember { SkiaMathFontFace(LeteSansMath.load()) }
-    DisposableEffect(face) { onDispose(face::close) }
-    return face
-}
+fun rememberLeteMathFontFace(): MathComposeFontFace = rememberPlatformLeteMathFontFace()
 
 /**
- * Strict dogfood entry point. Unsupported or unreplayable formulas fail during composition,
- * before a render plan, measure policy, glyph blob, or construction path is handed to drawing.
- * Production hosts should normally use [TiqianMathOrFallback].
+ * Normal production entry point. Accepted formulas use Tiqian's platform renderer; unsupported or
+ * malformed input uses Tiqian's visible diagnostic presentation instead of requiring a second
+ * formula renderer from the host.
  */
 @Composable
 fun TiqianMath(
@@ -71,27 +58,65 @@ fun TiqianMath(
     delimiterShortfallPx: Float? = null,
     color: Color = Color.Unspecified,
     softWrap: Boolean = true,
-    fontFace: SkiaMathFontFace? = null,
+    fontFace: MathComposeFontFace? = null,
+    onMathLayout: (MathLayoutResult) -> Unit = {},
+    onMathError: (MathFormulaCapabilityResult.FallbackRequired) -> Unit = {},
+) {
+    val resolved = rememberResolvedFormulaCapability(
+        source,
+        mode,
+        style,
+        fontSizePx,
+        nullDelimiterSpacePx,
+        scriptSpacePx,
+        delimiterFactor,
+        delimiterShortfallPx,
+        color,
+        fontFace,
+    )
+    FormulaCapabilityContent(
+        resolved = resolved,
+        modifier = modifier,
+        softWrap = softWrap,
+        onMathLayout = onMathLayout,
+        fallback = { failure ->
+            LaunchedEffect(failure) { onMathError(failure) }
+            TiqianMathError(failure, modifier, style)
+        },
+    )
+}
+
+/** Strict dogfood/CI entry: capability failures are deterministic before measure or draw. */
+@Composable
+fun StrictTiqianMath(
+    source: String,
+    modifier: Modifier = Modifier,
+    mode: MathMode = MathMode.Inline,
+    style: TextStyle = LocalTextStyle.current,
+    fontSizePx: Float? = null,
+    color: Color = Color.Unspecified,
+    softWrap: Boolean = true,
+    fontFace: MathComposeFontFace? = null,
     onMathLayout: (MathLayoutResult) -> Unit = {},
 ) {
     val resolved = rememberResolvedFormulaCapability(
-        source = source,
-        mode = mode,
-        style = style,
-        fontSizePx = fontSizePx,
-        nullDelimiterSpacePx = nullDelimiterSpacePx,
-        scriptSpacePx = scriptSpacePx,
-        delimiterFactor = delimiterFactor,
-        delimiterShortfallPx = delimiterShortfallPx,
-        color = color,
-        fontFace = fontFace,
+        source,
+        mode,
+        style,
+        fontSizePx,
+        null,
+        null,
+        901,
+        null,
+        color,
+        fontFace,
     )
     FormulaCapabilityContent(resolved, modifier, softWrap, onMathLayout, fallback = null)
 }
 
 /**
- * Production-safe formula boundary. The host owns [fallback] and receives the exact source,
- * diagnostics, and formula-wide reasons; Tiqian draws only [MathFormulaCapabilityResult.Ready].
+ * Optional migration boundary. A host may temporarily own [fallback], but this is not required by
+ * Tiqian's steady-state renderer contract.
  */
 @Composable
 fun TiqianMathOrFallback(
@@ -106,21 +131,21 @@ fun TiqianMathOrFallback(
     delimiterShortfallPx: Float? = null,
     color: Color = Color.Unspecified,
     softWrap: Boolean = true,
-    fontFace: SkiaMathFontFace? = null,
+    fontFace: MathComposeFontFace? = null,
     onMathLayout: (MathLayoutResult) -> Unit = {},
     fallback: @Composable (MathFormulaCapabilityResult.FallbackRequired) -> Unit,
 ) {
     val resolved = rememberResolvedFormulaCapability(
-        source = source,
-        mode = mode,
-        style = style,
-        fontSizePx = fontSizePx,
-        nullDelimiterSpacePx = nullDelimiterSpacePx,
-        scriptSpacePx = scriptSpacePx,
-        delimiterFactor = delimiterFactor,
-        delimiterShortfallPx = delimiterShortfallPx,
-        color = color,
-        fontFace = fontFace,
+        source,
+        mode,
+        style,
+        fontSizePx,
+        nullDelimiterSpacePx,
+        scriptSpacePx,
+        delimiterFactor,
+        delimiterShortfallPx,
+        color,
+        fontFace,
     )
     FormulaCapabilityContent(resolved, modifier, softWrap, onMathLayout, fallback)
 }
@@ -129,7 +154,7 @@ fun TiqianMathOrFallback(
 @Composable
 internal fun TiqianMathCapabilityBoundaryForTest(
     source: String,
-    fontFace: SkiaMathFontFace,
+    fontFace: MathComposeFontFace,
     capabilityEngine: MathFormulaCapabilityEngine,
     strict: Boolean,
     modifier: Modifier = Modifier,
@@ -138,23 +163,23 @@ internal fun TiqianMathCapabilityBoundaryForTest(
     fallback: @Composable (MathFormulaCapabilityResult.FallbackRequired) -> Unit,
 ) {
     val resolved = rememberResolvedFormulaCapability(
-        source = source,
-        mode = MathMode.Inline,
-        style = LocalTextStyle.current,
-        fontSizePx = fontSizePx,
-        nullDelimiterSpacePx = null,
-        scriptSpacePx = null,
-        delimiterFactor = 901,
-        delimiterShortfallPx = null,
-        color = Color.Black,
-        fontFace = fontFace,
-        capabilityEngineOverride = capabilityEngine,
+        source,
+        MathMode.Inline,
+        LocalTextStyle.current,
+        fontSizePx,
+        null,
+        null,
+        901,
+        null,
+        Color.Black,
+        fontFace,
+        capabilityEngine,
     )
     FormulaCapabilityContent(
-        resolved = resolved,
-        modifier = modifier,
+        resolved,
+        modifier,
         softWrap = true,
-        onMathLayout = onMathLayout,
+        onMathLayout,
         fallback = if (strict) null else fallback,
     )
 }
@@ -169,23 +194,41 @@ private fun FormulaCapabilityContent(
 ) {
     when (val capability = resolved.capability) {
         is MathFormulaCapabilityResult.Ready -> ReadyTiqianMath(
-            result = capability.layoutResult,
-            modifier = modifier,
-            requestedLineHeightPx = resolved.requestedLineHeightPx,
-            color = resolved.color,
-            softWrap = softWrap,
-            face = resolved.face,
-            onMathLayout = onMathLayout,
+            capability.layoutResult,
+            modifier,
+            resolved.requestedLineHeightPx,
+            resolved.color,
+            softWrap,
+            resolved.face,
+            onMathLayout,
         )
         is MathFormulaCapabilityResult.FallbackRequired -> {
-            val hostFallback = fallback ?: throw MathFormulaStrictException(capability)
-            hostFallback(capability)
+            val errorPresentation = fallback ?: throw MathFormulaStrictException(capability)
+            errorPresentation(capability)
         }
     }
 }
 
+@Composable
+private fun TiqianMathError(
+    failure: MathFormulaCapabilityResult.FallbackRequired,
+    modifier: Modifier,
+    style: TextStyle,
+) {
+    val label = failure.reasons.joinToString { it.category.name }
+    BasicText(
+        text = failure.source.ifEmpty { "∅" },
+        modifier = modifier.semantics {
+            contentDescription = "Math formula error: $label"
+        },
+        style = style.copy(
+            color = if (style.color != Color.Unspecified) style.color else Color.Red,
+        ),
+    )
+}
+
 private data class ResolvedFormulaCapability(
-    val face: SkiaMathFontFace,
+    val face: MathComposeFontFace,
     val capability: MathFormulaCapabilityResult,
     val requestedLineHeightPx: Float?,
     val color: Color,
@@ -202,7 +245,7 @@ private fun rememberResolvedFormulaCapability(
     delimiterFactor: Int,
     delimiterShortfallPx: Float?,
     color: Color,
-    fontFace: SkiaMathFontFace?,
+    fontFace: MathComposeFontFace?,
     capabilityEngineOverride: MathFormulaCapabilityEngine? = null,
 ): ResolvedFormulaCapability {
     val density = LocalDensity.current
@@ -214,16 +257,16 @@ private fun rememberResolvedFormulaCapability(
     } else {
         null
     }
-    val resolvedColor = if (color != Color.Unspecified) {
-        color
-    } else if (style.color != Color.Unspecified) {
-        style.color
-    } else {
-        Color.Black
+    val resolvedColor = when {
+        color != Color.Unspecified -> color
+        style.color != Color.Unspecified -> style.color
+        else -> Color.Black
     }
-    val defaultFace = if (fontFace == null) rememberLeteMathFontFace() else null
+    val defaultFace = if (fontFace == null) rememberPlatformLeteMathFontFace() else null
     val resolvedFace = fontFace ?: checkNotNull(defaultFace)
-    val defaultCapabilityEngine = remember(resolvedFace) { resolvedFace.formulaCapabilityEngine() }
+    val defaultCapabilityEngine = remember(resolvedFace) {
+        platformFormulaCapabilityEngine(resolvedFace)
+    }
     val capabilityEngine = capabilityEngineOverride ?: defaultCapabilityEngine
     val capability = remember(
         source,
@@ -248,10 +291,10 @@ private fun rememberResolvedFormulaCapability(
         )
     }
     return ResolvedFormulaCapability(
-        face = resolvedFace,
-        capability = capability,
-        requestedLineHeightPx = requestedLineHeightPx,
-        color = resolvedColor,
+        resolvedFace,
+        capability,
+        requestedLineHeightPx,
+        resolvedColor,
     )
 }
 
@@ -262,7 +305,7 @@ private fun ReadyTiqianMath(
     requestedLineHeightPx: Float?,
     color: Color,
     softWrap: Boolean,
-    face: SkiaMathFontFace,
+    face: MathComposeFontFace,
     onMathLayout: (MathLayoutResult) -> Unit,
 ) {
     SideEffect { onMathLayout(result) }
@@ -272,9 +315,7 @@ private fun ReadyTiqianMath(
         modifier = modifier,
         content = {
             Canvas(Modifier.fillMaxSize()) {
-                drawIntoCanvas { canvas ->
-                    drawMathPlan(canvas.skiaCanvas, face, renderPlan, color.toArgb())
-                }
+                drawPlatformMathPlan(face, renderPlan, color)
             }
         },
     ) { measurables, constraints ->
@@ -353,85 +394,9 @@ internal data class RenderPlan(
                     )
                 }
             }
-            return RenderPlan(
-                boxes = boxes,
-                width = broken.width,
-                height = top,
-                firstBaseline = firstBaseline,
-            )
+            return RenderPlan(boxes, broken.width, top, firstBaseline)
         }
     }
 }
 
 private val DefaultMathFontSize = 24.sp
-
-private fun drawMathPlan(
-    canvas: org.jetbrains.skia.Canvas,
-    face: SkiaMathFontFace,
-    plan: RenderPlan,
-    color: Int,
-) {
-    val paint = Paint().apply { this.color = color }
-    val builder = TextBlobBuilder()
-    val fonts = mutableMapOf<Float, Font>()
-    try {
-        plan.boxes.flatMap { positioned ->
-            positioned.box.glyphs.filter { it.constructionGroupId == null }.map { glyph ->
-                Triple(
-                    glyph,
-                    positioned.x + glyph.x,
-                    positioned.baselineFromTop + glyph.baselineY,
-                )
-            }
-        }.groupBy { it.first.fontSizePx }.forEach { (size, glyphs) ->
-            val font = fonts.getOrPut(size) { face.font(size) }
-            builder.appendRunPos(
-                font,
-                glyphs.map { it.first.glyphId.toShort() }.toShortArray(),
-                glyphs.map { Point(it.second, it.third) }.toTypedArray(),
-            )
-        }
-        builder.build()?.use { blob -> canvas.drawTextBlob(blob, 0f, 0f, paint) }
-
-        plan.boxes.forEach { positioned ->
-            positioned.box.rules.filter { it.constructionGroupId == null }.forEach { rule ->
-                canvas.drawRect(
-                    Rect.makeLTRB(
-                        positioned.x + rule.left,
-                        positioned.baselineFromTop + rule.top,
-                        positioned.x + rule.right,
-                        positioned.baselineFromTop + rule.bottom,
-                    ),
-                    paint,
-                )
-            }
-            val knownGroupIds = positioned.box.constructionPaintGroups.mapTo(mutableSetOf()) { it.id }
-            val referencedGroupIds = buildSet {
-                positioned.box.glyphs.mapNotNullTo(this) { it.constructionGroupId }
-                positioned.box.rules.mapNotNullTo(this) { it.constructionGroupId }
-            }
-            check(knownGroupIds == referencedGroupIds) {
-                "Construction paint ownership mismatch: known=$knownGroupIds referenced=$referencedGroupIds"
-            }
-            positioned.box.constructionPaintGroups.forEach { group ->
-                when (val outline = face.constructionOutline(positioned.box, group)) {
-                    is MathConstructionOutlineResult.Available -> {
-                        val saveCount = canvas.save()
-                        try {
-                            canvas.translate(positioned.x, positioned.baselineFromTop)
-                            canvas.drawPath(outline.path, paint)
-                        } finally {
-                            canvas.restoreToCount(saveCount)
-                        }
-                    }
-                    is MathConstructionOutlineResult.Unavailable ->
-                        throw MathConstructionOutlineUnavailableException(outline)
-                }
-            }
-        }
-    } finally {
-        fonts.values.forEach(Font::close)
-        builder.close()
-        paint.close()
-    }
-}

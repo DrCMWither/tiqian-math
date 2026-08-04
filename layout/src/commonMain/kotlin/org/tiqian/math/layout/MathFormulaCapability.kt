@@ -13,6 +13,7 @@ enum class MathFormulaCapabilityCategory {
     MissingMathConstruction,
     InsufficientMathConstruction,
     ConstructionOutlineUnavailable,
+    GlyphOutlineUnavailable,
     ConstructionPaintOwnershipInvalid,
     UnsupportedFontCapability,
 }
@@ -99,6 +100,7 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.MissingMathConstruction,
         DiagnosticCode.MathVariantTooShort,
         DiagnosticCode.MissingConstructionOutlineEvidence,
+        DiagnosticCode.MissingGlyphOutlineEvidence,
         DiagnosticCode.InvalidConstructionPaintOwnership,
     )
 
@@ -179,6 +181,8 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.MathVariantTooShort -> MathFormulaCapabilityCategory.InsufficientMathConstruction
         DiagnosticCode.MissingConstructionOutlineEvidence ->
             MathFormulaCapabilityCategory.ConstructionOutlineUnavailable
+        DiagnosticCode.MissingGlyphOutlineEvidence ->
+            MathFormulaCapabilityCategory.GlyphOutlineUnavailable
         DiagnosticCode.InvalidConstructionPaintOwnership ->
             MathFormulaCapabilityCategory.ConstructionPaintOwnershipInvalid
 

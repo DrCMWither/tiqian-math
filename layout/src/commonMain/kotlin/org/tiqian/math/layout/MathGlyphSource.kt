@@ -16,6 +16,8 @@ data class MeasuredMathGlyph(
     val inkBounds: MathRect,
     /** UTF-16 cluster offset in the exact backend string passed to the shaper. */
     val textCluster: Int = 0,
+    /** Backend shaping offset from the noad baseline; down is positive. */
+    val baselineOffsetPx: Float = 0f,
 )
 
 data class MeasuredMathRun(
@@ -87,6 +89,31 @@ data class MathSymbolGlyphRequest(
     val style: MathStyle,
     val sourceRange: SourceRange,
 )
+
+/** Backend scalar chosen from TeX symbol identity/family/alphabet semantics. */
+data class MathBackendScalarSelection(
+    val scalar: Int,
+    val supported: Boolean,
+)
+
+/** Shared semantic resolver used by every platform font adapter. */
+fun MathSymbolGlyphRequest.resolveBackendScalar(): MathBackendScalarSelection {
+    if (alphabet == MathAlphabet.MathNormal) {
+        val scalar = if (family == MathFamily.Letters) {
+            org.tiqian.math.core.encodeMathAlphabetScalar(identity.baseScalar, MathAlphabet.Italic)
+                ?: identity.baseScalar
+        } else {
+            identity.baseScalar
+        }
+        return MathBackendScalarSelection(scalar, supported = true)
+    }
+    if (alphabet == MathAlphabet.Roman) {
+        return MathBackendScalarSelection(identity.baseScalar, supported = true)
+    }
+    val scalar = org.tiqian.math.core.encodeMathAlphabetScalar(identity.baseScalar, alphabet)
+        ?: return MathBackendScalarSelection(identity.baseScalar, supported = false)
+    return MathBackendScalarSelection(scalar, supported = true)
+}
 
 /** Auditable result of resolving one semantic math symbol against one formula-wide face. */
 data class ResolvedMathSymbol(
@@ -213,3 +240,6 @@ interface MathFontFace {
         ),
     )
 }
+
+/** Math face whose platform module can preflight and replay every accepted placement. */
+interface MathComposeFontFace : MathFontFace

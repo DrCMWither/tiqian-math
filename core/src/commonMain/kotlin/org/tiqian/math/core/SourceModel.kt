@@ -57,6 +57,7 @@ enum class DiagnosticCode {
     MissingMathConstruction,
     MathVariantTooShort,
     MissingConstructionOutlineEvidence,
+    MissingGlyphOutlineEvidence,
     InvalidConstructionPaintOwnership,
     MissingDelimiterAfterLeft,
     MissingDelimiterAfterMiddle,
