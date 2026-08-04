@@ -32,7 +32,9 @@ import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.skia.SkiaMathFontFace
 import org.tiqian.math.font.skia.MathConstructionOutlineResult
 import org.tiqian.math.font.skia.MathConstructionOutlineUnavailableException
-import org.tiqian.math.layout.MathLayoutEngine
+import org.tiqian.math.font.skia.formulaCapabilityEngine
+import org.tiqian.math.layout.MathFormulaCapabilityResult
+import org.tiqian.math.layout.MathFormulaStrictException
 import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.breakIntoLines
 import kotlin.math.ceil
@@ -46,8 +48,9 @@ fun rememberLeteMathFontFace(): SkiaMathFontFace {
 }
 
 /**
- * Measures and draws one formula using one complete face and one MATH table.
- * The renderer replays glyph/rule placements and semantic construction groups returned by layout.
+ * Strict dogfood entry point. Unsupported or unreplayable formulas fail during composition,
+ * before a render plan, measure policy, glyph blob, or construction path is handed to drawing.
+ * Production hosts should normally use [TiqianMathOrFallback].
  */
 @Composable
 fun TiqianMath(
@@ -70,6 +73,99 @@ fun TiqianMath(
     fontFace: SkiaMathFontFace? = null,
     onMathLayout: (MathLayoutResult) -> Unit = {},
 ) {
+    val resolved = rememberResolvedFormulaCapability(
+        source = source,
+        mode = mode,
+        style = style,
+        fontSizePx = fontSizePx,
+        nullDelimiterSpacePx = nullDelimiterSpacePx,
+        scriptSpacePx = scriptSpacePx,
+        delimiterFactor = delimiterFactor,
+        delimiterShortfallPx = delimiterShortfallPx,
+        color = color,
+        fontFace = fontFace,
+    )
+    when (val capability = resolved.capability) {
+        is MathFormulaCapabilityResult.Ready -> ReadyTiqianMath(
+            result = capability.layoutResult,
+            modifier = modifier,
+            requestedLineHeightPx = resolved.requestedLineHeightPx,
+            color = resolved.color,
+            softWrap = softWrap,
+            face = resolved.face,
+            onMathLayout = onMathLayout,
+        )
+        is MathFormulaCapabilityResult.FallbackRequired -> throw MathFormulaStrictException(capability)
+    }
+}
+
+/**
+ * Production-safe formula boundary. The host owns [fallback] and receives the exact source,
+ * diagnostics, and formula-wide reasons; Tiqian draws only [MathFormulaCapabilityResult.Ready].
+ */
+@Composable
+fun TiqianMathOrFallback(
+    source: String,
+    modifier: Modifier = Modifier,
+    mode: MathMode = MathMode.Inline,
+    style: TextStyle = LocalTextStyle.current,
+    fontSizePx: Float? = null,
+    nullDelimiterSpacePx: Float? = null,
+    scriptSpacePx: Float? = null,
+    delimiterFactor: Int = 901,
+    delimiterShortfallPx: Float? = null,
+    color: Color = Color.Unspecified,
+    softWrap: Boolean = true,
+    fontFace: SkiaMathFontFace? = null,
+    onMathLayout: (MathLayoutResult) -> Unit = {},
+    fallback: @Composable (MathFormulaCapabilityResult.FallbackRequired) -> Unit,
+) {
+    val resolved = rememberResolvedFormulaCapability(
+        source = source,
+        mode = mode,
+        style = style,
+        fontSizePx = fontSizePx,
+        nullDelimiterSpacePx = nullDelimiterSpacePx,
+        scriptSpacePx = scriptSpacePx,
+        delimiterFactor = delimiterFactor,
+        delimiterShortfallPx = delimiterShortfallPx,
+        color = color,
+        fontFace = fontFace,
+    )
+    when (val capability = resolved.capability) {
+        is MathFormulaCapabilityResult.Ready -> ReadyTiqianMath(
+            result = capability.layoutResult,
+            modifier = modifier,
+            requestedLineHeightPx = resolved.requestedLineHeightPx,
+            color = resolved.color,
+            softWrap = softWrap,
+            face = resolved.face,
+            onMathLayout = onMathLayout,
+        )
+        is MathFormulaCapabilityResult.FallbackRequired -> fallback(capability)
+    }
+}
+
+private data class ResolvedFormulaCapability(
+    val face: SkiaMathFontFace,
+    val capability: MathFormulaCapabilityResult,
+    val requestedLineHeightPx: Float?,
+    val color: Color,
+)
+
+@Composable
+private fun rememberResolvedFormulaCapability(
+    source: String,
+    mode: MathMode,
+    style: TextStyle,
+    fontSizePx: Float?,
+    nullDelimiterSpacePx: Float?,
+    scriptSpacePx: Float?,
+    delimiterFactor: Int,
+    delimiterShortfallPx: Float?,
+    color: Color,
+    fontFace: SkiaMathFontFace?,
+): ResolvedFormulaCapability {
     val density = LocalDensity.current
     val resolvedFontSizePx = fontSizePx ?: with(density) {
         (if (style.fontSize.isSpecified) style.fontSize else DefaultMathFontSize).toPx()
@@ -88,7 +184,8 @@ fun TiqianMath(
     }
     val defaultFace = if (fontFace == null) rememberLeteMathFontFace() else null
     val resolvedFace = fontFace ?: checkNotNull(defaultFace)
-    val result = remember(
+    val capabilityEngine = remember(resolvedFace) { resolvedFace.formulaCapabilityEngine() }
+    val capability = remember(
         source,
         mode,
         resolvedFontSizePx,
@@ -96,13 +193,13 @@ fun TiqianMath(
         scriptSpacePx,
         delimiterFactor,
         delimiterShortfallPx,
-        resolvedFace,
+        capabilityEngine,
     ) {
-        MathLayoutEngine(resolvedFace).layout(
+        capabilityEngine.evaluate(
             source,
             MathLayoutOptions(
-                mode,
-                resolvedFontSizePx,
+                mode = mode,
+                fontSizePx = resolvedFontSizePx,
                 nullDelimiterSpacePx = nullDelimiterSpacePx,
                 scriptSpacePx = scriptSpacePx,
                 delimiterFactor = delimiterFactor,
@@ -110,6 +207,24 @@ fun TiqianMath(
             ),
         )
     }
+    return ResolvedFormulaCapability(
+        face = resolvedFace,
+        capability = capability,
+        requestedLineHeightPx = requestedLineHeightPx,
+        color = resolvedColor,
+    )
+}
+
+@Composable
+private fun ReadyTiqianMath(
+    result: MathLayoutResult,
+    modifier: Modifier,
+    requestedLineHeightPx: Float?,
+    color: Color,
+    softWrap: Boolean,
+    face: SkiaMathFontFace,
+    onMathLayout: (MathLayoutResult) -> Unit,
+) {
     SideEffect { onMathLayout(result) }
 
     var renderPlan = RenderPlan.unbroken(result, requestedLineHeightPx)
@@ -118,7 +233,7 @@ fun TiqianMath(
         content = {
             Canvas(Modifier.fillMaxSize()) {
                 drawIntoCanvas { canvas ->
-                    drawMathPlan(canvas.skiaCanvas, resolvedFace, renderPlan, resolvedColor.toArgb())
+                    drawMathPlan(canvas.skiaCanvas, face, renderPlan, color.toArgb())
                 }
             }
         },

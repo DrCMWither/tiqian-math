@@ -1,0 +1,18 @@
+{
+  "total": 6,
+  "ready": 1,
+  "fallbackRequired": 5,
+  "readyRate": 0.166667,
+  "byCategory": {"MalformedSource": 1, "UnsupportedSyntax": 4},
+  "byDiagnosticCode": {"MissingScriptArgument": 1, "UnknownCommand": 1, "UnsupportedCommand": 3},
+  "byUnsupportedCommand": {"\\cases": 1, "\\matrix": 1, "\\text": 1, "\\unknowncommand": 1},
+  "samplesByCategory": {
+    "MalformedSource": [
+      {"source": "x^", "diagnostics": [{"code": "MissingScriptArgument", "range": {"start": 1, "endExclusive": 2}}]}
+    ],
+    "UnsupportedSyntax": [
+      {"source": "\\text{hello}", "diagnostics": [{"code": "UnsupportedCommand", "range": {"start": 0, "endExclusive": 5}}]},
+      {"source": "\\matrix{a}", "diagnostics": [{"code": "UnsupportedCommand", "range": {"start": 0, "endExclusive": 7}}]}
+    ]
+  }
+}

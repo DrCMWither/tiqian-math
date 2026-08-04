@@ -1,0 +1,6 @@
+x_1^2+\frac{a}{b}
+\text{hello}
+\matrix{a}
+\cases{x}
+\unknowncommand{x}
+x^

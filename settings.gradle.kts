@@ -45,6 +45,7 @@ include(
     ":font:stix",
     ":font:skia",
     ":layout",
+    ":scanner",
     ":frontend:compose",
     ":preview",
 )
