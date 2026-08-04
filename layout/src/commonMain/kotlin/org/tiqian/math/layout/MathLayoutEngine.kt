@@ -9,6 +9,7 @@ import org.tiqian.math.font.opentype.MathVerticalConstructionRequest
 import org.tiqian.math.font.opentype.MathVerticalAssemblyPolicy
 import org.tiqian.math.font.opentype.OpenTypeMathConstants
 import org.tiqian.math.parser.MacroExpansionLimits
+import org.tiqian.math.parser.MathFormulaParser
 import org.tiqian.math.parser.MathMacroDefinition
 import org.tiqian.math.parser.MathParser
 import kotlin.math.max
@@ -48,21 +49,48 @@ data class MathLayoutOptions(
     }
 }
 
+data class MathPreparedFormula(
+    val parseResult: MathParseResult,
+) {
+    val source: String get() = parseResult.source
+    val diagnostics: List<MathDiagnostic> get() = parseResult.diagnostics
+}
+
+/** Parse-once production pipeline; analysis callers may still use [MathLayoutEngine.layout]. */
+interface MathFormulaProductionPipeline {
+    fun prepare(source: String): MathPreparedFormula
+
+    fun layout(
+        prepared: MathPreparedFormula,
+        options: MathLayoutOptions = MathLayoutOptions(),
+    ): MathLayoutResult
+}
+
 class MathLayoutEngine(
     private val glyphSource: MathFontFace,
-    macros: List<MathMacroDefinition> = emptyList(),
-    expansionLimits: MacroExpansionLimits = MacroExpansionLimits(),
-) {
-    private val parser = MathParser(macros, expansionLimits)
+    private val parser: MathFormulaParser,
+) : MathFormulaProductionPipeline {
+    constructor(
+        glyphSource: MathFontFace,
+        macros: List<MathMacroDefinition> = emptyList(),
+        expansionLimits: MacroExpansionLimits = MacroExpansionLimits(),
+    ) : this(glyphSource, MathParser(macros, expansionLimits))
+
+    override fun prepare(source: String): MathPreparedFormula =
+        MathPreparedFormula(parser.parse(source))
 
     fun layout(source: String, options: MathLayoutOptions = MathLayoutOptions()): MathLayoutResult =
-        MathLayoutPass(glyphSource, parser).layout(source, options)
+        layout(prepare(source), options)
+
+    override fun layout(
+        prepared: MathPreparedFormula,
+        options: MathLayoutOptions,
+    ): MathLayoutResult = MathLayoutPass(glyphSource).layout(prepared.parseResult, options)
 }
 
 /** Per-call mutable state; a public engine can safely serve concurrent layout requests. */
 private class MathLayoutPass(
     private val glyphSource: MathFontFace,
-    private val parser: MathParser,
 ) {
     private val diagnostics = mutableListOf<MathDiagnostic>()
     private val decisions = mutableListOf<MathLayoutDecision>()
@@ -73,7 +101,8 @@ private class MathLayoutPass(
     private var delimiterShortfallPx: Float = 12f
     private var nextConstructionPaintGroupId: Int = 1
 
-    fun layout(source: String, options: MathLayoutOptions): MathLayoutResult {
+    fun layout(parsed: MathParseResult, options: MathLayoutOptions): MathLayoutResult {
+        val source = parsed.source
         baseFontSizePx = options.fontSizePx
         nextConstructionPaintGroupId = 1
         nullDelimiterSpacePx = options.nullDelimiterSpacePx
@@ -82,7 +111,6 @@ private class MathLayoutPass(
         delimiterFactor = options.delimiterFactor
         delimiterShortfallPx = options.delimiterShortfallPx
             ?: options.fontSizePx * DEFAULT_DELIMITER_SHORTFALL_EM
-        val parsed = parser.parse(source)
         diagnostics += parsed.diagnostics
         val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
         val horizontal = layoutList(parsed.root, initialStyle)

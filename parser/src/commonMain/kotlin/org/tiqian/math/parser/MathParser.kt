@@ -2,11 +2,15 @@ package org.tiqian.math.parser
 
 import org.tiqian.math.core.*
 
+fun interface MathFormulaParser {
+    fun parse(source: String): MathParseResult
+}
+
 class MathParser(
     private val macros: List<MathMacroDefinition> = emptyList(),
     private val expansionLimits: MacroExpansionLimits = MacroExpansionLimits(),
-) {
-    fun parse(source: String): MathParseResult {
+) : MathFormulaParser {
+    override fun parse(source: String): MathParseResult {
         val tokenized = MathTokenizer().tokenize(source)
         val expanded = MathMacroExpander(macros, expansionLimits).expand(tokenized.tokens)
         return ParserState(

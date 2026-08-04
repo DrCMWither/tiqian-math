@@ -13,6 +13,7 @@ enum class MathFormulaCapabilityCategory {
     MissingMathConstruction,
     InsufficientMathConstruction,
     ConstructionOutlineUnavailable,
+    ConstructionPaintOwnershipInvalid,
     UnsupportedFontCapability,
 }
 
@@ -27,9 +28,9 @@ sealed interface MathFormulaCapabilityResult {
 
     data class Ready(
         val layoutResult: MathLayoutResult,
+        override val diagnostics: List<MathDiagnostic> = layoutResult.diagnostics,
     ) : MathFormulaCapabilityResult {
         override val source: String get() = layoutResult.source
-        override val diagnostics: List<MathDiagnostic> get() = layoutResult.diagnostics
     }
 
     data class FallbackRequired(
@@ -55,19 +56,28 @@ fun interface MathFormulaRenderPreflight {
  * Existing blocking diagnostics short-circuit render preflight so rejected formulas build no paths.
  */
 class MathFormulaCapabilityEngine(
-    private val layoutEngine: MathLayoutEngine,
+    private val pipeline: MathFormulaProductionPipeline,
     private val renderPreflight: MathFormulaRenderPreflight,
 ) {
     fun evaluate(
         source: String,
         options: MathLayoutOptions = MathLayoutOptions(),
     ): MathFormulaCapabilityResult {
-        val layoutResult = layoutEngine.layout(source, options)
+        val prepared = pipeline.prepare(source)
+        check(prepared.source == source) { "Prepared formula source does not match its request" }
+        MathFormulaCapabilityClassifier.classify(source, prepared.diagnostics)?.let { return it }
+
+        val layoutResult = pipeline.layout(prepared, options)
+        check(layoutResult.source == source) { "Layout result source does not match its prepared formula" }
         MathFormulaCapabilityClassifier.classify(layoutResult)?.let { return it }
 
         val renderDiagnostics = renderPreflight.inspect(layoutResult)
-        return MathFormulaCapabilityClassifier.classify(layoutResult, renderDiagnostics)
-            ?: MathFormulaCapabilityResult.Ready(layoutResult)
+        val allDiagnostics = MathFormulaCapabilityClassifier.mergeDiagnostics(
+            layoutResult.diagnostics,
+            renderDiagnostics,
+        )
+        return MathFormulaCapabilityClassifier.classify(source, allDiagnostics)
+            ?: MathFormulaCapabilityResult.Ready(layoutResult, allDiagnostics)
     }
 
     fun requireReady(
@@ -89,17 +99,24 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.MissingMathConstruction,
         DiagnosticCode.MathVariantTooShort,
         DiagnosticCode.MissingConstructionOutlineEvidence,
+        DiagnosticCode.InvalidConstructionPaintOwnership,
     )
 
     /** Returns null only when all supplied diagnostics are production-safe. */
     fun classify(
         layoutResult: MathLayoutResult,
         additionalDiagnostics: List<MathDiagnostic> = emptyList(),
+    ): MathFormulaCapabilityResult.FallbackRequired? = classify(
+        source = layoutResult.source,
+        diagnostics = mergeDiagnostics(layoutResult.diagnostics, additionalDiagnostics),
+    )
+
+    fun classify(
+        source: String,
+        diagnostics: List<MathDiagnostic>,
     ): MathFormulaCapabilityResult.FallbackRequired? {
-        val diagnostics = (layoutResult.diagnostics + additionalDiagnostics)
-            .distinctBy { listOf(it.code, it.message, it.range, it.severity) }
-            .sortedWith(diagnosticComparator)
-        val blocking = diagnostics.filter(::requiresFallback)
+        val normalizedDiagnostics = mergeDiagnostics(diagnostics)
+        val blocking = normalizedDiagnostics.filter(::requiresFallback)
         if (blocking.isEmpty()) return null
 
         val reasons = blocking
@@ -110,11 +127,16 @@ object MathFormulaCapabilityClassifier {
                 MathFormulaFallbackReason(category, categoryDiagnostics)
             }
         return MathFormulaCapabilityResult.FallbackRequired(
-            source = layoutResult.source,
-            diagnostics = diagnostics,
+            source = source,
+            diagnostics = normalizedDiagnostics,
             reasons = reasons,
         )
     }
+
+    fun mergeDiagnostics(vararg groups: List<MathDiagnostic>): List<MathDiagnostic> = groups
+        .flatMap { it }
+        .distinctBy { listOf(it.code, it.message, it.range, it.severity) }
+        .sortedWith(diagnosticComparator)
 
     fun requiresFallback(diagnostic: MathDiagnostic): Boolean =
         diagnostic.severity == DiagnosticSeverity.Error || diagnostic.code in blockingWarningCodes
@@ -157,6 +179,8 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.MathVariantTooShort -> MathFormulaCapabilityCategory.InsufficientMathConstruction
         DiagnosticCode.MissingConstructionOutlineEvidence ->
             MathFormulaCapabilityCategory.ConstructionOutlineUnavailable
+        DiagnosticCode.InvalidConstructionPaintOwnership ->
+            MathFormulaCapabilityCategory.ConstructionPaintOwnershipInvalid
 
         DiagnosticCode.MissingMathTable,
         DiagnosticCode.MalformedFont,

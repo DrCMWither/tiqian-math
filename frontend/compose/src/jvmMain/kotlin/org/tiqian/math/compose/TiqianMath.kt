@@ -33,6 +33,7 @@ import org.tiqian.math.font.skia.SkiaMathFontFace
 import org.tiqian.math.font.skia.MathConstructionOutlineResult
 import org.tiqian.math.font.skia.MathConstructionOutlineUnavailableException
 import org.tiqian.math.font.skia.formulaCapabilityEngine
+import org.tiqian.math.layout.MathFormulaCapabilityEngine
 import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathFormulaStrictException
 import org.tiqian.math.layout.MathLayoutOptions
@@ -85,18 +86,7 @@ fun TiqianMath(
         color = color,
         fontFace = fontFace,
     )
-    when (val capability = resolved.capability) {
-        is MathFormulaCapabilityResult.Ready -> ReadyTiqianMath(
-            result = capability.layoutResult,
-            modifier = modifier,
-            requestedLineHeightPx = resolved.requestedLineHeightPx,
-            color = resolved.color,
-            softWrap = softWrap,
-            face = resolved.face,
-            onMathLayout = onMathLayout,
-        )
-        is MathFormulaCapabilityResult.FallbackRequired -> throw MathFormulaStrictException(capability)
-    }
+    FormulaCapabilityContent(resolved, modifier, softWrap, onMathLayout, fallback = null)
 }
 
 /**
@@ -132,6 +122,51 @@ fun TiqianMathOrFallback(
         color = color,
         fontFace = fontFace,
     )
+    FormulaCapabilityContent(resolved, modifier, softWrap, onMathLayout, fallback)
+}
+
+/** Test seam: injects layout corruption before the real production preflight and branch. */
+@Composable
+internal fun TiqianMathCapabilityBoundaryForTest(
+    source: String,
+    fontFace: SkiaMathFontFace,
+    capabilityEngine: MathFormulaCapabilityEngine,
+    strict: Boolean,
+    modifier: Modifier = Modifier,
+    fontSizePx: Float = 32f,
+    onMathLayout: (MathLayoutResult) -> Unit = {},
+    fallback: @Composable (MathFormulaCapabilityResult.FallbackRequired) -> Unit,
+) {
+    val resolved = rememberResolvedFormulaCapability(
+        source = source,
+        mode = MathMode.Inline,
+        style = LocalTextStyle.current,
+        fontSizePx = fontSizePx,
+        nullDelimiterSpacePx = null,
+        scriptSpacePx = null,
+        delimiterFactor = 901,
+        delimiterShortfallPx = null,
+        color = Color.Black,
+        fontFace = fontFace,
+        capabilityEngineOverride = capabilityEngine,
+    )
+    FormulaCapabilityContent(
+        resolved = resolved,
+        modifier = modifier,
+        softWrap = true,
+        onMathLayout = onMathLayout,
+        fallback = if (strict) null else fallback,
+    )
+}
+
+@Composable
+private fun FormulaCapabilityContent(
+    resolved: ResolvedFormulaCapability,
+    modifier: Modifier,
+    softWrap: Boolean,
+    onMathLayout: (MathLayoutResult) -> Unit,
+    fallback: (@Composable (MathFormulaCapabilityResult.FallbackRequired) -> Unit)?,
+) {
     when (val capability = resolved.capability) {
         is MathFormulaCapabilityResult.Ready -> ReadyTiqianMath(
             result = capability.layoutResult,
@@ -142,7 +177,10 @@ fun TiqianMathOrFallback(
             face = resolved.face,
             onMathLayout = onMathLayout,
         )
-        is MathFormulaCapabilityResult.FallbackRequired -> fallback(capability)
+        is MathFormulaCapabilityResult.FallbackRequired -> {
+            val hostFallback = fallback ?: throw MathFormulaStrictException(capability)
+            hostFallback(capability)
+        }
     }
 }
 
@@ -165,6 +203,7 @@ private fun rememberResolvedFormulaCapability(
     delimiterShortfallPx: Float?,
     color: Color,
     fontFace: SkiaMathFontFace?,
+    capabilityEngineOverride: MathFormulaCapabilityEngine? = null,
 ): ResolvedFormulaCapability {
     val density = LocalDensity.current
     val resolvedFontSizePx = fontSizePx ?: with(density) {
@@ -184,7 +223,8 @@ private fun rememberResolvedFormulaCapability(
     }
     val defaultFace = if (fontFace == null) rememberLeteMathFontFace() else null
     val resolvedFace = fontFace ?: checkNotNull(defaultFace)
-    val capabilityEngine = remember(resolvedFace) { resolvedFace.formulaCapabilityEngine() }
+    val defaultCapabilityEngine = remember(resolvedFace) { resolvedFace.formulaCapabilityEngine() }
+    val capabilityEngine = capabilityEngineOverride ?: defaultCapabilityEngine
     val capability = remember(
         source,
         mode,

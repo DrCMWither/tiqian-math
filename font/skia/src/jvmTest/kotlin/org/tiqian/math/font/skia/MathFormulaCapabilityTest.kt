@@ -7,16 +7,27 @@ import org.tiqian.math.core.MathConstructionPaintGroup
 import org.tiqian.math.core.MathConstructionPaintKind
 import org.tiqian.math.core.MathConstructionShapeKind
 import org.tiqian.math.core.MathDiagnostic
+import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
+import org.tiqian.math.font.opentype.OpenTypeMathFont
+import org.tiqian.math.layout.MathFontFace
 import org.tiqian.math.layout.MathFormulaCapabilityCategory
 import org.tiqian.math.layout.MathFormulaCapabilityClassifier
 import org.tiqian.math.layout.MathFormulaCapabilityEngine
 import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathFormulaRenderPreflight
 import org.tiqian.math.layout.MathFormulaStrictException
+import org.tiqian.math.layout.MathOperatorGlyphRequest
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathSymbolGlyphRequest
+import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.layout.ResolvedMathOperator
+import org.tiqian.math.layout.ResolvedMathSymbol
+import org.tiqian.math.layout.ResolvedMathSymbolRun
+import org.tiqian.math.parser.MathFormulaParser
+import org.tiqian.math.parser.MathParser
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -30,10 +41,20 @@ class MathFormulaCapabilityTest {
             val source = "\\sqrt[3]{\\frac{a+b}{\\sqrt{x}}}+\\left(\\frac{a}{b}\\right)+\\sum_{i=1}^{n}i"
             val options = MathLayoutOptions(fontSizePx = 32f)
             val lowLevel = MathLayoutEngine(face).layout(source, options)
+            var parseCalls = 0
+            val countingParser = MathFormulaParser {
+                parseCalls += 1
+                MathParser().parse(it)
+            }
+            val productionEngine = MathFormulaCapabilityEngine(
+                pipeline = MathLayoutEngine(face, countingParser),
+                renderPreflight = SkiaMathFormulaRenderPreflight(face),
+            )
             val ready = assertIs<MathFormulaCapabilityResult.Ready>(
-                face.formulaCapabilityEngine().evaluate(source, options),
+                productionEngine.evaluate(source, options),
             )
 
+            assertEquals(1, parseCalls, "prepared formula is consumed without reparsing")
             assertEquals(lowLevel, ready.layoutResult)
             assertTrue(ready.layoutResult.box.glyphs.isNotEmpty())
             assertTrue(face.constructionOutlineCacheStats().entries > 0, "ready closes construction replay")
@@ -91,6 +112,7 @@ class MathFormulaCapabilityTest {
                 DiagnosticCode.MissingMathConstruction,
                 DiagnosticCode.MathVariantTooShort,
                 DiagnosticCode.MissingConstructionOutlineEvidence,
+                DiagnosticCode.InvalidConstructionPaintOwnership,
                 DiagnosticCode.UnsupportedMathDeviceAdjustment,
             ).forEach { code ->
                 assertIs<MathFormulaCapabilityResult.FallbackRequired>(
@@ -120,6 +142,8 @@ class MathFormulaCapabilityTest {
                 DiagnosticCode.MathVariantTooShort to MathFormulaCapabilityCategory.InsufficientMathConstruction,
                 DiagnosticCode.MissingConstructionOutlineEvidence to
                     MathFormulaCapabilityCategory.ConstructionOutlineUnavailable,
+                DiagnosticCode.InvalidConstructionPaintOwnership to
+                    MathFormulaCapabilityCategory.ConstructionPaintOwnershipInvalid,
             )
             expectations.forEach { (code, category) ->
                 val fallback = assertIs<MathFormulaCapabilityResult.FallbackRequired>(
@@ -135,23 +159,91 @@ class MathFormulaCapabilityTest {
 
     @Test
     fun parserFailureSkipsRenderPreflightAndStrictThrowsTheSameDecision() {
+        val rejectingFace = RejectingMathFontFace()
+        var parseCalls = 0
+        val parser = MathFormulaParser {
+            parseCalls += 1
+            MathParser().parse(it)
+        }
+        var preflightCalls = 0
+        val engine = MathFormulaCapabilityEngine(
+            pipeline = MathLayoutEngine(rejectingFace, parser),
+            renderPreflight = MathFormulaRenderPreflight {
+                preflightCalls += 1
+                error("parser failure must not reach render preflight")
+            },
+        )
+        val source = "\\sqrt{x}+\\text{bad}"
+        val fallback = assertIs<MathFormulaCapabilityResult.FallbackRequired>(engine.evaluate(source))
+        assertEquals(1, parseCalls)
+        assertEquals(0, rejectingFace.calls, "parser failure performs no font or MATH access")
+        assertEquals(0, preflightCalls)
+
+        val failure = assertFailsWith<MathFormulaStrictException> { engine.requireReady(source) }
+        assertEquals(fallback.source, failure.fallback.source)
+        assertEquals(fallback.reasons.map { it.category }, failure.fallback.reasons.map { it.category })
+        assertEquals(2, parseCalls, "each independent request parses once")
+        assertEquals(0, rejectingFace.calls)
+        assertEquals(0, preflightCalls)
+    }
+
+    @Test
+    fun readyRetainsNonBlockingRenderDiagnosticsWithoutCopyingTheLayoutResult() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
-            var preflightCalls = 0
-            val engine = MathFormulaCapabilityEngine(
-                MathLayoutEngine(face),
-                MathFormulaRenderPreflight {
-                    preflightCalls += 1
-                    emptyList()
-                },
+            val warning = MathDiagnostic(
+                code = DiagnosticCode.DuplicateSuperscript,
+                message = "Synthetic non-blocking renderer notice",
+                range = SourceRange(0, 1),
+                severity = DiagnosticSeverity.Warning,
             )
-            val source = "\\sqrt{x}+\\text{bad}"
-            val fallback = assertIs<MathFormulaCapabilityResult.FallbackRequired>(engine.evaluate(source))
-            assertEquals(0, preflightCalls)
-            assertEquals(0, face.constructionOutlineCacheStats().entries)
-            val failure = assertFailsWith<MathFormulaStrictException> { engine.requireReady(source) }
-            assertEquals(fallback.source, failure.fallback.source)
-            assertEquals(fallback.reasons.map { it.category }, failure.fallback.reasons.map { it.category })
-            assertEquals(0, preflightCalls)
+            val ready = assertIs<MathFormulaCapabilityResult.Ready>(
+                MathFormulaCapabilityEngine(
+                    pipeline = MathLayoutEngine(face),
+                    renderPreflight = MathFormulaRenderPreflight { listOf(warning) },
+                ).evaluate("x"),
+            )
+
+            assertTrue(ready.layoutResult.diagnostics.isEmpty(), "layout result remains untouched")
+            assertEquals(listOf(warning), ready.diagnostics)
+        }
+    }
+
+    @Test
+    fun skiaPreflightRejectsUndeclaredReferencesAndUnreferencedDeclarations() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            val original = MathLayoutEngine(face).layout("x")
+            val undeclaredId = 41
+            val undeclaredReference = original.copy(
+                box = original.box.copy(
+                    glyphs = original.box.glyphs.map { it.copy(constructionGroupId = undeclaredId) },
+                    constructionPaintGroups = emptyList(),
+                ),
+                fragments = emptyList(),
+            )
+            val undeclared = SkiaMathFormulaRenderPreflight(face).inspect(undeclaredReference).single()
+            assertEquals(DiagnosticCode.InvalidConstructionPaintOwnership, undeclared.code)
+            assertEquals(SourceRange(0, 1), undeclared.range)
+            assertTrue(undeclared.message.contains("referenced") && undeclared.message.contains("not declared"))
+
+            val declaredGroup = MathConstructionPaintGroup(
+                id = 42,
+                kind = MathConstructionPaintKind.Radical,
+                shapeKind = MathConstructionShapeKind.BaseGlyph,
+                sourceRange = SourceRange(0, 1),
+                outlinePolicy = MathConstructionOutlinePolicy.RequireOutlineUnion,
+            )
+            val unreferencedFragment = original.fragments.single().copy(
+                box = original.fragments.single().box.copy(
+                    constructionPaintGroups = listOf(declaredGroup),
+                ),
+            )
+            val unreferenced = SkiaMathFormulaRenderPreflight(face)
+                .inspect(original.copy(fragments = listOf(unreferencedFragment)))
+                .single()
+            assertEquals(DiagnosticCode.InvalidConstructionPaintOwnership, unreferenced.code)
+            assertEquals(declaredGroup.sourceRange, unreferenced.range)
+            assertTrue(unreferenced.message.contains("declared") && unreferenced.message.contains("no glyph"))
+            assertEquals(0, face.constructionOutlineCacheStats().entries, "ownership fails before path construction")
         }
     }
 
@@ -189,5 +281,43 @@ class MathFormulaCapabilityTest {
                 fallback.reasons.single().category,
             )
         }
+    }
+}
+
+private class RejectingMathFontFace : MathFontFace {
+    var calls: Int = 0
+        private set
+
+    override val mathFont: OpenTypeMathFont get() = reject()
+
+    override fun resolveSymbol(request: MathSymbolGlyphRequest, fontSizePx: Float): ResolvedMathSymbol = reject()
+
+    override fun resolveOperator(
+        request: MathOperatorGlyphRequest,
+        fontSizePx: Float,
+    ): ResolvedMathOperator = reject()
+
+    override fun resolveSymbols(
+        requests: List<MathSymbolGlyphRequest>,
+        fontSizePx: Float,
+    ): ResolvedMathSymbolRun = reject()
+
+    override fun shape(
+        text: String,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = reject()
+
+    override fun measureGlyph(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = reject()
+
+    private fun reject(): Nothing {
+        calls += 1
+        error("parser-blocked formula reached MathFontFace")
     }
 }

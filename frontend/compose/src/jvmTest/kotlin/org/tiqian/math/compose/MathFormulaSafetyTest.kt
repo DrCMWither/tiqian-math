@@ -19,9 +19,15 @@ import org.tiqian.math.core.MathLayoutResult
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.skia.SkiaMathFontFace
+import org.tiqian.math.font.skia.SkiaMathFormulaRenderPreflight
 import org.tiqian.math.layout.MathFormulaCapabilityCategory
+import org.tiqian.math.layout.MathFormulaCapabilityEngine
 import org.tiqian.math.layout.MathFormulaCapabilityResult
+import org.tiqian.math.layout.MathFormulaProductionPipeline
 import org.tiqian.math.layout.MathFormulaStrictException
+import org.tiqian.math.layout.MathLayoutEngine
+import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathPreparedFormula
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -129,4 +135,100 @@ class MathFormulaSafetyTest {
             assertTrue(exception.fallback.diagnostics.any { it.code == DiagnosticCode.UnsupportedCommand })
         }
     }
+
+    @Test
+    fun ownershipMismatchUsesOnlyHostFallbackBeforeMeasureAndDraw() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            val engine = ownershipMismatchEngine(face)
+            var fallbackCalls = 0
+            var layoutCalls = 0
+            var captured: MathFormulaCapabilityResult.FallbackRequired? = null
+            ImageComposeScene(width = 100, height = 70, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    TiqianMathCapabilityBoundaryForTest(
+                        source = "x",
+                        fontFace = face,
+                        capabilityEngine = engine,
+                        strict = false,
+                        onMathLayout = { layoutCalls += 1 },
+                        fallback = { request ->
+                            fallbackCalls += 1
+                            captured = request
+                            Canvas(Modifier.size(50.dp, 30.dp)) { drawRect(Color.Magenta) }
+                        },
+                    )
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                var magentaPixels = 0
+                var darkPixels = 0
+                for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                    val pixel = pixels[x, y]
+                    if (pixel.red > 0.9f && pixel.blue > 0.9f && pixel.green < 0.1f) magentaPixels += 1
+                    if (pixel.red < 0.35f && pixel.green < 0.35f && pixel.blue < 0.35f) darkPixels += 1
+                }
+                assertEquals(50 * 30, magentaPixels)
+                assertEquals(0, darkPixels, "ownership failure paints no Tiqian glyph")
+            }
+
+            assertEquals(1, fallbackCalls)
+            assertEquals(0, layoutCalls)
+            assertEquals(0, face.constructionOutlineCacheStats().entries)
+            val fallback = assertNotNull(captured)
+            assertEquals(
+                listOf(MathFormulaCapabilityCategory.ConstructionPaintOwnershipInvalid),
+                fallback.reasons.map { it.category },
+            )
+            val diagnostic = fallback.diagnostics.single()
+            assertEquals(DiagnosticCode.InvalidConstructionPaintOwnership, diagnostic.code)
+            assertEquals(SourceRange(0, 1), diagnostic.range)
+        }
+    }
+
+    @Test
+    fun strictOwnershipMismatchFailsBeforeMeasureAndDraw() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var layoutCalls = 0
+            val exception = assertFailsWith<MathFormulaStrictException> {
+                ImageComposeScene(width = 100, height = 70, density = Density(1f)) {
+                    TiqianMathCapabilityBoundaryForTest(
+                        source = "x",
+                        fontFace = face,
+                        capabilityEngine = ownershipMismatchEngine(face),
+                        strict = true,
+                        onMathLayout = { layoutCalls += 1 },
+                        fallback = {},
+                    )
+                }.use { it.render() }
+            }
+
+            assertEquals(0, layoutCalls)
+            assertEquals(0, face.constructionOutlineCacheStats().entries)
+            assertEquals(
+                MathFormulaCapabilityCategory.ConstructionPaintOwnershipInvalid,
+                exception.fallback.reasons.single().category,
+            )
+        }
+    }
+}
+
+private fun ownershipMismatchEngine(face: SkiaMathFontFace): MathFormulaCapabilityEngine {
+    val delegate = MathLayoutEngine(face)
+    val pipeline = object : MathFormulaProductionPipeline {
+        override fun prepare(source: String): MathPreparedFormula = delegate.prepare(source)
+
+        override fun layout(
+            prepared: MathPreparedFormula,
+            options: MathLayoutOptions,
+        ): MathLayoutResult {
+            val result = delegate.layout(prepared, options)
+            return result.copy(
+                box = result.box.copy(
+                    glyphs = result.box.glyphs.map { it.copy(constructionGroupId = 73) },
+                    constructionPaintGroups = emptyList(),
+                ),
+            )
+        }
+    }
+    return MathFormulaCapabilityEngine(pipeline, SkiaMathFormulaRenderPreflight(face))
 }
