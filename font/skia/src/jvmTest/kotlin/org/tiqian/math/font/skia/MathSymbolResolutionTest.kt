@@ -100,6 +100,67 @@ class MathSymbolResolutionTest {
     }
 
     @Test
+    fun alephNaughtUsesTheFixedTeXSymbolAndRealFontGlyphForBothFaces() = withFaces { label, face ->
+        val result = MathLayoutEngine(face).layout("\\aleph_0", MathLayoutOptions(fontSizePx = 48f))
+
+        assertTrue(result.diagnostics.isEmpty(), "$label: ${result.diagnostics}")
+        val decision = result.decisions.first { it.name == "TeXMathSymbolResolution" }
+        assertEquals(SourceRange(0, 6), decision.range, label)
+        assertEquals("aleph", decision.details["identity"], label)
+        assertEquals("Ordinary", decision.details["atomClass"], label)
+        assertEquals("Symbols", decision.details["resolvedFamily"], label)
+        assertEquals("MathNormal", decision.details["resolvedAlphabet"], label)
+        assertEquals("U+2135", decision.details["backendScalar"], label)
+        val expectedGlyph: UShort = when (label) {
+            "Lete Sans Math" -> 403u
+            "STIX Two Math" -> 1252u
+            else -> error(label)
+        }
+        assertEquals(expectedGlyph, result.box.glyphs.first().glyphId, label)
+
+        val roman = MathLayoutEngine(face).layout("\\mathrm{\\aleph}", MathLayoutOptions(fontSizePx = 48f))
+        assertTrue(roman.diagnostics.isEmpty(), "$label roman: ${roman.diagnostics}")
+        assertEquals(expectedGlyph, roman.box.glyphs.single().glyphId, "$label fixed symbol ignores mathrm")
+        assertEquals("U+2135", roman.decisions.single { it.name == "TeXMathSymbolResolution" }.details["backendScalar"])
+    }
+
+    @Test
+    fun auditedCommonCommandsResolveThroughEachRealFontCmap() = withFaces { label, face ->
+        listOf(
+            "\\aleph" to 0x2135,
+            "\\forall" to 0x2200,
+            "\\emptyset" to 0x2205,
+            "\\nabla" to 0x2207,
+            "\\hbar" to 0x210F,
+            "\\ell" to 0x2113,
+            "\\cap" to 0x2229,
+            "\\cup" to 0x222A,
+            "\\setminus" to 0x2216,
+            "\\wedge" to 0x2227,
+            "\\oplus" to 0x2295,
+            "\\notin" to 0x2209,
+            "\\subseteq" to 0x2286,
+            "\\equiv" to 0x2261,
+            "\\parallel" to 0x2225,
+            "\\models" to 0x22A8,
+            "\\leftarrow" to 0x2190,
+            "\\Leftrightarrow" to 0x21D4,
+            "\\mapsto" to 0x21A6,
+            "\\vartheta" to 0x1D717,
+            "\\varpi" to 0x1D71B,
+            "\\varrho" to 0x1D71A,
+            "\\varsigma" to 0x1D70D,
+            "\\Psi" to 0x03A8,
+        ).forEach { (source, backendScalar) ->
+            val result = MathLayoutEngine(face).layout(source, MathLayoutOptions(fontSizePx = 40f))
+            assertTrue(result.diagnostics.isEmpty(), "$label/$source: ${result.diagnostics}")
+            val decision = result.decisions.single { it.name == "TeXMathSymbolResolution" }
+            assertEquals("U+${backendScalar.toString(16).uppercase().padStart(4, '0')}", decision.details["backendScalar"], "$label/$source")
+            assertTrue(result.box.glyphs.single().glyphId != 0.toUShort(), "$label/$source")
+        }
+    }
+
+    @Test
     fun missingItalicGlyphIsDiagnosedWithoutPerGlyphFallback() {
         SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
             val rejecting = object : MathFontFace by delegate {

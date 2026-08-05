@@ -93,6 +93,21 @@ class MathFormulaCapabilityTest {
     }
 
     @Test
+    fun alephIsProductionReadyWhileUnauditedCommandsStillRequireFallback() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            val engine = face.formulaCapabilityEngine()
+            val ready = assertIs<MathFormulaCapabilityResult.Ready>(engine.evaluate("\\aleph_0"))
+            assertTrue(ready.diagnostics.isEmpty())
+            assertEquals(403u, ready.layoutResult.box.glyphs.first().glyphId)
+
+            val unsupported = assertIs<MathFormulaCapabilityResult.FallbackRequired>(engine.evaluate("\\Bbbk"))
+            assertEquals(MathFormulaCapabilityCategory.UnsupportedSyntax, unsupported.reasons.single().category)
+            assertEquals(DiagnosticCode.UnknownCommand, unsupported.diagnostics.single().code)
+            assertEquals(SourceRange(0, 5), unsupported.diagnostics.single().range)
+        }
+    }
+
+    @Test
     fun everyErrorAndEveryIncompleteCapabilityWarningBlocks() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             val layout = MathLayoutEngine(face).layout("x")

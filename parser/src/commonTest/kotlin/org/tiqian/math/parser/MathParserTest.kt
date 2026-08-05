@@ -322,4 +322,160 @@ class MathParserTest {
         assertEquals(0x03D5, symbols[10].identity.baseScalar)
         assertEquals(0x03C6, symbols[11].identity.baseScalar)
     }
+
+    @Test
+    fun realZhihuAlephKeepsTeXIdentityFamilyAndUtf16Ranges() {
+        val source = "\\aleph_0"
+        val result = MathParser().parse(source)
+
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val scripts = assertIs<MathScripts>(result.root.children.single())
+        val aleph = assertIs<MathSymbol>(scripts.base)
+        assertEquals(MathNamedSymbol.Aleph, assertIs<MathSymbolIdentity.Named>(aleph.identity).symbol)
+        assertEquals(MathAtomClass.Ordinary, aleph.atomClass)
+        assertEquals(MathFamily.Symbols, aleph.family)
+        assertEquals(MathFamilyBinding.Fixed, aleph.familyBinding)
+        assertEquals("\\aleph", aleph.sourceText)
+        assertEquals(SourceRange(0, 6), aleph.range)
+        assertEquals(SourceRange(7, 8), assertIs<MathSymbol>(scripts.subscript).range)
+        assertEquals(SourceRange(0, 8), scripts.range)
+
+        val explicit = assertIs<MathSymbol>(MathParser().parse("ℵ").root.children.single())
+        assertEquals(aleph.identity, explicit.identity)
+        assertEquals(MathFamily.Symbols, explicit.family)
+        assertEquals(SourceRange(0, 1), explicit.range)
+
+        val roman = assertIs<MathAlphabetScope>(MathParser().parse("\\mathrm{\\aleph x}").root.children.single())
+        val romanSymbols = assertIs<MathGroup>(roman.body).body.children.filterIsInstance<MathSymbol>()
+        assertEquals(MathFamilyBinding.Fixed, romanSymbols[0].familyBinding)
+        assertEquals(MathFamily.Symbols, romanSymbols[0].family)
+        assertEquals(MathFamilyBinding.Variable, romanSymbols[1].familyBinding)
+    }
+
+    @Test
+    fun standardGreekCommandsUseExplicitPlainTexIdentities() {
+        val lower = listOf(
+            "alpha" to MathNamedSymbol.Alpha,
+            "beta" to MathNamedSymbol.Beta,
+            "gamma" to MathNamedSymbol.Gamma,
+            "delta" to MathNamedSymbol.Delta,
+            "epsilon" to MathNamedSymbol.Epsilon,
+            "varepsilon" to MathNamedSymbol.Varepsilon,
+            "zeta" to MathNamedSymbol.Zeta,
+            "eta" to MathNamedSymbol.Eta,
+            "theta" to MathNamedSymbol.Theta,
+            "vartheta" to MathNamedSymbol.Vartheta,
+            "iota" to MathNamedSymbol.Iota,
+            "kappa" to MathNamedSymbol.Kappa,
+            "lambda" to MathNamedSymbol.Lambda,
+            "mu" to MathNamedSymbol.Mu,
+            "nu" to MathNamedSymbol.Nu,
+            "xi" to MathNamedSymbol.Xi,
+            "omicron" to MathNamedSymbol.Omicron,
+            "pi" to MathNamedSymbol.Pi,
+            "varpi" to MathNamedSymbol.Varpi,
+            "rho" to MathNamedSymbol.Rho,
+            "varrho" to MathNamedSymbol.Varrho,
+            "sigma" to MathNamedSymbol.Sigma,
+            "varsigma" to MathNamedSymbol.Varsigma,
+            "tau" to MathNamedSymbol.Tau,
+            "upsilon" to MathNamedSymbol.Upsilon,
+            "phi" to MathNamedSymbol.Phi,
+            "varphi" to MathNamedSymbol.Varphi,
+            "chi" to MathNamedSymbol.Chi,
+            "psi" to MathNamedSymbol.Psi,
+            "omega" to MathNamedSymbol.Omega,
+        )
+        lower.forEach { (command, identity) ->
+            assertSymbolCommand(command, identity, MathAtomClass.Ordinary, MathFamily.Letters, MathFamilyBinding.Fixed)
+        }
+
+        listOf(
+            "Gamma" to MathNamedSymbol.CapitalGamma,
+            "Delta" to MathNamedSymbol.CapitalDelta,
+            "Theta" to MathNamedSymbol.CapitalTheta,
+            "Lambda" to MathNamedSymbol.CapitalLambda,
+            "Xi" to MathNamedSymbol.CapitalXi,
+            "Pi" to MathNamedSymbol.CapitalPi,
+            "Sigma" to MathNamedSymbol.CapitalSigma,
+            "Upsilon" to MathNamedSymbol.CapitalUpsilon,
+            "Phi" to MathNamedSymbol.CapitalPhi,
+            "Psi" to MathNamedSymbol.CapitalPsi,
+            "Omega" to MathNamedSymbol.CapitalOmega,
+        ).forEach { (command, identity) ->
+            assertSymbolCommand(command, identity, MathAtomClass.Ordinary, MathFamily.Operators, MathFamilyBinding.Variable)
+        }
+    }
+
+    @Test
+    fun commonPlainTexSymbolsKeepAuditableAtomClassesAndFamilies() {
+        listOf(
+            SymbolCommandExpectation("aleph", MathNamedSymbol.Aleph, MathAtomClass.Ordinary, MathFamily.Symbols),
+            SymbolCommandExpectation("forall", MathNamedSymbol.ForAll, MathAtomClass.Ordinary, MathFamily.Symbols),
+            SymbolCommandExpectation("exists", MathNamedSymbol.Exists, MathAtomClass.Ordinary, MathFamily.Symbols),
+            SymbolCommandExpectation("emptyset", MathNamedSymbol.EmptySet, MathAtomClass.Ordinary, MathFamily.Symbols),
+            SymbolCommandExpectation("nabla", MathNamedSymbol.Nabla, MathAtomClass.Ordinary, MathFamily.Symbols),
+            SymbolCommandExpectation("hbar", MathNamedSymbol.HBar, MathAtomClass.Ordinary, MathFamily.Letters),
+            SymbolCommandExpectation("ell", MathNamedSymbol.ScriptSmallL, MathAtomClass.Ordinary, MathFamily.Letters),
+            SymbolCommandExpectation("Re", MathNamedSymbol.RealPart, MathAtomClass.Ordinary, MathFamily.Symbols),
+            SymbolCommandExpectation("cap", MathNamedSymbol.Intersection, MathAtomClass.Binary, MathFamily.Symbols),
+            SymbolCommandExpectation("cup", MathNamedSymbol.Union, MathAtomClass.Binary, MathFamily.Symbols),
+            SymbolCommandExpectation("setminus", MathNamedSymbol.SetMinus, MathAtomClass.Binary, MathFamily.Symbols),
+            SymbolCommandExpectation("wedge", MathNamedSymbol.LogicalAnd, MathAtomClass.Binary, MathFamily.Symbols),
+            SymbolCommandExpectation("oplus", MathNamedSymbol.CircledPlus, MathAtomClass.Binary, MathFamily.Symbols),
+            SymbolCommandExpectation("notin", MathNamedSymbol.NotElementOf, MathAtomClass.Relation, MathFamily.Symbols),
+            SymbolCommandExpectation("subseteq", MathNamedSymbol.SubsetOrEqual, MathAtomClass.Relation, MathFamily.Symbols),
+            SymbolCommandExpectation("equiv", MathNamedSymbol.Equivalent, MathAtomClass.Relation, MathFamily.Symbols),
+            SymbolCommandExpectation("perp", MathNamedSymbol.Perpendicular, MathAtomClass.Relation, MathFamily.Symbols),
+            SymbolCommandExpectation("parallel", MathNamedSymbol.Parallel, MathAtomClass.Relation, MathFamily.Symbols),
+            SymbolCommandExpectation("vdash", MathNamedSymbol.RightTack, MathAtomClass.Relation, MathFamily.Symbols),
+            SymbolCommandExpectation("models", MathNamedSymbol.Models, MathAtomClass.Relation, MathFamily.Symbols),
+            SymbolCommandExpectation("leftarrow", MathNamedSymbol.LeftArrow, MathAtomClass.Relation, MathFamily.Symbols),
+            SymbolCommandExpectation("Leftrightarrow", MathNamedSymbol.DoubleLeftRightArrow, MathAtomClass.Relation, MathFamily.Symbols),
+            SymbolCommandExpectation("mapsto", MathNamedSymbol.MapsTo, MathAtomClass.Relation, MathFamily.Symbols),
+        ).forEach { expected ->
+            assertSymbolCommand(
+                expected.command,
+                expected.identity,
+                expected.atomClass,
+                expected.family,
+                MathFamilyBinding.Fixed,
+            )
+        }
+
+        listOf("lnot", "land", "lor", "owns", "gets", "rightarrow").forEach { alias ->
+            val result = MathParser().parse("\\$alias")
+            assertTrue(result.diagnostics.isEmpty(), "$alias: ${result.diagnostics}")
+            assertIs<MathSymbol>(result.root.children.single())
+        }
+
+        val unsupported = MathParser().parse("\\Bbbk+\\beth")
+        assertEquals(2, unsupported.diagnostics.count { it.code == DiagnosticCode.UnknownCommand })
+    }
+
+    private fun assertSymbolCommand(
+        command: String,
+        identity: MathNamedSymbol,
+        atomClass: MathAtomClass,
+        family: MathFamily,
+        binding: MathFamilyBinding,
+    ) {
+        val source = "\\$command"
+        val result = MathParser().parse(source)
+        assertTrue(result.diagnostics.isEmpty(), "$command: ${result.diagnostics}")
+        val symbol = assertIs<MathSymbol>(result.root.children.single())
+        assertEquals(identity, assertIs<MathSymbolIdentity.Named>(symbol.identity).symbol, command)
+        assertEquals(atomClass, symbol.atomClass, command)
+        assertEquals(family, symbol.family, command)
+        assertEquals(binding, symbol.familyBinding, command)
+        assertEquals(source, symbol.sourceText, command)
+        assertEquals(SourceRange(0, source.length), symbol.range, command)
+    }
 }
+
+private data class SymbolCommandExpectation(
+    val command: String,
+    val identity: MathNamedSymbol,
+    val atomClass: MathAtomClass,
+    val family: MathFamily,
+)

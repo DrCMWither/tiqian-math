@@ -39,6 +39,10 @@ class AndroidMathBackendInstrumentedTest {
                 assertEquals(oracle.xPlusTwoGlyphs, result.box.glyphs.map { it.glyphId }, oracle.label)
                 assertTrue(result.box.width > 0f && result.box.ascent > 0f, oracle.label)
 
+                val aleph = requireReady(face, "\\aleph_0", MathLayoutOptions(fontSizePx = 40f))
+                assertEquals(oracle.alephGlyph, aleph.box.glyphs.first().glyphId, "${oracle.label}/aleph")
+                assertEquals(SourceRange(0, 6), aleph.box.glyphs.first().sourceRange, "${oracle.label}/aleph range")
+
                 result.box.glyphs.forEach { placement ->
                     val measured = face.measureGlyph(
                         placement.glyphId,
@@ -217,6 +221,7 @@ private data class AcceptanceFace(
     val label: String,
     val face: AndroidMathFontFace,
     val xPlusTwoGlyphs: List<UShort>,
+    val alephGlyph: UShort,
 )
 
 private inline fun withAcceptanceFaces(block: (AcceptanceFace) -> Unit) {
@@ -226,6 +231,7 @@ private inline fun withAcceptanceFaces(block: (AcceptanceFace) -> Unit) {
             "Lete Sans Math",
             AndroidMathFontFace.loadLete(instrumentation.targetContext),
             listOf(3650u, 12u, 19u),
+            403u,
         ),
     )
     block(
@@ -236,6 +242,7 @@ private inline fun withAcceptanceFaces(block: (AcceptanceFace) -> Unit) {
                 "org/tiqian/math/fonts/STIXTwoMath-Regular.otf",
             ),
             listOf(3354u, 1196u, 1139u),
+            1252u,
         ),
     )
 }
