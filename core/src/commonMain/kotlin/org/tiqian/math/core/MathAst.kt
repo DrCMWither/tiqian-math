@@ -51,6 +51,10 @@ enum class MathAlphabet {
     Bold,
     BoldItalic,
     SansSerif,
+    Script,
+    Fraktur,
+    DoubleStruck,
+    Monospace,
 }
 
 enum class MathNamedSymbol(val debugName: String, val baseScalar: Int) {
@@ -258,6 +262,22 @@ data class MathOperator(
 ) : MathNode {
     val atomClass: MathAtomClass get() = MathAtomClass.Operator
     val family: MathFamily get() = MathFamily.LargeSymbols
+    val hasExplicitLimitsPolicy: Boolean get() = limitsModifierRange != null
+}
+
+/**
+ * A log-like function name (`\sin`, `\log`, `\lim`, …). It is an Operator-class atom rendered as
+ * upright roman text; [limitsPolicy] decides whether attached scripts stack over/under in display
+ * style (`\lim`) or stay to the side (`\sin`). In text style every function keeps side scripts.
+ */
+data class MathOperatorName(
+    val name: String,
+    val limitsPolicy: MathLimitsPolicy,
+    val commandRange: SourceRange,
+    val limitsModifierRange: SourceRange? = null,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = MathAtomClass.Operator
     val hasExplicitLimitsPolicy: Boolean get() = limitsModifierRange != null
 }
 

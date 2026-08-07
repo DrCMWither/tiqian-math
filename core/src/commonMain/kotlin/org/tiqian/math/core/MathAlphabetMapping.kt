@@ -44,7 +44,46 @@ fun encodeMathAlphabetScalar(baseScalar: Int, alphabet: MathAlphabet): Int? = wh
     MathAlphabet.SansSerif ->
         encodeLatin(baseScalar, 0x1D5A0, 0x1D5BA)
             ?: encodeDigit(baseScalar, 0x1D7E2)
+    // The Script/Fraktur/Double-struck blocks have "holes": some letters were unified into the
+    // earlier Letterlike Symbols block (ℛ, ℭ, ℝ, …), so their Plane-1 slots are unassigned. The
+    // hole tables redirect those letters to the assigned code points.
+    MathAlphabet.Script ->
+        encodeLatinWithHoles(baseScalar, 0x1D49C, 0x1D4B6, scriptHoles)
+    MathAlphabet.Fraktur ->
+        encodeLatinWithHoles(baseScalar, 0x1D504, 0x1D51E, frakturHoles)
+    MathAlphabet.DoubleStruck ->
+        encodeLatinWithHoles(baseScalar, 0x1D538, 0x1D552, doubleStruckHoles)
+            ?: encodeDigit(baseScalar, 0x1D7D8)
+    MathAlphabet.Monospace ->
+        encodeLatin(baseScalar, 0x1D670, 0x1D68A)
+            ?: encodeDigit(baseScalar, 0x1D7F6)
 }
+
+private fun encodeLatinWithHoles(
+    scalar: Int,
+    uppercaseStart: Int,
+    lowercaseStart: Int,
+    holes: Map<Int, Int>,
+): Int? = when (scalar) {
+    in 'A'.code..'Z'.code -> holes[scalar] ?: (uppercaseStart + scalar - 'A'.code)
+    in 'a'.code..'z'.code -> holes[scalar] ?: (lowercaseStart + scalar - 'a'.code)
+    else -> null
+}
+
+private val scriptHoles = mapOf(
+    'B'.code to 0x212C, 'E'.code to 0x2130, 'F'.code to 0x2131, 'H'.code to 0x210B,
+    'I'.code to 0x2110, 'L'.code to 0x2112, 'M'.code to 0x2133, 'R'.code to 0x211B,
+    'e'.code to 0x212F, 'g'.code to 0x210A, 'o'.code to 0x2134,
+)
+
+private val frakturHoles = mapOf(
+    'C'.code to 0x212D, 'H'.code to 0x210C, 'I'.code to 0x2111, 'R'.code to 0x211C, 'Z'.code to 0x2128,
+)
+
+private val doubleStruckHoles = mapOf(
+    'C'.code to 0x2102, 'H'.code to 0x210D, 'N'.code to 0x2115, 'P'.code to 0x2119,
+    'Q'.code to 0x211A, 'R'.code to 0x211D, 'Z'.code to 0x2124,
+)
 
 private fun decodeLatin(
     scalar: Int,

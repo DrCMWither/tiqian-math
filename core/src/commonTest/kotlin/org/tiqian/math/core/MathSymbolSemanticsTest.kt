@@ -79,4 +79,24 @@ class MathSymbolSemanticsTest {
             )
         }
     }
+
+    @Test
+    fun extendedAlphabetsEncodeContiguousLettersAndLetterlikeHoles() {
+        // Contiguous Plane-1 letters.
+        assertEquals(0x1D538, encodeMathAlphabetScalar('A'.code, MathAlphabet.DoubleStruck))
+        assertEquals(0x1D504, encodeMathAlphabetScalar('A'.code, MathAlphabet.Fraktur))
+        assertEquals(0x1D49C, encodeMathAlphabetScalar('A'.code, MathAlphabet.Script))
+        assertEquals(0x1D670, encodeMathAlphabetScalar('A'.code, MathAlphabet.Monospace))
+        // Letterlike-block holes must redirect, not land on unassigned Plane-1 slots.
+        assertEquals(0x211D, encodeMathAlphabetScalar('R'.code, MathAlphabet.DoubleStruck)) // ℝ
+        assertEquals(0x2102, encodeMathAlphabetScalar('C'.code, MathAlphabet.DoubleStruck)) // ℂ
+        assertEquals(0x212D, encodeMathAlphabetScalar('C'.code, MathAlphabet.Fraktur)) // ℭ
+        assertEquals(0x211C, encodeMathAlphabetScalar('R'.code, MathAlphabet.Fraktur)) // ℜ
+        assertEquals(0x211B, encodeMathAlphabetScalar('R'.code, MathAlphabet.Script)) // ℛ
+        assertEquals(0x212F, encodeMathAlphabetScalar('e'.code, MathAlphabet.Script)) // ℯ
+        // Digits: double-struck and monospace carry their own digit runs; script/fraktur do not.
+        assertEquals(0x1D7D8, encodeMathAlphabetScalar('0'.code, MathAlphabet.DoubleStruck))
+        assertEquals(0x1D7F6, encodeMathAlphabetScalar('0'.code, MathAlphabet.Monospace))
+        assertEquals(null, encodeMathAlphabetScalar('0'.code, MathAlphabet.Script))
+    }
 }

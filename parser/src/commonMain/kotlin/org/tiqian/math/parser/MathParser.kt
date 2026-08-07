@@ -232,13 +232,21 @@ private class ParserState(
         styleCommands[token.text]?.let { level ->
             return MathStyleDeclaration(level, token.range)
         }
-        if (token.text == "mathrm") {
-            val argument = parseRequiredArgument(token, "roman math scope")
+        alphabetCommands[token.text]?.let { (family, alphabet) ->
+            val argument = parseRequiredArgument(token, "math alphabet scope")
             return MathAlphabetScope(
-                MathFamily.Operators,
-                MathAlphabet.Roman,
+                family,
+                alphabet,
                 argument,
                 token.range.cover(argument.range),
+            )
+        }
+        functionNames[token.text]?.let { policy ->
+            return MathOperatorName(
+                name = token.text,
+                limitsPolicy = policy,
+                commandRange = token.range,
+                range = token.range,
             )
         }
         if (token.text == "frac" || token.text == "binom") {
@@ -529,11 +537,43 @@ private class ParserState(
             "scriptscriptstyle" to MathStyleLevel.ScriptScript,
         )
 
+        // LaTeX math-alphabet commands. Family only matters for MathNormal (Letters italicises,
+        // Operators stays upright); an explicit alphabet drives the glyph directly.
+        val alphabetCommands = mapOf(
+            "mathrm" to (MathFamily.Operators to MathAlphabet.Roman),
+            "mathnormal" to (MathFamily.Letters to MathAlphabet.MathNormal),
+            "mathbf" to (MathFamily.Operators to MathAlphabet.Bold),
+            "mathit" to (MathFamily.Letters to MathAlphabet.Italic),
+            "mathsf" to (MathFamily.Operators to MathAlphabet.SansSerif),
+            "mathbb" to (MathFamily.Operators to MathAlphabet.DoubleStruck),
+            "mathfrak" to (MathFamily.Operators to MathAlphabet.Fraktur),
+            "mathcal" to (MathFamily.Operators to MathAlphabet.Script),
+            "mathscr" to (MathFamily.Operators to MathAlphabet.Script),
+            "mathtt" to (MathFamily.Operators to MathAlphabet.Monospace),
+            "boldsymbol" to (MathFamily.Letters to MathAlphabet.BoldItalic),
+        )
+
+        // Log-like function names (TeX \mathop). The "limits" group stacks scripts over/under in
+        // display style; the rest keep side scripts. Amsmath's canonical limit operators are
+        // det gcd inf injlim lim liminf limsup max min Pr projlim sup.
+        val functionNames: Map<String, MathLimitsPolicy> = buildMap {
+            listOf(
+                "sin", "cos", "tan", "cot", "sec", "csc",
+                "sinh", "cosh", "tanh", "coth",
+                "arcsin", "arccos", "arctan",
+                "exp", "log", "ln", "lg",
+                "arg", "deg", "dim", "hom", "ker",
+            ).forEach { put(it, MathLimitsPolicy.NoLimits) }
+            listOf(
+                "lim", "limsup", "liminf", "max", "min", "sup", "inf",
+                "det", "gcd", "Pr", "injlim", "projlim",
+            ).forEach { put(it, MathLimitsPolicy.Auto) }
+        }
+
         val explicitlyUnsupportedCommands = setOf(
             "overline", "underline",
             "hat", "bar", "vec", "begin", "end", "text", "operatorname", "limits", "nolimits",
-            "matrix", "cases", "newcommand", "def", "color", "mathnormal", "mathit", "mathbf",
-            "boldsymbol", "mathsf",
+            "matrix", "cases", "newcommand", "def", "color",
         )
 
         val limitsModifiers = setOf("limits", "nolimits")

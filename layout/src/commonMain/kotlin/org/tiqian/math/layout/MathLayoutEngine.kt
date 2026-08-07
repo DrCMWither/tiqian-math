@@ -195,6 +195,7 @@ private class MathLayoutPass(
         is MathGroup -> layoutGroup(node, style, alphabetOverride)
         is MathSymbol -> layoutSymbol(node, style, alphabetOverride)
         is MathOperator -> layoutOperator(node, style)
+        is MathOperatorName -> layoutOperatorName(node, style)
         is MathScripts -> if (node.base is MathOperator) {
             layoutOperatorScripts(node, node.base as MathOperator, style, alphabetOverride)
         } else {
@@ -853,6 +854,38 @@ private class MathLayoutPass(
         style = style,
         sourceRange = node.range,
     )
+
+    private fun layoutOperatorName(node: MathOperatorName, style: MathStyle): LaidNode {
+        // Render the name as upright roman letters, then present the whole run as one Operator-class
+        // atom so inter-atom spacing (`2\sin x`, `\sin x`) is correct. Every letter maps back to the
+        // command's source range, so selection and source-partitioning treat the name as one unit.
+        val letters = node.name.map { ch ->
+            MathSymbol(
+                sourceText = ch.toString(),
+                identity = MathSymbolIdentity.LatinLetter(ch),
+                atomClass = MathAtomClass.Ordinary,
+                family = MathFamily.Operators,
+                familyBinding = MathFamilyBinding.Fixed,
+                alphabet = MathAlphabet.Roman,
+                range = node.range,
+            )
+        }
+        val horizontal = layoutList(MathList(letters, node.range), style)
+        decision(
+            "TeXMathOperatorName",
+            node.range,
+            "name" to node.name,
+            "limitsPolicy" to node.limitsPolicy,
+            "atomClass" to MathAtomClass.Operator,
+        )
+        return horizontal.laid.copy(
+            node = node,
+            box = horizontal.laid.box.copy(range = node.range),
+            atomClass = MathAtomClass.Operator,
+            italicCorrectionPx = 0f,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
 
     private fun layoutOperator(node: MathOperator, style: MathStyle): LaidNode {
         val size = fontSize(style)

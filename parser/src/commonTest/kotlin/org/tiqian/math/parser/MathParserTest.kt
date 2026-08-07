@@ -255,10 +255,48 @@ class MathParserTest {
     }
 
     @Test
-    fun futureMathAlphabetCommandsAreExplicitlyUnsupported() {
-        listOf("mathnormal", "mathit", "mathbf", "boldsymbol", "mathsf").forEach { command ->
+    fun logLikeFunctionNamesParseAsOperatorNoadsWithLimitsPolicy() {
+        val sin = assertIs<MathOperatorName>(MathParser().parse("\\sin").root.children.single())
+        assertEquals("sin", sin.name)
+        assertEquals(MathLimitsPolicy.NoLimits, sin.limitsPolicy)
+        assertEquals(MathAtomClass.Operator, sin.atomClass)
+
+        val lim = assertIs<MathOperatorName>(MathParser().parse("\\lim").root.children.single())
+        assertEquals(MathLimitsPolicy.Auto, lim.limitsPolicy)
+
+        // \sin x parses the function then a separate variable, no diagnostics.
+        val applied = MathParser().parse("\\sin x")
+        assertTrue(applied.diagnostics.isEmpty(), applied.diagnostics.toString())
+        assertIs<MathOperatorName>(applied.root.children.first())
+        assertIs<MathSymbol>(applied.root.children.last())
+
+        // Scripts attach to the function as their base: \lim_{n} is one scripted operator.
+        val scripted = MathParser().parse("\\lim_{n}")
+        val scripts = assertIs<MathScripts>(scripted.root.children.single())
+        assertIs<MathOperatorName>(scripts.base)
+    }
+
+    @Test
+    fun mathAlphabetCommandsSelectTheirAlphabetWithoutDiagnostics() {
+        val cases = mapOf(
+            "mathrm" to (MathFamily.Operators to MathAlphabet.Roman),
+            "mathnormal" to (MathFamily.Letters to MathAlphabet.MathNormal),
+            "mathbf" to (MathFamily.Operators to MathAlphabet.Bold),
+            "mathit" to (MathFamily.Letters to MathAlphabet.Italic),
+            "mathsf" to (MathFamily.Operators to MathAlphabet.SansSerif),
+            "mathbb" to (MathFamily.Operators to MathAlphabet.DoubleStruck),
+            "mathfrak" to (MathFamily.Operators to MathAlphabet.Fraktur),
+            "mathcal" to (MathFamily.Operators to MathAlphabet.Script),
+            "mathscr" to (MathFamily.Operators to MathAlphabet.Script),
+            "mathtt" to (MathFamily.Operators to MathAlphabet.Monospace),
+            "boldsymbol" to (MathFamily.Letters to MathAlphabet.BoldItalic),
+        )
+        cases.forEach { (command, expected) ->
             val result = MathParser().parse("\\$command{x}")
-            assertTrue(result.diagnostics.any { it.code == DiagnosticCode.UnsupportedCommand }, command)
+            assertTrue(result.diagnostics.isEmpty(), "$command: ${result.diagnostics}")
+            val scope = assertIs<MathAlphabetScope>(result.root.children.single(), command)
+            assertEquals(expected.first, scope.family, command)
+            assertEquals(expected.second, scope.alphabet, command)
         }
     }
 
