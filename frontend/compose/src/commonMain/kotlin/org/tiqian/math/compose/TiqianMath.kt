@@ -35,6 +35,102 @@ import kotlin.math.ceil
 @Composable
 fun rememberLeteMathFontFace(): MathComposeFontFace = rememberPlatformLeteMathFontFace()
 
+/** Loads one host-provided OpenType MATH font and keeps measurement and drawing on the same face. */
+@Composable
+fun rememberMathFontFace(fontBytes: ByteArray): MathComposeFontFace =
+    rememberPlatformMathFontFace(fontBytes)
+
+/** Stable measured presentation shared by an embedding paragraph and the math canvas. */
+class TiqianMathFormula internal constructor(
+    internal val resolved: ResolvedFormulaCapability,
+) {
+    val layoutResult: MathLayoutResult?
+        get() = (resolved.capability as? MathFormulaCapabilityResult.Ready)?.layoutResult
+
+    val failure: MathFormulaCapabilityResult.FallbackRequired?
+        get() = resolved.capability as? MathFormulaCapabilityResult.FallbackRequired
+
+    /**
+     * Exact canvas geometry for the whole formula or one engine-owned inline fragment, embedded in
+     * a host paragraph. The host owns line height, so this reports the formula's true ink extent
+     * plus a small breathing [InlineInkLeadingEm] leading — NOT the math font's full line box.
+     * Reporting the font box here propped up every host line that carried a formula even when its
+     * ink (e.g. a plain polynomial) fit the body line; see the standalone [ReadyTiqianMath] path,
+     * which still fills its own requested line height.
+     */
+    fun presentationMetrics(fragmentIndex: Int? = null): TiqianMathPresentationMetrics? {
+        val result = layoutResult ?: return null
+        val leadingPx = InlineInkLeadingEm * resolved.resolvedFontSizePx
+        val plan = if (fragmentIndex == null) {
+            RenderPlan.unbrokenInkTight(result, leadingPx)
+        } else {
+            RenderPlan.fragmentInkTight(result, fragmentIndex, leadingPx)
+        }
+        return TiqianMathPresentationMetrics(plan.width, plan.height, plan.firstBaseline)
+    }
+}
+
+data class TiqianMathPresentationMetrics(
+    val widthPx: Float,
+    val heightPx: Float,
+    val baselineFromTopPx: Float,
+)
+
+/**
+ * Measures and preflights a formula once for hosts that need its fragments in their own paragraph
+ * layout. Passing the returned object to [TiqianMathFormulaCanvas] replays that exact result.
+ */
+@Composable
+fun rememberTiqianMathFormula(
+    source: String,
+    mode: MathMode = MathMode.Inline,
+    style: TextStyle = LocalTextStyle.current,
+    fontSizePx: Float? = null,
+    nullDelimiterSpacePx: Float? = null,
+    scriptSpacePx: Float? = null,
+    delimiterFactor: Int = 901,
+    delimiterShortfallPx: Float? = null,
+    color: Color = Color.Unspecified,
+    fontFace: MathComposeFontFace? = null,
+): TiqianMathFormula = TiqianMathFormula(
+    rememberResolvedFormulaCapability(
+        source = source,
+        mode = mode,
+        style = style,
+        fontSizePx = fontSizePx,
+        nullDelimiterSpacePx = nullDelimiterSpacePx,
+        scriptSpacePx = scriptSpacePx,
+        delimiterFactor = delimiterFactor,
+        delimiterShortfallPx = delimiterShortfallPx,
+        color = color,
+        fontFace = fontFace,
+    ),
+)
+
+/** Replays the whole formula or one premeasured fragment without reparsing or reclassification. */
+@Composable
+fun TiqianMathFormulaCanvas(
+    formula: TiqianMathFormula,
+    modifier: Modifier = Modifier,
+    fragmentIndex: Int? = null,
+) {
+    val result = formula.layoutResult ?: return
+    // Draw with the same ink-tight geometry presentationMetrics measured, so host embedding keeps
+    // measure and paint identical.
+    val leadingPx = InlineInkLeadingEm * formula.resolved.resolvedFontSizePx
+    val plan = if (fragmentIndex == null) {
+        RenderPlan.unbrokenInkTight(result, leadingPx)
+    } else {
+        RenderPlan.fragmentInkTight(result, fragmentIndex, leadingPx)
+    }
+    FixedTiqianMathPlan(
+        plan = plan,
+        modifier = modifier,
+        color = formula.resolved.color,
+        face = formula.resolved.face,
+    )
+}
+
 /**
  * Normal production entry point. Accepted formulas use Tiqian's platform renderer; unsupported or
  * malformed input uses Tiqian's visible diagnostic presentation instead of requiring a second
@@ -227,12 +323,20 @@ private fun TiqianMathError(
     )
 }
 
-private data class ResolvedFormulaCapability(
+internal data class ResolvedFormulaCapability(
     val face: MathComposeFontFace,
     val capability: MathFormulaCapabilityResult,
     val requestedLineHeightPx: Float?,
+    val resolvedFontSizePx: Float,
     val color: Color,
 )
+
+/**
+ * Breathing leading (per edge, in em) added to a formula's ink extent when it is embedded inline in
+ * a host paragraph, so a superscript's ink top does not touch the line above without paying for the
+ * math font's full line box on every formula-bearing line.
+ */
+private const val InlineInkLeadingEm = 0.05f
 
 @Composable
 private fun rememberResolvedFormulaCapability(
@@ -294,6 +398,7 @@ private fun rememberResolvedFormulaCapability(
         resolvedFace,
         capability,
         requestedLineHeightPx,
+        resolvedFontSizePx,
         resolvedColor,
     )
 }
@@ -342,6 +447,34 @@ private fun ReadyTiqianMath(
     }
 }
 
+@Composable
+private fun FixedTiqianMathPlan(
+    plan: RenderPlan,
+    modifier: Modifier,
+    color: Color,
+    face: MathComposeFontFace,
+) {
+    Layout(
+        modifier = modifier,
+        content = {
+            Canvas(Modifier.fillMaxSize()) {
+                drawPlatformMathPlan(face, plan, color)
+            }
+        },
+    ) { measurables, constraints ->
+        val width = ceil(plan.width).toInt().coerceIn(constraints.minWidth, constraints.maxWidth)
+        val height = ceil(plan.height).toInt().coerceIn(constraints.minHeight, constraints.maxHeight)
+        val child = measurables.single().measure(Constraints.fixed(width, height))
+        layout(
+            width,
+            height,
+            alignmentLines = mapOf(FirstBaseline to plan.firstBaseline.toInt()),
+        ) {
+            child.place(0, 0)
+        }
+    }
+}
+
 internal data class PositionedBox(
     val box: MathBox,
     val x: Float,
@@ -370,6 +503,54 @@ internal data class RenderPlan(
                 width = result.box.visualWidth,
                 height = metrics.logicalHeightPx + extraLeading,
                 firstBaseline = metrics.logicalAscentPx + topLeading,
+            )
+        }
+
+        fun fragment(
+            result: MathLayoutResult,
+            fragmentIndex: Int,
+            minimumLineHeightPx: Float? = null,
+        ): RenderPlan {
+            val fragment = result.fragments[fragmentIndex]
+            val metrics = result.lineMetrics.forInk(fragment.box.ascent, fragment.box.descent)
+            val extraLeading = ((minimumLineHeightPx ?: 0f) - metrics.logicalHeightPx).coerceAtLeast(0f)
+            val topLeading = extraLeading / 2f
+            return RenderPlan(
+                boxes = listOf(
+                    PositionedBox(
+                        fragment.box,
+                        -fragment.box.visualLeft,
+                        metrics.logicalAscentPx + topLeading,
+                    ),
+                ),
+                width = fragment.box.visualWidth + fragment.trailingAdvancePx,
+                height = metrics.logicalHeightPx + extraLeading,
+                firstBaseline = metrics.logicalAscentPx + topLeading,
+            )
+        }
+
+        /**
+         * Host-embedding geometry for the whole formula: vertical extent is the box's true ink plus
+         * [leadingPx] on each edge, so the host line grows only for real ink (tall superscripts,
+         * fractions, big operators), never for the math font's declared line box.
+         */
+        fun unbrokenInkTight(result: MathLayoutResult, leadingPx: Float): RenderPlan =
+            inkTight(result.box, result.box.visualWidth, leadingPx)
+
+        /** Host-embedding geometry for one inline fragment; see [unbrokenInkTight]. */
+        fun fragmentInkTight(result: MathLayoutResult, fragmentIndex: Int, leadingPx: Float): RenderPlan {
+            val fragment = result.fragments[fragmentIndex]
+            return inkTight(fragment.box, fragment.box.visualWidth + fragment.trailingAdvancePx, leadingPx)
+        }
+
+        private fun inkTight(box: MathBox, width: Float, leadingPx: Float): RenderPlan {
+            val ascent = (-box.inkBounds.top).coerceAtLeast(0f) + leadingPx
+            val descent = box.inkBounds.bottom.coerceAtLeast(0f) + leadingPx
+            return RenderPlan(
+                boxes = listOf(PositionedBox(box, -box.visualLeft, ascent)),
+                width = width,
+                height = ascent + descent,
+                firstBaseline = ascent,
             )
         }
 

@@ -14,6 +14,7 @@ import org.jetbrains.skia.Point
 import org.jetbrains.skia.Rect
 import org.jetbrains.skia.TextBlobBuilder
 import org.tiqian.math.font.opentype.LeteSansMath
+import org.tiqian.math.font.opentype.OpenTypeMathReader
 import org.tiqian.math.font.skia.MathConstructionOutlineResult
 import org.tiqian.math.font.skia.MathConstructionOutlineUnavailableException
 import org.tiqian.math.font.skia.SkiaMathFontFace
@@ -24,6 +25,15 @@ import org.tiqian.math.layout.MathFormulaCapabilityEngine
 @Composable
 internal actual fun rememberPlatformLeteMathFontFace(): MathComposeFontFace {
     val face = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    DisposableEffect(face) { onDispose(face::close) }
+    return face
+}
+
+@Composable
+internal actual fun rememberPlatformMathFontFace(fontBytes: ByteArray): MathComposeFontFace {
+    val face = remember(fontBytes) {
+        SkiaMathFontFace(OpenTypeMathReader().read(fontBytes.copyOf()))
+    }
     DisposableEffect(face) { onDispose(face::close) }
     return face
 }

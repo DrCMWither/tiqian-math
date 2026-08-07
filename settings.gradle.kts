@@ -47,6 +47,8 @@ include(
     ":font:skia",
     ":layout",
     ":scanner",
-    ":frontend:compose",
+    ":frontend:math-compose",
     ":preview",
 )
+
+project(":frontend:math-compose").projectDir = file("frontend/compose")

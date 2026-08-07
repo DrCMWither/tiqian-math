@@ -9,7 +9,7 @@ kotlin {
 
     sourceSets {
         jvmMain.dependencies {
-            implementation(project(":frontend:compose"))
+            implementation(project(":frontend:math-compose"))
             implementation(project(":font:stix"))
             implementation(compose.runtime)
             implementation(compose.foundation)

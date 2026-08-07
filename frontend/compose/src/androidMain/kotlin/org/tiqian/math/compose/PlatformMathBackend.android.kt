@@ -23,6 +23,13 @@ internal actual fun rememberPlatformLeteMathFontFace(): MathComposeFontFace {
     return face
 }
 
+@Composable
+internal actual fun rememberPlatformMathFontFace(fontBytes: ByteArray): MathComposeFontFace {
+    val face = remember(fontBytes) { AndroidMathFontFace.fromBytes(fontBytes) }
+    DisposableEffect(face) { onDispose(face::close) }
+    return face
+}
+
 internal actual fun platformFormulaCapabilityEngine(
     face: MathComposeFontFace,
 ): MathFormulaCapabilityEngine = (face as? AndroidMathFontFace)?.formulaCapabilityEngine()

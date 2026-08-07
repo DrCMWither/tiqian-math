@@ -9,6 +9,9 @@ import org.tiqian.math.layout.MathFormulaCapabilityEngine
 @Composable
 internal expect fun rememberPlatformLeteMathFontFace(): MathComposeFontFace
 
+@Composable
+internal expect fun rememberPlatformMathFontFace(fontBytes: ByteArray): MathComposeFontFace
+
 internal expect fun platformFormulaCapabilityEngine(
     face: MathComposeFontFace,
 ): MathFormulaCapabilityEngine
