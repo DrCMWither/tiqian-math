@@ -370,9 +370,11 @@ class MathGeometryAuditTest {
         val relation = result.fragments.first { it.sourceRange == SourceRange(3, 4) }.trailingGlue
         val binary = result.fragments.first { it.sourceRange == SourceRange(5, 6) }.trailingGlue
         assertEquals(MathAdjustmentPriority.Punctuation, comma.priority)
-        assertTrue(comma.stretchPx > 0f && comma.shrinkPx == 0f, "$label comma-after stretch")
+        // Relation and punctuation spaces compress as well as stretch so an inline formula can be
+        // justified inside a CJK line (deliberate deviation from shrink-free TeX thin/thick muskip).
+        assertTrue(comma.stretchPx > 0f && comma.shrinkPx > 0f, "$label comma-after stretch and shrink")
         assertEquals(MathAdjustmentPriority.Relation, relation.priority)
-        assertTrue(relation.maximumPx > relation.naturalPx, "$label relation stretch")
+        assertTrue(relation.maximumPx > relation.naturalPx && relation.minimumPx < relation.naturalPx, "$label relation stretch and shrink")
         assertEquals(MathAdjustmentPriority.BinaryOperator, binary.priority)
         assertTrue(binary.minimumPx < binary.naturalPx && binary.maximumPx > binary.naturalPx)
 

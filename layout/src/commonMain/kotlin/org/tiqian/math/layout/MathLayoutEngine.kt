@@ -2866,15 +2866,19 @@ private class MathLayoutPass(
         val kind = TeXMathSpacing.kind(left, right, tight)
         val priority = adjustmentPriority(left, right)
         val mu = fontSize(rightStyle) / 18f
+        // TeX's thinmuskip/thickmuskip are shrink-free, but an inline formula justified inside a CJK
+        // line lets its relation and punctuation spaces fully compress (shrink to zero, like binary's
+        // medmuskip) as well as stretch, so a break-trailing space is equally shrinkable and
+        // discardable. Deliberate deviation from TeX; see MathGeometryAuditTest.
         val glue = when (kind) {
             MathGlueKind.None -> MathGlueAdjustment.Zero
             MathGlueKind.Thin -> if (priority == MathAdjustmentPriority.Punctuation) {
-                glue(kind, 3f * mu, 3f * mu, 6f * mu, priority)
+                glue(kind, 3f * mu, 0f, 6f * mu, priority)
             } else {
                 glue(kind, 3f * mu, 3f * mu, 3f * mu, priority)
             }
             MathGlueKind.Medium -> glue(kind, 4f * mu, 0f, 6f * mu, priority)
-            MathGlueKind.Thick -> glue(kind, 5f * mu, 5f * mu, 10f * mu, priority)
+            MathGlueKind.Thick -> glue(kind, 5f * mu, 0f, 10f * mu, priority)
         }
         decision(
             "TeXMathAtomSpacing",
