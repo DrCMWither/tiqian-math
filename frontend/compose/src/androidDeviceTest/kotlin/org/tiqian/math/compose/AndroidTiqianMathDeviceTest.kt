@@ -1,5 +1,6 @@
 package org.tiqian.math.compose
 
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
@@ -79,14 +80,20 @@ class AndroidTiqianMathDeviceTest {
             assertTrue(firstBaseline in 1 until measuredHeight, "baseline=$firstBaseline height=$measuredHeight")
             assertTrue(measuredHeight > layout.lineMetrics.logicalHeightPx, "soft wrapping creates multiple lines")
 
-            val image = compose.onNodeWithTag(FormulaTag).assertIsDisplayed().captureToImage().toPixelMap()
-            val darkPixels = (0 until image.height).sumOf { y ->
-                (0 until image.width).count { x ->
-                    val pixel = image[x, y]
-                    pixel.red < 0.4f && pixel.green < 0.4f && pixel.blue < 0.4f
+            compose.onNodeWithTag(FormulaTag).assertIsDisplayed()
+            // captureToImage() uses PixelCopy on API 26+; on older APIs WindowCapture's fallback
+            // path is missing at runtime (NoClassDefFoundError). The layout assertions above already
+            // cover the API 23 native replay, so only verify pixels where capture is supported.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val image = compose.onNodeWithTag(FormulaTag).captureToImage().toPixelMap()
+                val darkPixels = (0 until image.height).sumOf { y ->
+                    (0 until image.width).count { x ->
+                        val pixel = image[x, y]
+                        pixel.red < 0.4f && pixel.green < 0.4f && pixel.blue < 0.4f
+                    }
                 }
+                assertTrue(darkPixels > 200, "native Android Path replay produced $darkPixels dark pixels")
             }
-            assertTrue(darkPixels > 200, "native Android Path replay produced $darkPixels dark pixels")
         }
     }
 
