@@ -44,5 +44,5 @@ jobs:
           script: >-
             ./gradlew
             :font:android:connectedDebugAndroidTest
-            :frontend:compose:connectedAndroidDeviceTest
+            :frontend:math-compose:connectedAndroidDeviceTest
             --no-daemon
