@@ -202,6 +202,8 @@ data class MathBreakOpportunity(
 data class MathInlineFragment(
     val index: Int,
     val sourceRange: SourceRange,
+    /** TeX atom class of this fragment, so a consumer can bind delimiters/punctuation into groups. */
+    val atomClass: MathAtomClass,
     /** Visible geometry only: no leading or trailing mathematical glue. */
     val box: MathBox,
     /** Fixed italic correction owned by this character noad or compatible Ord run. */

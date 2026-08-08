@@ -134,6 +134,7 @@ private class MathLayoutPass(
             MathInlineFragment(
                 index = itemIndex,
                 sourceRange = item.node.range,
+                atomClass = item.atomClass,
                 box = item.laid.box,
                 trailingItalicCorrectionPx = item.trailingItalicCorrectionPx,
                 trailingGlue = trailingGlue,

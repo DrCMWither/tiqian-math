@@ -68,6 +68,14 @@ class TiqianMathFormula internal constructor(
         }
         return TiqianMathPresentationMetrics(plan.width, plan.height, plan.firstBaseline)
     }
+
+    /** Presentation metrics for a contiguous fragment group drawn as one inline unit. */
+    fun presentationMetrics(fragmentIndices: IntRange): TiqianMathPresentationMetrics? {
+        val result = layoutResult ?: return null
+        val leadingPx = InlineInkLeadingEm * resolved.resolvedFontSizePx
+        val plan = RenderPlan.fragmentRangeInkTight(result, fragmentIndices, leadingPx)
+        return TiqianMathPresentationMetrics(plan.width, plan.height, plan.firstBaseline)
+    }
 }
 
 data class TiqianMathPresentationMetrics(
@@ -125,6 +133,23 @@ fun TiqianMathFormulaCanvas(
     }
     FixedTiqianMathPlan(
         plan = plan,
+        modifier = modifier,
+        color = formula.resolved.color,
+        face = formula.resolved.face,
+    )
+}
+
+/** Replays a contiguous group of premeasured fragments as one inline unit. */
+@Composable
+fun TiqianMathFormulaCanvas(
+    formula: TiqianMathFormula,
+    fragmentIndices: IntRange,
+    modifier: Modifier = Modifier,
+) {
+    val result = formula.layoutResult ?: return
+    val leadingPx = InlineInkLeadingEm * formula.resolved.resolvedFontSizePx
+    FixedTiqianMathPlan(
+        plan = RenderPlan.fragmentRangeInkTight(result, fragmentIndices, leadingPx),
         modifier = modifier,
         color = formula.resolved.color,
         face = formula.resolved.face,
@@ -541,6 +566,35 @@ internal data class RenderPlan(
         fun fragmentInkTight(result: MathLayoutResult, fragmentIndex: Int, leadingPx: Float): RenderPlan {
             val fragment = result.fragments[fragmentIndex]
             return inkTight(fragment.box, fragment.box.visualWidth + fragment.trailingAdvancePx, leadingPx)
+        }
+
+        /**
+         * Host-embedding geometry for a contiguous group of fragments drawn as one inline unit. The
+         * per-fragment boxes keep their own geometry (the engine's fragment model is unchanged); this
+         * only assembles them side by side with their interior glue for a consumer that binds
+         * delimiters/punctuation into one object. See [unbrokenInkTight].
+         */
+        fun fragmentRangeInkTight(result: MathLayoutResult, range: IntRange, leadingPx: Float): RenderPlan {
+            if (range.first == range.last) return fragmentInkTight(result, range.first, leadingPx)
+            var visualX = 0f
+            var inkTop = 0f
+            var inkBottom = 0f
+            val placed = ArrayList<Pair<MathBox, Float>>()
+            for (index in range) {
+                val fragment = result.fragments[index]
+                placed += fragment.box to (visualX - fragment.box.visualLeft)
+                inkTop = minOf(inkTop, fragment.box.inkBounds.top)
+                inkBottom = maxOf(inkBottom, fragment.box.inkBounds.bottom)
+                visualX += fragment.box.visualWidth + fragment.trailingAdvancePx
+            }
+            val ascent = (-inkTop).coerceAtLeast(0f) + leadingPx
+            val descent = inkBottom.coerceAtLeast(0f) + leadingPx
+            return RenderPlan(
+                boxes = placed.map { (box, x) -> PositionedBox(box, x, ascent) },
+                width = visualX,
+                height = ascent + descent,
+                firstBaseline = ascent,
+            )
         }
 
         private fun inkTight(box: MathBox, width: Float, leadingPx: Float): RenderPlan {
