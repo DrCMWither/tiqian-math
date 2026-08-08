@@ -402,6 +402,21 @@ data class MathAlphabetScope(
     override val range: SourceRange,
 ) : MathNode
 
+/** A TeX math-version selection, orthogonal to math alphabet and math style. */
+enum class MathVersion {
+    Bold,
+}
+
+/**
+ * A scoped math version such as LaTeX's `\boldsymbol`. Unlike a math alphabet, it applies to
+ * fixed-family symbols and operator noads as well as variable-family characters.
+ */
+data class MathVersionScope(
+    val version: MathVersion,
+    val body: MathNode,
+    override val range: SourceRange,
+) : MathNode
+
 /** Preserves unsupported or malformed source in the AST while parsing continues. */
 data class MathErrorNode(
     val sourceText: String,

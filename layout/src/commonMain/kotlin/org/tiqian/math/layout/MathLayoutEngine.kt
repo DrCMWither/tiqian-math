@@ -195,12 +195,12 @@ private class MathLayoutPass(
         is MathList -> layoutList(node, style, alphabetOverride).laid
         is MathGroup -> layoutGroup(node, style, alphabetOverride)
         is MathSymbol -> layoutSymbol(node, style, alphabetOverride)
-        is MathOperator -> layoutOperator(node, style)
-        is MathOperatorName -> layoutOperatorName(node, style)
-        is MathScripts -> if (node.base is MathOperator) {
-            layoutOperatorScripts(node, node.base as MathOperator, style, alphabetOverride)
-        } else {
-            layoutScripts(node, style, alphabetOverride)
+        is MathOperator -> layoutOperator(node, style, alphabetOverride)
+        is MathOperatorName -> layoutOperatorName(node, style, alphabetOverride)
+        is MathScripts -> when (val base = node.base) {
+            is MathOperator -> layoutOperatorScripts(node, base, style, alphabetOverride)
+            is MathOperatorName -> layoutOperatorNameScripts(node, base, style, alphabetOverride)
+            else -> layoutScripts(node, style, alphabetOverride)
         }
         is MathFraction -> layoutFraction(node, style, alphabetOverride)
         is MathRadical -> layoutRadical(node, style, alphabetOverride)
@@ -222,6 +222,7 @@ private class MathLayoutPass(
             ScriptBaseKind.CompoundBox,
         )
         is MathAlphabetScope -> layoutAlphabetScopeNode(node, style)
+        is MathVersionScope -> layoutMathVersionScopeNode(node, style)
         is MathErrorNode -> LaidNode(
             node,
             emptyBox(node.range),
@@ -656,7 +657,28 @@ private class MathLayoutPass(
             "alphabet" to node.alphabet,
             "appliesTo" to MathFamilyBinding.Variable,
         )
-        val horizontal = when (val body = node.body) {
+        return layoutScopedBody(node, node.body, style, override)
+    }
+
+    private fun layoutMathVersionScopeNode(node: MathVersionScope, style: MathStyle): LaidNode {
+        val override = MathAlphabetOverride(version = node.version)
+        decision(
+            "TeXMathVersionScope",
+            node.range,
+            "version" to node.version,
+            "appliesTo" to "AllMathAtoms",
+            "glyphPolicy" to "FamilySpecificUnicodeMathAlphabetOrExplicitUnsupportedCapability",
+        )
+        return layoutScopedBody(node, node.body, style, override)
+    }
+
+    private fun layoutScopedBody(
+        scopeNode: MathNode,
+        body: MathNode,
+        style: MathStyle,
+        override: MathAlphabetOverride,
+    ): LaidNode {
+        val horizontal = when (body) {
             is MathGroup -> layoutList(body.body, style, override)
             is MathList -> layoutList(body, style, override)
             else -> null
@@ -664,17 +686,17 @@ private class MathLayoutPass(
         return if (horizontal != null) {
             val single = horizontal.items.singleOrNull()
             if (single?.node is MathSymbol) single.laid.copy(
-                node = node,
-                box = single.laid.box.copy(range = node.range),
+                node = scopeNode,
+                box = single.laid.box.copy(range = scopeNode.range),
             ) else horizontal.laid.copy(
-                node = node,
-                box = horizontal.laid.box.copy(range = node.range),
+                node = scopeNode,
+                box = horizontal.laid.box.copy(range = scopeNode.range),
                 atomClass = single?.atomClass ?: MathAtomClass.Ordinary,
                 italicCorrectionPx = 0f,
                 scriptBaseKind = single?.laid?.scriptBaseKind ?: ScriptBaseKind.CompoundBox,
             )
         } else {
-            layoutNode(node.body, style, override).copy(node = node)
+            layoutNode(body, style, override).copy(node = scopeNode)
         }
     }
 
@@ -842,21 +864,31 @@ private class MathLayoutPass(
         alphabetOverride: MathAlphabetOverride?,
     ): MathSymbolGlyphRequest = MathSymbolGlyphRequest(
         identity = node.identity,
-        family = if (node.familyBinding == MathFamilyBinding.Variable) {
-            alphabetOverride?.family ?: node.family
-        } else {
-            node.family
+        family = when {
+            alphabetOverride?.version != null -> node.family
+            node.familyBinding == MathFamilyBinding.Variable -> alphabetOverride?.family ?: node.family
+            else -> node.family
         },
-        alphabet = if (node.familyBinding == MathFamilyBinding.Variable) {
-            alphabetOverride?.alphabet ?: node.alphabet
-        } else {
-            node.alphabet
+        alphabet = when (alphabetOverride?.version) {
+            MathVersion.Bold -> when (node.family) {
+                MathFamily.Letters -> MathAlphabet.BoldItalic
+                MathFamily.Operators, MathFamily.Symbols, MathFamily.LargeSymbols -> MathAlphabet.Bold
+            }
+            null -> if (node.familyBinding == MathFamilyBinding.Variable) {
+                alphabetOverride?.alphabet ?: node.alphabet
+            } else {
+                node.alphabet
+            }
         },
         style = style,
         sourceRange = node.range,
     )
 
-    private fun layoutOperatorName(node: MathOperatorName, style: MathStyle): LaidNode {
+    private fun layoutOperatorName(
+        node: MathOperatorName,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
         // Render the name as upright roman letters, then present the whole run as one Operator-class
         // atom so inter-atom spacing (`2\sin x`, `\sin x`) is correct. Every letter maps back to the
         // command's source range, so selection and source-partitioning treat the name as one unit.
@@ -868,15 +900,18 @@ private class MathLayoutPass(
                 family = MathFamily.Operators,
                 familyBinding = MathFamilyBinding.Fixed,
                 alphabet = MathAlphabet.Roman,
-                range = node.range,
+                range = node.commandRange,
             )
         }
-        val horizontal = layoutList(MathList(letters, node.range), style)
+        val horizontal = layoutList(MathList(letters, node.commandRange), style, alphabetOverride)
         decision(
             "TeXMathOperatorName",
             node.range,
             "name" to node.name,
             "limitsPolicy" to node.limitsPolicy,
+            "limitsPolicyExplicit" to node.hasExplicitLimitsPolicy,
+            "commandRange" to node.commandRange,
+            "modifierRange" to node.limitsModifierRange,
             "atomClass" to MathAtomClass.Operator,
         )
         return horizontal.laid.copy(
@@ -888,7 +923,26 @@ private class MathLayoutPass(
         )
     }
 
-    private fun layoutOperator(node: MathOperator, style: MathStyle): LaidNode {
+    private fun layoutOperator(
+        node: MathOperator,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride? = null,
+    ): LaidNode {
+        alphabetOverride?.version?.let { version ->
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.UnsupportedMathAlphabet,
+                "The selected formula-wide math face has no $version LargeSymbols math version for ${node.identity.debugName}",
+                node.commandRange,
+            )
+            decision(
+                "TeXMathVersionCapability",
+                node.commandRange,
+                "version" to version,
+                "identity" to node.identity.debugName,
+                "family" to MathFamily.LargeSymbols,
+                "capability" to "UnsupportedNoFormulaWideBoldLargeSymbolsFace",
+            )
+        }
         val size = fontSize(style)
         val resolved = glyphSource.resolveOperator(
             MathOperatorGlyphRequest(node.identity, style, node.commandRange),
@@ -1803,8 +1857,51 @@ private class MathLayoutPass(
         style: MathStyle,
         alphabetOverride: MathAlphabetOverride?,
     ): LaidNode {
-        val base = layoutOperator(operator, style)
-        val effectivePolicy = when (operator.limitsPolicy) {
+        val base = layoutOperator(operator, style, alphabetOverride)
+        return layoutScriptsWithOperatorLimits(
+            node = node,
+            base = base,
+            semantics = OperatorLimitsSemantics(
+                identity = operator.identity.debugName,
+                declaredPolicy = operator.limitsPolicy,
+                explicit = operator.hasExplicitLimitsPolicy,
+                modifierRange = operator.limitsModifierRange,
+                sideScriptHorizontalPolicy = SideScriptHorizontalPolicy.XeTeXOperatorNoLimits,
+                sideScriptGeometry = "XeTeXMakeOpWidthDeltaPlusSharedSideScriptKernel",
+            ),
+            style = style,
+            alphabetOverride = alphabetOverride,
+        )
+    }
+
+    private fun layoutOperatorNameScripts(
+        node: MathScripts,
+        operator: MathOperatorName,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode = layoutScriptsWithOperatorLimits(
+        node = node,
+        base = layoutOperatorName(operator, style, alphabetOverride),
+        semantics = OperatorLimitsSemantics(
+            identity = "operator-name:${operator.name}",
+            declaredPolicy = operator.limitsPolicy,
+            explicit = operator.hasExplicitLimitsPolicy,
+            modifierRange = operator.limitsModifierRange,
+            sideScriptHorizontalPolicy = SideScriptHorizontalPolicy.OrdinaryNucleus,
+            sideScriptGeometry = "UprightOperatorNamePlusSharedSideScriptKernel",
+        ),
+        style = style,
+        alphabetOverride = alphabetOverride,
+    )
+
+    private fun layoutScriptsWithOperatorLimits(
+        node: MathScripts,
+        base: LaidNode,
+        semantics: OperatorLimitsSemantics,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val effectivePolicy = when (semantics.declaredPolicy) {
             MathLimitsPolicy.Limits -> MathLimitsPolicy.Limits
             MathLimitsPolicy.NoLimits -> MathLimitsPolicy.NoLimits
             MathLimitsPolicy.Auto -> if (style.level == MathStyleLevel.Display) {
@@ -1814,19 +1911,19 @@ private class MathLayoutPass(
             }
         }
         val reason = when {
-            operator.hasExplicitLimitsPolicy -> "explicit-postfix-modifier"
-            operator.limitsPolicy == MathLimitsPolicy.Auto && style.level == MathStyleLevel.Display -> "auto-display"
-            operator.limitsPolicy == MathLimitsPolicy.Auto -> "auto-non-display"
+            semantics.explicit -> "explicit-postfix-modifier"
+            semantics.declaredPolicy == MathLimitsPolicy.Auto && style.level == MathStyleLevel.Display -> "auto-display"
+            semantics.declaredPolicy == MathLimitsPolicy.Auto -> "auto-non-display"
             else -> "plain-tex-operator-default"
         }
         decision(
             "TeXOperatorLimitsPolicy",
             node.range,
-            "identity" to operator.identity.debugName,
-            "declaredPolicy" to operator.limitsPolicy,
+            "identity" to semantics.identity,
+            "declaredPolicy" to semantics.declaredPolicy,
             "effectivePolicy" to effectivePolicy,
-            "explicit" to operator.hasExplicitLimitsPolicy,
-            "modifierRange" to operator.limitsModifierRange,
+            "explicit" to semantics.explicit,
+            "modifierRange" to semantics.modifierRange,
             "style" to style,
             "reason" to reason,
             "upperPresent" to (node.superscript != null),
@@ -1838,9 +1935,9 @@ private class MathLayoutPass(
             decision(
                 "TeXOperatorSideScripts",
                 node.range,
-                "identity" to operator.identity.debugName,
+                "identity" to semantics.identity,
                 "style" to style,
-                "geometry" to "XeTeXMakeOpWidthDeltaPlusSharedSideScriptKernel",
+                "geometry" to semantics.sideScriptGeometry,
                 "italicCorrectionDeltaPx" to base.italicCorrectionPx,
                 "subscriptPresent" to (node.subscript != null),
                 "makeOpWidthReductionPx" to if (node.subscript != null) base.italicCorrectionPx else 0f,
@@ -1850,7 +1947,7 @@ private class MathLayoutPass(
                 base,
                 style,
                 alphabetOverride,
-                SideScriptHorizontalPolicy.XeTeXOperatorNoLimits,
+                semantics.sideScriptHorizontalPolicy,
             )
         }
     }
@@ -3233,8 +3330,18 @@ private class MathLayoutPass(
     )
 
     private data class MathAlphabetOverride(
-        val family: MathFamily,
-        val alphabet: MathAlphabet,
+        val family: MathFamily? = null,
+        val alphabet: MathAlphabet? = null,
+        val version: MathVersion? = null,
+    )
+
+    private data class OperatorLimitsSemantics(
+        val identity: String,
+        val declaredPolicy: MathLimitsPolicy,
+        val explicit: Boolean,
+        val modifierRange: SourceRange?,
+        val sideScriptHorizontalPolicy: SideScriptHorizontalPolicy,
+        val sideScriptGeometry: String,
     )
 
     private companion object {

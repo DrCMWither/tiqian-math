@@ -97,21 +97,29 @@ private class ParserState(
         while (true) {
             skipIgnored()
             val marker = peek()
-            if (
-                base is MathOperator &&
-                marker.kind == MathTokenKind.ControlWord &&
-                marker.text in limitsModifiers
+            val modifiedOperator = if (
+                marker.kind == MathTokenKind.ControlWord && marker.text in limitsModifiers
             ) {
+                val policy = if (marker.text == "limits") MathLimitsPolicy.Limits else MathLimitsPolicy.NoLimits
+                when (base) {
+                    is MathOperator -> base.copy(
+                        limitsPolicy = policy,
+                        limitsModifierRange = marker.range,
+                        range = base.range.cover(marker.range),
+                    )
+                    is MathOperatorName -> base.copy(
+                        limitsPolicy = policy,
+                        limitsModifierRange = marker.range,
+                        range = base.range.cover(marker.range),
+                    )
+                    else -> null
+                }
+            } else {
+                null
+            }
+            if (modifiedOperator != null) {
                 advance()
-                base = base.copy(
-                    limitsPolicy = if (marker.text == "limits") {
-                        MathLimitsPolicy.Limits
-                    } else {
-                        MathLimitsPolicy.NoLimits
-                    },
-                    limitsModifierRange = marker.range,
-                    range = base.range.cover(marker.range),
-                )
+                base = modifiedOperator
                 totalRange = totalRange.cover(marker.range)
                 continue
             }
@@ -232,6 +240,14 @@ private class ParserState(
         styleCommands[token.text]?.let { level ->
             return MathStyleDeclaration(level, token.range)
         }
+        if (token.text == "boldsymbol") {
+            val argument = parseRequiredArgument(token, "bold math version scope")
+            return MathVersionScope(
+                version = MathVersion.Bold,
+                body = argument,
+                range = token.range.cover(argument.range),
+            )
+        }
         alphabetCommands[token.text]?.let { (family, alphabet) ->
             val argument = parseRequiredArgument(token, "math alphabet scope")
             return MathAlphabetScope(
@@ -279,7 +295,7 @@ private class ParserState(
         if (token.text in limitsModifiers) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MisplacedLimitsModifier,
-                "Command \\${token.text} must immediately follow a large operator",
+                "Command \\${token.text} must immediately follow an operator",
                 token.range,
             )
             return MathErrorNode(sourceSlice(token.range), token.range)
@@ -550,7 +566,6 @@ private class ParserState(
             "mathcal" to (MathFamily.Operators to MathAlphabet.Script),
             "mathscr" to (MathFamily.Operators to MathAlphabet.Script),
             "mathtt" to (MathFamily.Operators to MathAlphabet.Monospace),
-            "boldsymbol" to (MathFamily.Letters to MathAlphabet.BoldItalic),
         )
 
         // Log-like function names (TeX \mathop). The "limits" group stacks scripts over/under in

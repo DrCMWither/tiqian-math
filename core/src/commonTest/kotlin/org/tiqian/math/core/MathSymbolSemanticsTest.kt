@@ -3,6 +3,7 @@ package org.tiqian.math.core
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class MathSymbolSemanticsTest {
     @Test
@@ -98,5 +99,41 @@ class MathSymbolSemanticsTest {
         assertEquals(0x1D7D8, encodeMathAlphabetScalar('0'.code, MathAlphabet.DoubleStruck))
         assertEquals(0x1D7F6, encodeMathAlphabetScalar('0'.code, MathAlphabet.Monospace))
         assertEquals(null, encodeMathAlphabetScalar('0'.code, MathAlphabet.Script))
+    }
+
+    @Test
+    fun extendedAlphabetPlaneOneAndLetterlikeScalarsRoundTripWithoutDecodingHoles() {
+        listOf(
+            MathAlphabet.Script,
+            MathAlphabet.Fraktur,
+            MathAlphabet.DoubleStruck,
+            MathAlphabet.Monospace,
+        ).forEach { alphabet ->
+            val bases = ('A'..'Z') + ('a'..'z') + ('0'..'9')
+            bases.forEach { base ->
+                val encoded = encodeMathAlphabetScalar(base.code, alphabet) ?: return@forEach
+                assertEquals(
+                    DecodedMathAlphabetScalar(base.code, alphabet),
+                    decodeMathAlphabetScalar(encoded),
+                    "$alphabet/$base/U+${encoded.toString(16)}",
+                )
+            }
+        }
+
+        listOf(
+            0x211B to DecodedMathAlphabetScalar('R'.code, MathAlphabet.Script),
+            0x212F to DecodedMathAlphabetScalar('e'.code, MathAlphabet.Script),
+            0x212D to DecodedMathAlphabetScalar('C'.code, MathAlphabet.Fraktur),
+            0x211C to DecodedMathAlphabetScalar('R'.code, MathAlphabet.Fraktur),
+            0x2102 to DecodedMathAlphabetScalar('C'.code, MathAlphabet.DoubleStruck),
+            0x211D to DecodedMathAlphabetScalar('R'.code, MathAlphabet.DoubleStruck),
+        ).forEach { (styled, expected) ->
+            assertEquals(expected, decodeMathAlphabetScalar(styled), "U+${styled.toString(16)}")
+        }
+
+        // These are the unassigned Plane-1 slots replaced by Letterlike Symbols, not alternate glyphs.
+        assertNull(decodeMathAlphabetScalar(0x1D49D)) // script B -> ℬ
+        assertNull(decodeMathAlphabetScalar(0x1D506)) // fraktur C -> ℭ
+        assertNull(decodeMathAlphabetScalar(0x1D53A)) // double-struck C -> ℂ
     }
 }

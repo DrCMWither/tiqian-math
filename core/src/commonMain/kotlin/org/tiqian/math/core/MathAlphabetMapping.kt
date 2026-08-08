@@ -20,8 +20,21 @@ fun decodeMathAlphabetScalar(scalar: Int): DecodedMathAlphabetScalar? {
     decodeLatin(scalar, 0x1D482, 0x1D49B, 'a', MathAlphabet.BoldItalic)?.let { return it }
     decodeLatin(scalar, 0x1D5A0, 0x1D5B9, 'A', MathAlphabet.SansSerif)?.let { return it }
     decodeLatin(scalar, 0x1D5BA, 0x1D5D3, 'a', MathAlphabet.SansSerif)?.let { return it }
+    decodeLatinWithHoles(scalar, 0x1D49C, 0x1D4B6, MathAlphabet.Script, scriptHoles)?.let { return it }
+    decodeLatinWithHoles(scalar, 0x1D504, 0x1D51E, MathAlphabet.Fraktur, frakturHoles)?.let { return it }
+    decodeLatinWithHoles(
+        scalar,
+        0x1D538,
+        0x1D552,
+        MathAlphabet.DoubleStruck,
+        doubleStruckHoles,
+    )?.let { return it }
+    decodeLatin(scalar, 0x1D670, 0x1D689, 'A', MathAlphabet.Monospace)?.let { return it }
+    decodeLatin(scalar, 0x1D68A, 0x1D6A3, 'a', MathAlphabet.Monospace)?.let { return it }
     decodeDigit(scalar, 0x1D7CE, MathAlphabet.Bold)?.let { return it }
     decodeDigit(scalar, 0x1D7E2, MathAlphabet.SansSerif)?.let { return it }
+    decodeDigit(scalar, 0x1D7D8, MathAlphabet.DoubleStruck)?.let { return it }
+    decodeDigit(scalar, 0x1D7F6, MathAlphabet.Monospace)?.let { return it }
     decodeGreek(scalar, 0x1D6A8, MathAlphabet.Bold)?.let { return it }
     decodeGreek(scalar, 0x1D6E2, MathAlphabet.Italic)?.let { return it }
     decodeGreek(scalar, 0x1D71C, MathAlphabet.BoldItalic)?.let { return it }
@@ -68,6 +81,27 @@ private fun encodeLatinWithHoles(
     in 'A'.code..'Z'.code -> holes[scalar] ?: (uppercaseStart + scalar - 'A'.code)
     in 'a'.code..'z'.code -> holes[scalar] ?: (lowercaseStart + scalar - 'a'.code)
     else -> null
+}
+
+private fun decodeLatinWithHoles(
+    scalar: Int,
+    uppercaseStart: Int,
+    lowercaseStart: Int,
+    alphabet: MathAlphabet,
+    holes: Map<Int, Int>,
+): DecodedMathAlphabetScalar? {
+    holes.entries.firstOrNull { it.value == scalar }?.let { (baseScalar, _) ->
+        return DecodedMathAlphabetScalar(baseScalar, alphabet)
+    }
+    val uppercaseBase = 'A'.code + scalar - uppercaseStart
+    if (scalar in uppercaseStart..uppercaseStart + 25 && uppercaseBase !in holes) {
+        return DecodedMathAlphabetScalar(uppercaseBase, alphabet)
+    }
+    val lowercaseBase = 'a'.code + scalar - lowercaseStart
+    if (scalar in lowercaseStart..lowercaseStart + 25 && lowercaseBase !in holes) {
+        return DecodedMathAlphabetScalar(lowercaseBase, alphabet)
+    }
+    return null
 }
 
 private val scriptHoles = mapOf(

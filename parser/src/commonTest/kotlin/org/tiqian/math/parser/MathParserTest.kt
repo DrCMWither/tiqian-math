@@ -274,6 +274,19 @@ class MathParserTest {
         val scripted = MathParser().parse("\\lim_{n}")
         val scripts = assertIs<MathScripts>(scripted.root.children.single())
         assertIs<MathOperatorName>(scripts.base)
+
+        val explicit = MathParser().parse("\\lim\\nolimits_n+\\sin\\limits^2")
+        assertTrue(explicit.diagnostics.isEmpty(), explicit.diagnostics.toString())
+        val explicitScripts = explicit.root.children.filterIsInstance<MathScripts>()
+        val noLimits = assertIs<MathOperatorName>(explicitScripts[0].base)
+        assertEquals(MathLimitsPolicy.NoLimits, noLimits.limitsPolicy)
+        assertEquals(SourceRange(4, 13), noLimits.limitsModifierRange)
+        assertEquals(SourceRange(0, 4), noLimits.commandRange)
+        assertEquals(SourceRange(0, 13), noLimits.range)
+        val forcedLimits = assertIs<MathOperatorName>(explicitScripts[1].base)
+        assertEquals(MathLimitsPolicy.Limits, forcedLimits.limitsPolicy)
+        assertEquals(SourceRange(20, 27), forcedLimits.limitsModifierRange)
+        assertEquals(SourceRange(16, 20), forcedLimits.commandRange)
     }
 
     @Test
@@ -289,7 +302,6 @@ class MathParserTest {
             "mathcal" to (MathFamily.Operators to MathAlphabet.Script),
             "mathscr" to (MathFamily.Operators to MathAlphabet.Script),
             "mathtt" to (MathFamily.Operators to MathAlphabet.Monospace),
-            "boldsymbol" to (MathFamily.Letters to MathAlphabet.BoldItalic),
         )
         cases.forEach { (command, expected) ->
             val result = MathParser().parse("\\$command{x}")
@@ -297,6 +309,50 @@ class MathParserTest {
             val scope = assertIs<MathAlphabetScope>(result.root.children.single(), command)
             assertEquals(expected.first, scope.family, command)
             assertEquals(expected.second, scope.alphabet, command)
+        }
+    }
+
+    @Test
+    fun boldsymbolParsesAsBoldMathVersionOverFixedAndOperatorAtoms() {
+        val source = "\\boldsymbol{\\lambda+\\sum}"
+        val result = MathParser().parse(source)
+
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val scope = assertIs<MathVersionScope>(result.root.children.single())
+        assertEquals(MathVersion.Bold, scope.version)
+        assertEquals(SourceRange(0, source.length), scope.range)
+        val children = assertIs<MathGroup>(scope.body).body.children
+        val lambda = assertIs<MathSymbol>(children[0])
+        assertEquals(MathFamilyBinding.Fixed, lambda.familyBinding)
+        assertEquals(MathNamedSymbol.Lambda, assertIs<MathSymbolIdentity.Named>(lambda.identity).symbol)
+        assertEquals(MathNamedSymbol.Plus, assertIs<MathSymbolIdentity.Named>(assertIs<MathSymbol>(children[1]).identity).symbol)
+        assertIs<MathOperator>(children[2])
+    }
+
+    @Test
+    fun directExtendedUnicodeScalarsDecodeToBaseIdentityAndRequestedAlphabet() {
+        listOf(
+            "𝒜" to ('A' to MathAlphabet.Script),
+            "ℛ" to ('R' to MathAlphabet.Script),
+            "𝔤" to ('g' to MathAlphabet.Fraktur),
+            "ℭ" to ('C' to MathAlphabet.Fraktur),
+            "𝕩" to ('x' to MathAlphabet.DoubleStruck),
+            "ℝ" to ('R' to MathAlphabet.DoubleStruck),
+            "𝙰" to ('A' to MathAlphabet.Monospace),
+            "𝟽" to ('7' to MathAlphabet.Monospace),
+        ).forEach { (source, expected) ->
+            val result = MathParser().parse(source)
+            assertTrue(result.diagnostics.isEmpty(), "$source: ${result.diagnostics}")
+            val symbol = assertIs<MathSymbol>(result.root.children.single())
+            val expectedIdentity = if (expected.first.isDigit()) {
+                MathSymbolIdentity.Digit(expected.first)
+            } else {
+                MathSymbolIdentity.LatinLetter(expected.first)
+            }
+            assertEquals(expectedIdentity, symbol.identity, source)
+            assertEquals(expected.second, symbol.alphabet, source)
+            assertEquals(source, symbol.sourceText, source)
+            assertEquals(SourceRange(0, source.length), symbol.range, source)
         }
     }
 
