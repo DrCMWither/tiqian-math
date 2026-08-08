@@ -1,3 +1,8 @@
+import com.android.build.api.dsl.LibraryExtension
+import org.gradle.api.publish.PublishingExtension
+import org.gradle.api.publish.maven.MavenPublication
+import org.gradle.jvm.tasks.Jar
+import org.gradle.plugins.signing.SigningExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 
@@ -11,7 +16,125 @@ plugins {
 }
 
 group = "org.tiqian.math"
-version = "0.1.0-SNAPSHOT"
+version = providers.gradleProperty("tiqianVersion")
+    .orElse(providers.environmentVariable("TIQIAN_VERSION"))
+    .getOrElse("0.1.0-SNAPSHOT")
+
+data class PublishedModule(
+    val artifactId: String,
+    val displayName: String,
+    val description: String,
+)
+
+val publishedModules = mapOf(
+    ":core" to PublishedModule("math-core", "Tiqian Math Core", "Core expression and style data types for the Tiqian math engine."),
+    ":parser" to PublishedModule("math-parser", "Tiqian Math Parser", "TeX math parser for the Tiqian math engine."),
+    ":font:opentype" to PublishedModule("math-font-opentype", "Tiqian Math OpenType", "OpenType MATH table model and reader for the Tiqian math engine."),
+    ":font:android" to PublishedModule("math-font-android", "Tiqian Math Android Font", "Native Android OpenType MATH font backend."),
+    ":font:skia" to PublishedModule("math-font-skia", "Tiqian Math Skia Font", "Skia OpenType MATH font backend."),
+    ":layout" to PublishedModule("math-layout", "Tiqian Math Layout", "OpenType MATH layout engine."),
+    ":frontend:math-compose" to PublishedModule("math-compose", "Tiqian Math Compose", "Compose frontend for the Tiqian math engine."),
+)
+
+fun Project.configureMavenPublishing(module: PublishedModule) {
+    pluginManager.apply("maven-publish")
+    pluginManager.apply("signing")
+
+    val javadocJar = tasks.register<Jar>("javadocJar") {
+        archiveClassifier.set("javadoc")
+        from(rootProject.file("LICENSE")) {
+            into("META-INF")
+        }
+    }
+
+    extensions.configure<PublishingExtension>("publishing") {
+        repositories {
+            maven {
+                name = "central"
+                url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
+                credentials {
+                    username = providers.gradleProperty("mavenCentralUsername")
+                        .orElse(providers.environmentVariable("MAVEN_CENTRAL_USERNAME"))
+                        .orNull
+                    password = providers.gradleProperty("mavenCentralPassword")
+                        .orElse(providers.environmentVariable("MAVEN_CENTRAL_PASSWORD"))
+                        .orNull
+                }
+            }
+        }
+    }
+
+    pluginManager.withPlugin("com.android.library") {
+        extensions.configure<LibraryExtension>("android") {
+            publishing {
+                singleVariant("release") {
+                    withSourcesJar()
+                }
+            }
+        }
+        afterEvaluate {
+            extensions.configure<PublishingExtension>("publishing") {
+                if (publications.findByName("release") == null) {
+                    publications.create<MavenPublication>("release") {
+                        from(components["release"])
+                    }
+                }
+            }
+        }
+    }
+
+    afterEvaluate {
+        extensions.configure<PublishingExtension>("publishing") {
+            publications.withType(MavenPublication::class.java).configureEach {
+                val targetSuffix = artifactId.removePrefix(project.name)
+                artifactId = module.artifactId + targetSuffix
+                artifact(javadocJar)
+                pom {
+                    name.set(module.displayName)
+                    description.set(module.description)
+                    url.set("https://github.com/tiqian-cjk/math-compose")
+                    licenses {
+                        license {
+                            name.set("Mozilla Public License 2.0")
+                            url.set("https://www.mozilla.org/MPL/2.0/")
+                            distribution.set("repo")
+                        }
+                    }
+                    developers {
+                        developer {
+                            id.set("123Duo3")
+                            name.set("123Duo3")
+                            email.set("123duo3@gmail.com")
+                        }
+                    }
+                    scm {
+                        connection.set("scm:git:https://github.com/tiqian-cjk/math-compose.git")
+                        developerConnection.set("scm:git:ssh://git@github.com/tiqian-cjk/math-compose.git")
+                        url.set("https://github.com/tiqian-cjk/math-compose")
+                    }
+                }
+            }
+        }
+
+        val signingKey = providers.gradleProperty("signingKey")
+            .orElse(providers.environmentVariable("SIGNING_KEY"))
+            .orNull
+        if (!signingKey.isNullOrBlank()) {
+            extensions.configure<SigningExtension>("signing") {
+                useInMemoryPgpKeys(
+                    providers.gradleProperty("signingKeyId")
+                        .orElse(providers.environmentVariable("SIGNING_KEY_ID"))
+                        .orNull,
+                    signingKey,
+                    providers.gradleProperty("signingPassword")
+                        .orElse(providers.environmentVariable("SIGNING_PASSWORD"))
+                        .orNull,
+                )
+                sign(extensions.getByType(PublishingExtension::class.java).publications)
+            }
+        }
+    }
+}
 
 subprojects {
     group = rootProject.group
@@ -27,4 +150,21 @@ subprojects {
             }
         }
     }
+
+    val publishedModule = publishedModules[path]
+    if (publishedModule != null) {
+        configureMavenPublishing(publishedModule)
+    }
+}
+
+tasks.register("publishMathComposeToMavenLocal") {
+    group = "publishing"
+    description = "Publishes every public math-compose module to Maven Local with one lockstep version."
+    dependsOn(publishedModules.keys.map { "$it:publishToMavenLocal" })
+}
+
+tasks.register("publishMathComposeToCentral") {
+    group = "publishing"
+    description = "Uploads every public math-compose module to the Central Portal staging API."
+    dependsOn(publishedModules.keys.map { "$it:publishAllPublicationsToCentralRepository" })
 }
