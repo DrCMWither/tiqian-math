@@ -169,6 +169,51 @@ class TiqianMathRenderTest {
     }
 
     @Test
+    fun actualRendererReplaysTextOperatorAccentsAndRuleDecorationsFromOneLayoutResult() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var observed: MathLayoutResult? = null
+            val source = "\\text{rate }+\\operatorname{rank}_A+\\vec{abcdefghijklmno}+" +
+                "\\overline{x+y}+\\underline{\\frac{a}{b}}"
+            ImageComposeScene(width = 900, height = 260, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    TiqianMath(
+                        source = source,
+                        modifier = Modifier.padding(16.dp),
+                        mode = MathMode.Display,
+                        fontSizePx = 40f,
+                        fontFace = face,
+                        color = Color.Black.copy(alpha = 0.5f),
+                        onMathLayout = { observed = it },
+                    )
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                val layout = assertNotNull(observed)
+                assertTrue(layout.diagnostics.isEmpty(), layout.diagnostics.toString())
+                assertTrue(layout.decisions.any { it.name == "TeXEmbeddedText" })
+                assertTrue(layout.decisions.any { it.name == "TeXDeclaredOperatorName" })
+                assertTrue(layout.decisions.any { it.name == "OpenTypeMathAccent" })
+                assertEquals(2, layout.decisions.count { it.name == "OpenTypeMathRuleDecoration" })
+                val accentGroups = layout.box.constructionPaintGroups.filter {
+                    it.kind == org.tiqian.math.core.MathConstructionPaintKind.Accent
+                }
+                assertTrue(accentGroups.isNotEmpty(), "wide vector should exercise horizontal assembly replay")
+                var maximumAlpha = 0f
+                var painted = 0
+                for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                    val alpha = 1f - pixels[x, y].red
+                    maximumAlpha = maxOf(maximumAlpha, alpha)
+                    if (alpha > 0.15f) painted++
+                }
+                assertTrue(painted > 500, "all extended structures were rasterized")
+                assertTrue(maximumAlpha in 0.45f..0.53f, "assembly overlap is union-painted once")
+                val stats = face.constructionOutlineCacheStats()
+                assertTrue(stats.entries >= accentGroups.size)
+            }
+        }
+    }
+
+    @Test
     fun renderPlanMeasuresInkOverhangAndUsesSafeLogicalBaseline() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             val result = MathLayoutEngine(face).layout("x", MathLayoutOptions(MathMode.Inline, 40f))

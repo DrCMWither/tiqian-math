@@ -79,6 +79,9 @@ private fun PreviewScreen() {
                 VariantControlSample("STIX Two Math", stix)
                 FontSample("Lete Sans Math · display", lete, MathMode.Display)
                 FontSample("STIX Two Math · display", stix, MathMode.Display)
+                Text("Embedded text, declared operators, accents and rule decorations", fontSize = 13.sp)
+                ExtendedStructureSample("Lete Sans Math", lete)
+                ExtendedStructureSample("STIX Two Math", stix)
                 Text("Indexed, nested, fraction and stretched radicals", fontSize = 13.sp)
                 RadicalSample("Lete Sans Math", lete)
                 RadicalSample("STIX Two Math", stix)
@@ -106,6 +109,33 @@ private fun PreviewScreen() {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ExtendedStructureSample(label: String, face: SkiaMathFontFace) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            ExtendedStructureTier("text / operator", "\\text{rank and rate}+\\operatorname{rank}_A", face)
+            ExtendedStructureTier("fixed / wide accents", "\\hat{x}+\\bar{x}+\\vec{v}+\\widehat{x+y+z}+\\widetilde{abc}", face)
+            ExtendedStructureTier("nested rules", "\\overline{x+\\underline{\\frac{a}{b}}}+\\underline{\\sqrt{x}}", face)
+        }
+    }
+}
+
+@Composable
+private fun ExtendedStructureTier(label: String, source: String, face: SkiaMathFontFace) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, fontSize = 9.sp, color = Color(0xFF6B655E))
+        TiqianMath(
+            source = source,
+            modifier = Modifier.background(Color.White).padding(5.dp),
+            mode = MathMode.Display,
+            fontFace = face,
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 24.sp, lineHeight = 38.sp),
+            softWrap = false,
+        )
     }
 }
 
@@ -352,6 +382,13 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("preview=${output.absolutePath} bytes=${output.length()}")
     }
+    ImageComposeScene(width = 1200, height = 900) { ExtendedStructureOracleScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-text-accent-decoration.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("text-accent-decoration=${output.absolutePath} bytes=${output.length()}")
+    }
     ImageComposeScene(width = 900, height = 190) { RadicalDegreeOracleScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/tiqian-radical-degree-inline.png")
@@ -388,6 +425,46 @@ private fun renderSnapshot() {
         println("delimiter-noad-oracle=${output.absolutePath} bytes=${output.length()}")
     }
     renderRadicalSeamReport()
+}
+
+@Composable
+private fun ExtendedStructureOracleScreen() {
+    val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
+    DisposableEffect(lete, stix) {
+        onDispose { lete.close(); stix.close() }
+    }
+    MaterialTheme {
+        Surface(color = Color.White) {
+            Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Tiqian · embedded text / operatorname / OpenType accents / rule decorations", fontSize = 16.sp)
+                Text("same source and nominal 32 px · exact repository OTF · no visual offsets", fontSize = 10.sp, color = Color(0xFF55504A))
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    listOf("Lete Sans Math" to lete, "STIX Two Math" to stix).forEach { (label, face) ->
+                        Column(Modifier.width(570.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(label, fontSize = 13.sp, color = Color(0xFF55504A))
+                            listOf(
+                                "\\text{rank and rate}+\\operatorname{rank}_A",
+                                "\\hat{x}+\\bar{x}+\\vec{v}+\\widehat{x+y+z}+\\widetilde{abc}",
+                                "\\overline{x+\\underline{\\frac{a}{b}}}+\\underline{\\sqrt{x}}",
+                                "\\operatorname*{argmax}_{x\\to\\infty}\\overline{\\widehat{x+y}}+\\text{ subject to }\\underline{\\frac{a}{b}}",
+                            ).forEach { source ->
+                                Text(source, fontSize = 8.sp, color = Color(0xFF6B655E))
+                                TiqianMath(
+                                    source = source,
+                                    modifier = Modifier.background(Color(0xFFF7F5F1)).padding(7.dp),
+                                    mode = MathMode.Display,
+                                    fontFace = face,
+                                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 32.sp, lineHeight = 52.sp),
+                                    softWrap = false,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

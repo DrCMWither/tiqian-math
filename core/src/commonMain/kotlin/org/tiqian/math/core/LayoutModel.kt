@@ -44,6 +44,7 @@ data class MathRulePlacement(
 enum class MathConstructionPaintKind {
     Radical,
     Delimiter,
+    Accent,
 }
 
 enum class MathConstructionShapeKind {

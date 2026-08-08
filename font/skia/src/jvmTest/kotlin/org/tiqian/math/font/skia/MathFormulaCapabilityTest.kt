@@ -66,14 +66,14 @@ class MathFormulaCapabilityTest {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             val engine = face.formulaCapabilityEngine()
             val unsupported = assertIs<MathFormulaCapabilityResult.FallbackRequired>(
-                engine.evaluate("x+\\text{kept}"),
+                engine.evaluate("x+\\matrix{kept}"),
             )
-            assertEquals("x+\\text{kept}", unsupported.source)
+            assertEquals("x+\\matrix{kept}", unsupported.source)
             assertEquals(
                 listOf(MathFormulaCapabilityCategory.UnsupportedSyntax),
                 unsupported.reasons.map { it.category },
             )
-            assertEquals(SourceRange(2, 7), unsupported.diagnostics.single().range)
+            assertEquals(SourceRange(2, 9), unsupported.diagnostics.single().range)
 
             val malformed = assertIs<MathFormulaCapabilityResult.FallbackRequired>(engine.evaluate("x^"))
             assertEquals(
@@ -188,7 +188,7 @@ class MathFormulaCapabilityTest {
                 error("parser failure must not reach render preflight")
             },
         )
-        val source = "\\sqrt{x}+\\text{bad}"
+        val source = "\\sqrt{x}+\\matrix{bad}"
         val fallback = assertIs<MathFormulaCapabilityResult.FallbackRequired>(engine.evaluate(source))
         assertEquals(1, parseCalls)
         assertEquals(0, rejectingFace.calls, "parser failure performs no font or MATH access")

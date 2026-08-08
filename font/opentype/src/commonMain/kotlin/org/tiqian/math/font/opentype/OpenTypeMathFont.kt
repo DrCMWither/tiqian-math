@@ -10,6 +10,8 @@ data class OpenTypeMathConstants(
     val displayOperatorMinHeight: Int,
     val mathLeading: Int,
     val axisHeight: Int,
+    val accentBaseHeight: Int,
+    val flattenedAccentBaseHeight: Int,
     val subscriptShiftDown: Int,
     val subscriptTopMax: Int,
     val subscriptBaselineDropMin: Int,
@@ -39,6 +41,12 @@ data class OpenTypeMathConstants(
     val fractionRuleThickness: Int,
     val fractionDenominatorGapMin: Int,
     val fractionDenomDisplayStyleGapMin: Int,
+    val overbarVerticalGap: Int,
+    val overbarRuleThickness: Int,
+    val overbarExtraAscender: Int,
+    val underbarVerticalGap: Int,
+    val underbarRuleThickness: Int,
+    val underbarExtraDescender: Int,
     val radicalVerticalGap: Int,
     val radicalDisplayStyleVerticalGap: Int,
     val radicalRuleThickness: Int,
@@ -126,6 +134,14 @@ enum class MathVerticalAssemblyPolicy {
     TectonicXeTeXStretchGlue,
 }
 
+data class MathHorizontalConstructionRequest(
+    val baseGlyphId: UShort,
+    val targetSizePx: Float,
+    val fontSizePx: Float,
+    val normalGlyphWidthPx: Float,
+    val normalGlyphOrthogonalExtentPx: Float,
+)
+
 data class MathVerticalConstructionRequest(
     val baseGlyphId: UShort,
     val targetSizePx: Float,
@@ -137,7 +153,7 @@ data class MathVerticalConstructionRequest(
 
 data class MathGlyphComponent(
     val glyphId: UShort,
-    /** Design-unit growth-axis offset; for a vertical assembly this locates the glyph bottom. */
+    /** Design-unit growth-axis origin: bottom for vertical, left for horizontal assemblies. */
     val offset: Float,
 )
 
@@ -195,9 +211,15 @@ data class OpenTypeMathFont(
     val extendedShapeGlyphs: Set<UShort>,
     val mathKernInfo: Map<UShort, MathGlyphKernInfo>,
     val verticalConstructions: Map<UShort, MathGlyphConstruction>,
+    val topAccentAttachments: Map<UShort, Int> = emptyMap(),
+    val unsupportedTopAccentAttachmentAdjustments: Set<UShort> = emptySet(),
+    val horizontalConstructions: Map<UShort, MathGlyphConstruction> = emptyMap(),
 ) {
     val verticalVariants: Map<UShort, List<MathGlyphVariant>>
         get() = verticalConstructions.mapValues { it.value.variants }
+
+    val horizontalVariants: Map<UShort, List<MathGlyphVariant>>
+        get() = horizontalConstructions.mapValues { it.value.variants }
 
     fun scaleDesignUnits(value: Int, fontSizePx: Float): Float = value * fontSizePx / unitsPerEm
 
@@ -223,6 +245,73 @@ data class OpenTypeMathFont(
         val heightDesignUnits = correctionHeightPx * unitsPerEm / fontSizePx
         return scaleDesignUnits(table.valueAt(heightDesignUnits), fontSizePx)
     }
+
+    fun topAccentAttachment(
+        glyphId: UShort,
+        fontSizePx: Float,
+        fallbackAdvancePx: Float,
+    ): Float {
+        if (glyphId in unsupportedTopAccentAttachmentAdjustments) {
+            throw OpenTypeMathException(
+                DiagnosticCode.UnsupportedMathDeviceAdjustment,
+                "MathTopAccentAttachment[$glyphId] requires a device or variation adjustment",
+            )
+        }
+        return topAccentAttachments[glyphId]?.let { scaleDesignUnits(it, fontSizePx) }
+            ?: fallbackAdvancePx / 2f
+    }
+
+    fun horizontalConstruction(
+        request: MathHorizontalConstructionRequest,
+        glyphOrthogonalExtentPx: (UShort) -> Float,
+    ): MathVerticalConstruction? {
+        if (request.normalGlyphWidthPx >= request.targetSizePx) {
+            return MathVerticalConstruction(
+                kind = MathConstructionKind.BaseGlyph,
+                components = listOf(MathGlyphComponent(request.baseGlyphId, 0f)),
+                advanceMeasurement = request.normalGlyphWidthPx * unitsPerEm / request.fontSizePx,
+                reachesTarget = true,
+                constructionPolicy = "OpenTypeMathHorizontalNormalGlyphFirst",
+                orthogonalAdvancePx = request.normalGlyphOrthogonalExtentPx,
+            )
+        }
+        val construction = horizontalConstructions[request.baseGlyphId] ?: return null
+        val target = request.targetSizePx * unitsPerEm / request.fontSizePx
+        construction.variants.firstOrNull { it.advanceMeasurement >= target }?.let { variant ->
+            return MathVerticalConstruction(
+                kind = MathConstructionKind.Variant,
+                components = listOf(MathGlyphComponent(variant.glyphId, 0f)),
+                advanceMeasurement = variant.advanceMeasurement.toFloat(),
+                reachesTarget = true,
+                constructionPolicy = "OpenTypeMathHorizontalVariant",
+                orthogonalAdvancePx = glyphOrthogonalExtentPx(variant.glyphId),
+            )
+        }
+        val assembly = construction.assembly
+        val validation = assembly?.let(::validateAssembly)
+        if (assembly != null && validation?.valid == true) {
+            return assemble(assembly, validation, target, glyphOrthogonalExtentPx).copy(
+                constructionPolicy = "MathMLCore5.3.1HorizontalUniformOverlap",
+            )
+        }
+        val last = construction.variants.lastOrNull() ?: return null
+        return MathVerticalConstruction(
+            kind = MathConstructionKind.Variant,
+            components = listOf(MathGlyphComponent(last.glyphId, 0f)),
+            advanceMeasurement = last.advanceMeasurement.toFloat(),
+            reachesTarget = last.advanceMeasurement >= target,
+            assemblyValidation = validation,
+            constructionPolicy = if (validation?.valid == false) {
+                "OpenTypeMathHorizontalLastVariantAfterInvalidAssembly"
+            } else {
+                "OpenTypeMathHorizontalLastVariant"
+            },
+            orthogonalAdvancePx = glyphOrthogonalExtentPx(last.glyphId),
+        )
+    }
+
+    fun horizontalAssemblyValidation(baseGlyphId: UShort): MathGlyphAssemblyValidation? =
+        horizontalConstructions[baseGlyphId]?.assembly?.let(::validateAssembly)
 
     fun verticalVariant(baseGlyphId: UShort, minimumAdvancePx: Float, fontSizePx: Float): MathGlyphVariant? {
         val variants = verticalVariants[baseGlyphId].orEmpty()
@@ -552,9 +641,11 @@ class OpenTypeMathReader {
         val variantsBase = math.offset + reader.u16(math.offset + 8)
         val constants = readConstants(reader, constantsBase)
         val italicCorrections = readItalicCorrections(reader, glyphInfoBase)
+        val topAccentAttachments = readTopAccentAttachments(reader, glyphInfoBase)
         val extendedShapeGlyphs = readExtendedShapeCoverage(reader, glyphInfoBase)
         val mathKernInfo = readMathKernInfo(reader, glyphInfoBase)
-        val verticalConstructions = readVerticalConstructions(reader, variantsBase)
+        val verticalConstructions = readConstructions(reader, variantsBase, vertical = true)
+        val horizontalConstructions = readConstructions(reader, variantsBase, vertical = false)
         return OpenTypeMathFont(
             bytes = bytes.copyOf(),
             unitsPerEm = unitsPerEm,
@@ -565,6 +656,9 @@ class OpenTypeMathReader {
             extendedShapeGlyphs = extendedShapeGlyphs,
             mathKernInfo = mathKernInfo,
             verticalConstructions = verticalConstructions,
+            topAccentAttachments = topAccentAttachments.values,
+            unsupportedTopAccentAttachmentAdjustments = topAccentAttachments.unsupportedAdjustments,
+            horizontalConstructions = horizontalConstructions,
         )
     }
 
@@ -599,6 +693,8 @@ class OpenTypeMathReader {
             displayOperatorMinHeight = reader.u16(base + 6),
             mathLeading = value(0),
             axisHeight = value(1),
+            accentBaseHeight = value(2),
+            flattenedAccentBaseHeight = value(3),
             subscriptShiftDown = value(4),
             subscriptTopMax = value(5),
             subscriptBaselineDropMin = value(6),
@@ -628,6 +724,12 @@ class OpenTypeMathReader {
             fractionRuleThickness = value(34),
             fractionDenominatorGapMin = value(35),
             fractionDenomDisplayStyleGapMin = value(36),
+            overbarVerticalGap = value(39),
+            overbarRuleThickness = value(40),
+            overbarExtraAscender = value(41),
+            underbarVerticalGap = value(42),
+            underbarRuleThickness = value(43),
+            underbarExtraDescender = value(44),
             radicalVerticalGap = value(45),
             radicalDisplayStyleVerticalGap = value(46),
             radicalRuleThickness = value(47),
@@ -657,6 +759,29 @@ class OpenTypeMathReader {
             glyphId to reader.s16(record)
         }.toMap()
         return ItalicCorrectionData(values, unsupported)
+    }
+
+    private fun readTopAccentAttachments(
+        reader: BigEndianReader,
+        glyphInfoBase: Int,
+    ): TopAccentAttachmentData {
+        reader.requireRange(glyphInfoBase, 8)
+        val offset = reader.u16(glyphInfoBase + 2)
+        if (offset == 0) return TopAccentAttachmentData(emptyMap(), emptySet())
+        val base = glyphInfoBase + offset
+        reader.requireRange(base, 4)
+        val coverageOffset = reader.u16(base)
+        val count = reader.u16(base + 2)
+        reader.requireRange(base + 4, count * 4)
+        val coverage = readCoverage(reader, base + coverageOffset)
+        if (coverage.size != count) malformed("MATH top accent coverage count does not match value count")
+        val unsupported = mutableSetOf<UShort>()
+        val values = coverage.mapIndexed { index, glyphId ->
+            val record = base + 4 + index * 4
+            if (reader.u16(record + 2) != 0) unsupported += glyphId
+            glyphId to reader.s16(record)
+        }.toMap()
+        return TopAccentAttachmentData(values, unsupported)
     }
 
     private fun readMathKernInfo(reader: BigEndianReader, glyphInfoBase: Int): Map<UShort, MathGlyphKernInfo> {
@@ -708,17 +833,25 @@ class OpenTypeMathReader {
         return MathKernTable(heights, values)
     }
 
-    private fun readVerticalConstructions(reader: BigEndianReader, variantsBase: Int): Map<UShort, MathGlyphConstruction> {
+    private fun readConstructions(
+        reader: BigEndianReader,
+        variantsBase: Int,
+        vertical: Boolean,
+    ): Map<UShort, MathGlyphConstruction> {
         reader.requireRange(variantsBase, 10)
         val minimumConnectorOverlap = reader.u16(variantsBase)
-        val verticalCoverageOffset = reader.u16(variantsBase + 2)
         val verticalCount = reader.u16(variantsBase + 6)
-        reader.requireRange(variantsBase + 10, verticalCount * 2)
-        if (verticalCount == 0 || verticalCoverageOffset == 0) return emptyMap()
-        val coverage = readCoverage(reader, variantsBase + verticalCoverageOffset)
-        if (coverage.size != verticalCount) malformed("MATH vertical coverage count does not match construction count")
+        val count = reader.u16(variantsBase + if (vertical) 6 else 8)
+        val coverageOffset = reader.u16(variantsBase + if (vertical) 2 else 4)
+        val offsetsBase = variantsBase + 10 + if (vertical) 0 else verticalCount * 2
+        reader.requireRange(offsetsBase, count * 2)
+        if (count == 0 || coverageOffset == 0) return emptyMap()
+        val coverage = readCoverage(reader, variantsBase + coverageOffset)
+        if (coverage.size != count) {
+            malformed("MATH ${if (vertical) "vertical" else "horizontal"} coverage count does not match construction count")
+        }
         return coverage.mapIndexed { index, glyphId ->
-            val constructionOffset = reader.u16(variantsBase + 10 + index * 2)
+            val constructionOffset = reader.u16(offsetsBase + index * 2)
             val construction = variantsBase + constructionOffset
             reader.requireRange(construction, 4)
             val assemblyOffset = reader.u16(construction)
@@ -810,6 +943,12 @@ class OpenTypeMathReader {
     }
 
     private data class TableRecord(val offset: Int, val length: Int)
+
+    private data class TopAccentAttachmentData(
+        val values: Map<UShort, Int>,
+        val unsupportedAdjustments: Set<UShort>,
+    )
+
     private data class ItalicCorrectionData(
         val values: Map<UShort, Int>,
         val unsupportedAdjustments: Set<UShort>,

@@ -240,6 +240,37 @@ private class ParserState(
         styleCommands[token.text]?.let { level ->
             return MathStyleDeclaration(level, token.range)
         }
+        if (token.text == "text") {
+            val argument = parseTextArgument(token, "text content")
+            return MathText(
+                segments = argument.segments,
+                commandRange = token.range,
+                contentRange = argument.contentRange,
+                range = token.range.cover(argument.totalRange),
+            )
+        }
+        if (token.text == "operatorname") {
+            skipIgnored()
+            val starred = if (peek().kind == MathTokenKind.Symbol && peek().text == "*") advance() else null
+            val argument = parseTextArgument(token, "operator name")
+            return MathOperatorName(
+                name = argument.segments.joinToString("") { it.text },
+                limitsPolicy = if (starred == null) MathLimitsPolicy.NoLimits else MathLimitsPolicy.Auto,
+                commandRange = token.range,
+                nameSegments = argument.segments,
+                nameRange = argument.contentRange,
+                origin = MathOperatorNameOrigin.OperatorNameCommand,
+                range = token.range.cover(starred?.range ?: token.range).cover(argument.totalRange),
+            )
+        }
+        accentCommands[token.text]?.let { identity ->
+            val argument = parseRequiredArgument(token, "accent base")
+            return MathAccent(identity, token.range, argument, token.range.cover(argument.range))
+        }
+        ruleDecorationCommands[token.text]?.let { kind ->
+            val argument = parseRequiredArgument(token, "rule decoration base")
+            return MathRuleDecoration(kind, token.range, argument, token.range.cover(argument.range))
+        }
         if (token.text == "boldsymbol") {
             val argument = parseRequiredArgument(token, "bold math version scope")
             return MathVersionScope(
@@ -435,6 +466,105 @@ private class ParserState(
         else -> null
     }
 
+    private fun parseTextArgument(command: MathToken, role: String): ParsedTextArgument {
+        skipIgnored()
+        val opening = peek()
+        if (opening.kind != MathTokenKind.OpenGroup) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingCommandArgument,
+                "Command \\${command.text} requires a braced $role",
+                command.range,
+            )
+            val insertion = SourceRange(command.range.endExclusive, command.range.endExclusive)
+            return ParsedTextArgument(emptyList(), insertion, insertion)
+        }
+        advance()
+        val segments = mutableListOf<MathTextSegment>()
+        fun appendText(text: String, range: SourceRange) {
+            if (text.isEmpty()) return
+            val previous = segments.lastOrNull()
+            if (previous != null && previous.range.endExclusive == range.start) {
+                segments[segments.lastIndex] = MathTextSegment(
+                    previous.text + text,
+                    previous.range.cover(range),
+                )
+            } else {
+                segments += MathTextSegment(text, range)
+            }
+        }
+        var depth = 1
+        var closing: MathToken? = null
+        var lastContentEnd = opening.range.endExclusive
+        while (depth > 0) {
+            val token = peek()
+            when (token.kind) {
+                MathTokenKind.End -> {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.UnclosedGroup,
+                        "$role opened here is not closed",
+                        opening.range,
+                    )
+                    break
+                }
+                MathTokenKind.OpenGroup -> {
+                    advance()
+                    depth += 1
+                    lastContentEnd = token.range.endExclusive
+                }
+                MathTokenKind.CloseGroup -> {
+                    advance()
+                    depth -= 1
+                    if (depth == 0) {
+                        closing = token
+                    } else {
+                        lastContentEnd = token.range.endExclusive
+                    }
+                }
+                MathTokenKind.Comment -> {
+                    advance()
+                    lastContentEnd = token.range.endExclusive
+                }
+                MathTokenKind.ControlWord -> {
+                    advance()
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.UnsupportedCommand,
+                        "Text-mode command \\${token.text} is not supported",
+                        token.range,
+                    )
+                    lastContentEnd = token.range.endExclusive
+                }
+                MathTokenKind.ControlSymbol -> {
+                    advance()
+                    val decoded = textControlSymbols[token.text]
+                    if (decoded == null) {
+                        diagnostics += MathDiagnostic(
+                            DiagnosticCode.UnsupportedCommand,
+                            "Text-mode control symbol \\${token.text} is not supported",
+                            token.range,
+                        )
+                    } else {
+                        appendText(decoded, token.range)
+                    }
+                    lastContentEnd = token.range.endExclusive
+                }
+                else -> {
+                    advance()
+                    val rendered = if (token.kind == MathTokenKind.Symbol && token.text == "~") {
+                        "\u00A0"
+                    } else {
+                        sourceSlice(token.range)
+                    }
+                    appendText(rendered, token.range)
+                    lastContentEnd = token.range.endExclusive
+                }
+            }
+        }
+        val contentEnd = closing?.range?.start ?: lastContentEnd
+        val contentRange = SourceRange(opening.range.endExclusive, contentEnd.coerceAtLeast(opening.range.endExclusive))
+        val totalRange = closing?.let { opening.range.cover(it.range) } ?: opening.range.cover(contentRange)
+        return ParsedTextArgument(segments, contentRange, totalRange)
+    }
+
     private fun parseRequiredArgument(command: MathToken, role: String): MathNode {
         skipIgnored()
         val next = peek()
@@ -585,9 +715,34 @@ private class ParserState(
             ).forEach { put(it, MathLimitsPolicy.Auto) }
         }
 
+        val accentCommands = mapOf(
+            "hat" to MathAccentIdentity.Hat,
+            "bar" to MathAccentIdentity.Bar,
+            "vec" to MathAccentIdentity.Vec,
+            "widehat" to MathAccentIdentity.WideHat,
+            "widetilde" to MathAccentIdentity.WideTilde,
+        )
+
+        val ruleDecorationCommands = mapOf(
+            "overline" to MathRuleDecorationKind.Overline,
+            "underline" to MathRuleDecorationKind.Underline,
+        )
+
+        val textControlSymbols = mapOf(
+            " " to " ",
+            "," to "\u2009",
+            "\\" to "\\",
+            "{" to "{",
+            "}" to "}",
+            "%" to "%",
+            "#" to "#",
+            "_" to "_",
+            "&" to "&",
+            "$" to "$",
+        )
+
         val explicitlyUnsupportedCommands = setOf(
-            "overline", "underline",
-            "hat", "bar", "vec", "begin", "end", "text", "operatorname", "limits", "nolimits",
+            "begin", "end", "limits", "nolimits",
             "matrix", "cases", "newcommand", "def", "color",
         )
 
@@ -635,6 +790,12 @@ private class ParserState(
         )
 
     }
+
+    private data class ParsedTextArgument(
+        val segments: List<MathTextSegment>,
+        val contentRange: SourceRange,
+        val totalRange: SourceRange,
+    )
 
     private data class ParsedRadicalDegree(
         val node: MathNode?,

@@ -69,7 +69,7 @@ class MathFormulaSafetyTest {
     @Test
     fun fallbackFormulaDrawsOnlyTheHostSlotAndPassesExactEvidenceOnce() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
-            val source = "\\sqrt{x}+\\text{bad}"
+            val source = "\\sqrt{x}+\\matrix{bad}"
             var fallbackCalls = 0
             var mathLayoutCalls = 0
             var captured: MathFormulaCapabilityResult.FallbackRequired? = null
@@ -110,8 +110,8 @@ class MathFormulaSafetyTest {
                 request.reasons.map { it.category },
             )
             val unsupported = request.diagnostics.single { it.code == DiagnosticCode.UnsupportedCommand }
-            assertEquals(SourceRange(9, 14), unsupported.range)
-            assertEquals("\\text", source.substring(unsupported.range.start, unsupported.range.endExclusive))
+            assertEquals(SourceRange(9, 16), unsupported.range)
+            assertEquals("\\matrix", source.substring(unsupported.range.start, unsupported.range.endExclusive))
         }
     }
 
@@ -122,7 +122,7 @@ class MathFormulaSafetyTest {
             val exception = assertFailsWith<MathFormulaStrictException> {
                 ImageComposeScene(width = 120, height = 80, density = Density(1f)) {
                     StrictTiqianMath(
-                        source = "\\sqrt{x}+\\text{bad}",
+                        source = "\\sqrt{x}+\\matrix{bad}",
                         fontSizePx = 32f,
                         fontFace = face,
                         onMathLayout = { mathLayoutCalls += 1 },

@@ -18,6 +18,14 @@ class LeteSansMathTest {
         assertEquals(55, font.constants.scriptScriptPercentScaleDown)
         assertEquals(1400, font.constants.displayOperatorMinHeight)
         assertEquals(280, font.constants.axisHeight)
+        assertEquals(527, font.constants.accentBaseHeight)
+        assertEquals(689, font.constants.flattenedAccentBaseHeight)
+        assertEquals(listOf(150, 66, 50), listOf(
+            font.constants.overbarVerticalGap, font.constants.overbarRuleThickness, font.constants.overbarExtraAscender,
+        ))
+        assertEquals(listOf(150, 66, 50), listOf(
+            font.constants.underbarVerticalGap, font.constants.underbarRuleThickness, font.constants.underbarExtraDescender,
+        ))
         assertEquals(250, font.constants.subscriptShiftDown)
         assertEquals(420, font.constants.superscriptShiftUp)
         assertEquals(370, font.constants.superscriptShiftUpCramped)
@@ -44,6 +52,8 @@ class LeteSansMathTest {
         assertEquals(828, font.italicCorrections.size)
         assertTrue(font.unsupportedItalicCorrectionAdjustments.isEmpty())
         assertEquals(89, font.verticalVariants.size)
+        assertEquals(44, font.horizontalConstructions.size)
+        assertEquals(1519, font.topAccentAttachments.size)
         assertTrue(font.extendedShapeGlyphs.isNotEmpty())
         assertTrue(font.mathKernInfo.isNotEmpty())
         assertEquals(

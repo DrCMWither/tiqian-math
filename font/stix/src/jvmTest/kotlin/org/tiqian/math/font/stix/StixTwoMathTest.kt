@@ -20,6 +20,14 @@ class StixTwoMathTest {
         assertEquals(55, font.constants.scriptScriptPercentScaleDown)
         assertEquals(1800, font.constants.displayOperatorMinHeight)
         assertEquals(258, font.constants.axisHeight)
+        assertEquals(480, font.constants.accentBaseHeight)
+        assertEquals(656, font.constants.flattenedAccentBaseHeight)
+        assertEquals(listOf(175, 68, 68), listOf(
+            font.constants.overbarVerticalGap, font.constants.overbarRuleThickness, font.constants.overbarExtraAscender,
+        ))
+        assertEquals(listOf(175, 68, 68), listOf(
+            font.constants.underbarVerticalGap, font.constants.underbarRuleThickness, font.constants.underbarExtraDescender,
+        ))
         assertEquals(210, font.constants.subscriptShiftDown)
         assertEquals(360, font.constants.superscriptShiftUp)
         assertEquals(252, font.constants.superscriptShiftUpCramped)
@@ -58,6 +66,8 @@ class StixTwoMathTest {
         }
         assertEquals(DiagnosticCode.UnsupportedMathDeviceAdjustment, unsupported.diagnosticCode)
         assertEquals(118, font.verticalVariants.size)
+        assertEquals(47, font.horizontalConstructions.size)
+        assertEquals(2652, font.topAccentAttachments.size)
         assertTrue(font.extendedShapeGlyphs.isNotEmpty())
         assertTrue(font.mathKernInfo.isNotEmpty())
         assertEquals(

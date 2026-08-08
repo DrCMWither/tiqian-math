@@ -4,3 +4,7 @@ x_1^2+\frac{a}{b}
 \cases{x}
 \unknowncommand{x}
 x^
+\operatorname{rank}_A
+\widehat{x+y}
+\overline{x}+\underline{y}
+\text{hello world}

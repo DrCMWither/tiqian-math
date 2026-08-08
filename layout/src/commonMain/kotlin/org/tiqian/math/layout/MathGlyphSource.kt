@@ -183,6 +183,13 @@ interface MathFontFace {
         sourceRange: SourceRange,
     ): MeasuredMathRun
 
+    /** Text-mode shaping: current math style changes size, never the `ssty` math glyph feature. */
+    fun shapeText(
+        text: String,
+        fontSizePx: Float,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = shape(text, fontSizePx, MathStyle.Text, sourceRange)
+
     fun measureGlyph(
         glyphId: UShort,
         fontSizePx: Float,

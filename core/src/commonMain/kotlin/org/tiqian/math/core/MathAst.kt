@@ -270,15 +270,71 @@ data class MathOperator(
  * upright roman text; [limitsPolicy] decides whether attached scripts stack over/under in display
  * style (`\lim`) or stay to the side (`\sin`). In text style every function keeps side scripts.
  */
+enum class MathOperatorNameOrigin { BuiltInCommand, OperatorNameCommand }
+
+/** One shaped text-mode segment; grouping braces are omitted while its source remains untouched. */
+data class MathTextSegment(
+    val text: String,
+    val range: SourceRange,
+)
+
+/** Text mode embedded in math. Spaces and Unicode text are shaped as text, never as math noads. */
+data class MathText(
+    val segments: List<MathTextSegment>,
+    val commandRange: SourceRange,
+    val contentRange: SourceRange,
+    override val range: SourceRange,
+) : MathNode {
+    val text: String get() = segments.joinToString("") { it.text }
+}
+
 data class MathOperatorName(
     val name: String,
     val limitsPolicy: MathLimitsPolicy,
     val commandRange: SourceRange,
+    val nameSegments: List<MathTextSegment>? = null,
+    val nameRange: SourceRange = commandRange,
+    val origin: MathOperatorNameOrigin = MathOperatorNameOrigin.BuiltInCommand,
     val limitsModifierRange: SourceRange? = null,
     override val range: SourceRange,
 ) : MathNode {
     val atomClass: MathAtomClass get() = MathAtomClass.Operator
     val hasExplicitLimitsPolicy: Boolean get() = limitsModifierRange != null
+}
+
+
+enum class MathAccentIdentity(
+    val debugName: String,
+    val scalar: Int,
+    val wide: Boolean,
+) {
+    Hat("hat", 0x0302, false),
+    Bar("bar", 0x0304, false),
+    Vec("vec", 0x20D7, false),
+    WideHat("widehat", 0x0302, true),
+    WideTilde("widetilde", 0x0303, true),
+}
+
+/** A TeX math accent noad. The nucleus is laid out cramped; the source is never rewritten. */
+data class MathAccent(
+    val identity: MathAccentIdentity,
+    val commandRange: SourceRange,
+    val base: MathNode,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = MathAtomClass.Ordinary
+}
+
+enum class MathRuleDecorationKind { Overline, Underline }
+
+/** Rule-based overline/underline, distinct from glyph accents such as `\bar`. */
+data class MathRuleDecoration(
+    val kind: MathRuleDecorationKind,
+    val commandRange: SourceRange,
+    val base: MathNode,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = MathAtomClass.Ordinary
 }
 
 data class MathScripts(

@@ -19,13 +19,17 @@ data class MathFormulaScanSample(
     val diagnostics: List<MathFormulaScanDiagnostic>,
 )
 
+enum class MathFormulaFailureStage { TokenizerMacroParser, LayoutFont, RenderPreflight }
+
 data class MathFormulaScanReport(
     val total: Int,
     val ready: Int,
     val fallbackRequired: Int,
     val readyRate: Double,
     val byCategory: Map<MathFormulaCapabilityCategory, Int>,
+    val byFailureStage: Map<MathFormulaFailureStage, Int>,
     val byDiagnosticCode: Map<DiagnosticCode, Int>,
+    val byCommand: Map<String, Int>,
     val byUnsupportedCommand: Map<String, Int>,
     val samplesByCategory: Map<MathFormulaCapabilityCategory, List<MathFormulaScanSample>>,
 ) {
@@ -38,8 +42,14 @@ data class MathFormulaScanReport(
         append("  \"byCategory\": ")
         appendCountMap(byCategory.mapKeys { it.key.name })
         append(",\n")
+        append("  \"byFailureStage\": ")
+        appendCountMap(byFailureStage.mapKeys { it.key.name })
+        append(",\n")
         append("  \"byDiagnosticCode\": ")
         appendCountMap(byDiagnosticCode.mapKeys { it.key.name })
+        append(",\n")
+        append("  \"byCommand\": ")
+        appendCountMap(byCommand)
         append(",\n")
         append("  \"byUnsupportedCommand\": ")
         appendCountMap(byUnsupportedCommand)
@@ -118,17 +128,22 @@ class MathFormulaCorpusScanner(
         require(maxSamplesPerCategory >= 0) { "sample limit must not be negative" }
     }
 
+    private val commandPattern = Regex("\\\\[A-Za-z]+")
+
     fun scan(sources: Iterable<String>): MathFormulaScanReport {
         var total = 0
         var ready = 0
         var fallbackRequired = 0
         val categories = mutableMapOf<MathFormulaCapabilityCategory, Int>()
+        val failureStages = mutableMapOf<MathFormulaFailureStage, Int>()
         val diagnosticCodes = mutableMapOf<DiagnosticCode, Int>()
+        val commands = mutableMapOf<String, Int>()
         val unsupportedCommands = mutableMapOf<String, Int>()
         val samples = mutableMapOf<MathFormulaCapabilityCategory, MutableList<MathFormulaScanSample>>()
 
         sources.forEach { source ->
             total += 1
+            commandPattern.findAll(source).forEach { commands.increment(it.value) }
             when (val result = capabilityEngine.evaluate(source, options)) {
                 is MathFormulaCapabilityResult.Ready -> {
                     ready += 1
@@ -137,6 +152,7 @@ class MathFormulaCorpusScanner(
                 is MathFormulaCapabilityResult.FallbackRequired -> {
                     fallbackRequired += 1
                     countDiagnostics(source, result.diagnostics, diagnosticCodes, unsupportedCommands)
+                    result.diagnostics.map(::failureStage).toSet().forEach { failureStages.increment(it) }
                     result.reasons.forEach { reason ->
                         categories.increment(reason.category)
                         val categorySamples = samples.getOrPut(reason.category) { mutableListOf() }
@@ -159,12 +175,32 @@ class MathFormulaCorpusScanner(
             fallbackRequired = fallbackRequired,
             readyRate = if (total == 0) 0.0 else ready.toDouble() / total,
             byCategory = categories.toSortedMap(compareBy(MathFormulaCapabilityCategory::name)),
+            byFailureStage = failureStages.toSortedMap(compareBy(MathFormulaFailureStage::name)),
             byDiagnosticCode = diagnosticCodes.toSortedMap(compareBy(DiagnosticCode::name)),
+            byCommand = commands.toSortedMap(),
             byUnsupportedCommand = unsupportedCommands.toSortedMap(),
             samplesByCategory = samples
                 .mapValues { it.value.toList() }
                 .toSortedMap(compareBy(MathFormulaCapabilityCategory::name)),
         )
+    }
+
+    private fun failureStage(diagnostic: MathDiagnostic): MathFormulaFailureStage = when (diagnostic.code) {
+        DiagnosticCode.MissingConstructionOutlineEvidence,
+        DiagnosticCode.MissingGlyphOutlineEvidence,
+        DiagnosticCode.InvalidConstructionPaintOwnership,
+        -> MathFormulaFailureStage.RenderPreflight
+
+        DiagnosticCode.MissingGlyph,
+        DiagnosticCode.MissingMathTable,
+        DiagnosticCode.MalformedFont,
+        DiagnosticCode.UnsupportedMathDeviceAdjustment,
+        DiagnosticCode.MissingMathConstruction,
+        DiagnosticCode.MathVariantTooShort,
+        DiagnosticCode.UnsupportedMathAlphabet,
+        -> MathFormulaFailureStage.LayoutFont
+
+        else -> MathFormulaFailureStage.TokenizerMacroParser
     }
 
     private fun countDiagnostics(
