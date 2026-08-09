@@ -1,16 +1,20 @@
 {
   "total": 10,
-  "ready": 6,
-  "fallbackRequired": 4,
-  "readyRate": 0.600000,
-  "byCategory": {"MalformedSource": 1, "UnsupportedSyntax": 3},
-  "byFailureStage": {"TokenizerMacroParser": 4},
-  "byDiagnosticCode": {"MissingScriptArgument": 1, "UnknownCommand": 1, "UnsupportedCommand": 2},
+  "ready": 4,
+  "fallbackRequired": 6,
+  "readyRate": 0.400000,
+  "byCategory": {"MalformedSource": 1, "MissingTextProvider": 2, "UnsupportedSyntax": 3},
+  "byFailureStage": {"LayoutFont": 2, "TokenizerMacroParser": 4},
+  "byDiagnosticCode": {"MissingScriptArgument": 1, "MissingTextRunProvider": 2, "UnknownCommand": 1, "UnsupportedCommand": 2},
   "byCommand": {"\\cases": 1, "\\frac": 1, "\\matrix": 1, "\\operatorname": 1, "\\overline": 1, "\\text": 2, "\\underline": 1, "\\unknowncommand": 1, "\\widehat": 1},
   "byUnsupportedCommand": {"\\cases": 1, "\\matrix": 1, "\\unknowncommand": 1},
   "samplesByCategory": {
     "MalformedSource": [
       {"source": "x^", "diagnostics": [{"code": "MissingScriptArgument", "range": {"start": 1, "endExclusive": 2}}]}
+    ],
+    "MissingTextProvider": [
+      {"source": "\\text{hello}", "diagnostics": [{"code": "MissingTextRunProvider", "range": {"start": 6, "endExclusive": 11}}]},
+      {"source": "\\text{hello world}", "diagnostics": [{"code": "MissingTextRunProvider", "range": {"start": 6, "endExclusive": 17}}]}
     ],
     "UnsupportedSyntax": [
       {"source": "\\matrix{a}", "diagnostics": [{"code": "UnsupportedCommand", "range": {"start": 0, "endExclusive": 7}}]},

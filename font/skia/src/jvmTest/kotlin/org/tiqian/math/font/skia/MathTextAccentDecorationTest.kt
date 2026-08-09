@@ -17,20 +17,26 @@ import org.tiqian.math.layout.MathLayoutOptions
 class MathTextAccentDecorationTest {
     @Test
     fun embeddedTextIsOneTextShapingDomainAndPreservesSpaceAdvanceInAllStyles() = withFaces { label, face ->
-        MathStyle.entries.forEach { style ->
-            val engine = MathLayoutEngine(face)
-            val spaced = engine.layout("\\text{fi  text}", options(style))
-            val compact = engine.layout("\\text{fitext}", options(style))
-            assertTrue(spaced.diagnostics.isEmpty(), "$label/$style ${spaced.diagnostics}")
-            assertTrue(spaced.box.width > compact.box.width, "$label/$style spaces own advance")
-            val decision = spaced.decisions.single { it.name == "TeXEmbeddedText" }
-            assertEquals("TextRunNotMathNoadSequence", decision.details["shaping"])
-            assertEquals("2", decision.details["spaceCount"])
-            assertTrue(spaced.box.glyphs.all { it.style == style })
-            assertTrue(spaced.box.glyphs.all { it.sourceRange.start >= 6 && it.sourceRange.endExclusive <= 14 })
-            assertIs<MathFormulaCapabilityResult.Ready>(face.formulaCapabilityEngine().evaluate(
-                "\\text{fi  text}", options(style),
-            ))
+        SkiaMathTextRunProvider.fromBytes(
+            MathFaceId("test-explicit-host-text"),
+            LeteSansMath.loadBytes(),
+        ).use { textProvider ->
+            MathStyle.entries.forEach { style ->
+                val engine = MathLayoutEngine(face, textRunProvider = textProvider)
+                val spaced = engine.layout("\\text{fi  text}", options(style))
+                val compact = engine.layout("\\text{fitext}", options(style))
+                assertTrue(spaced.diagnostics.isEmpty(), "$label/$style ${spaced.diagnostics}")
+                assertTrue(spaced.box.width > compact.box.width, "$label/$style spaces own advance")
+                val decision = spaced.decisions.single { it.name == "TeXEmbeddedText" }
+                assertEquals("TextRunNotMathNoadSequence", decision.details["shaping"])
+                assertEquals("2", decision.details["spaceCount"])
+                assertEquals(textProvider.faceId.toString(), decision.details["faceIds"])
+                assertTrue(spaced.box.glyphs.all { it.style == style })
+                assertTrue(spaced.box.glyphs.all { it.sourceRange.start >= 6 && it.sourceRange.endExclusive <= 14 })
+                assertIs<MathFormulaCapabilityResult.Ready>(face.formulaCapabilityEngine(textProvider).evaluate(
+                    "\\text{fi  text}", options(style),
+                ))
+            }
         }
     }
 

@@ -10,6 +10,11 @@ enum class MathFormulaCapabilityCategory {
     UnsupportedSyntax,
     MalformedSource,
     MissingGlyph,
+    MissingTextProvider,
+    HostTextReplayUnavailable,
+    HostTextShapingUnsupported,
+    HostTextEvidenceInvalid,
+    ReplayFaceOwnershipConflict,
     MissingMathConstruction,
     InsufficientMathConstruction,
     ConstructionOutlineUnavailable,
@@ -94,6 +99,11 @@ object MathFormulaCapabilityClassifier {
     /** Warnings in these categories describe incomplete output and are never production-safe. */
     private val blockingWarningCodes = setOf(
         DiagnosticCode.MissingGlyph,
+        DiagnosticCode.MissingTextRunProvider,
+        DiagnosticCode.NonReplayableHostTextRun,
+        DiagnosticCode.UnsupportedHostTextShaping,
+        DiagnosticCode.InvalidHostTextRunEvidence,
+        DiagnosticCode.ReplayFaceOwnershipConflict,
         DiagnosticCode.MissingMathTable,
         DiagnosticCode.MalformedFont,
         DiagnosticCode.UnsupportedMathDeviceAdjustment,
@@ -148,6 +158,7 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.UnsupportedCommand,
         DiagnosticCode.UnsupportedMathAlphabet,
         DiagnosticCode.UnsupportedDelimiter,
+        DiagnosticCode.UnsupportedEnvironment,
         -> MathFormulaCapabilityCategory.UnsupportedSyntax
 
         DiagnosticCode.TrailingEscape,
@@ -174,9 +185,21 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.UnexpectedRightDelimiter,
         DiagnosticCode.MiddleOutsideDelimitedGroup,
         DiagnosticCode.MissingRightDelimiter,
+        DiagnosticCode.MissingEnvironmentName,
+        DiagnosticCode.MissingEnvironmentEnd,
+        DiagnosticCode.MismatchedEnvironmentEnd,
+        DiagnosticCode.MissingArrayColumnSpecification,
+        DiagnosticCode.InvalidArrayColumnSpecification,
+        DiagnosticCode.UnexpectedAlignmentTab,
+        DiagnosticCode.UnexpectedRowSeparator,
         -> MathFormulaCapabilityCategory.MalformedSource
 
         DiagnosticCode.MissingGlyph -> MathFormulaCapabilityCategory.MissingGlyph
+        DiagnosticCode.MissingTextRunProvider -> MathFormulaCapabilityCategory.MissingTextProvider
+        DiagnosticCode.NonReplayableHostTextRun -> MathFormulaCapabilityCategory.HostTextReplayUnavailable
+        DiagnosticCode.UnsupportedHostTextShaping -> MathFormulaCapabilityCategory.HostTextShapingUnsupported
+        DiagnosticCode.InvalidHostTextRunEvidence -> MathFormulaCapabilityCategory.HostTextEvidenceInvalid
+        DiagnosticCode.ReplayFaceOwnershipConflict -> MathFormulaCapabilityCategory.ReplayFaceOwnershipConflict
         DiagnosticCode.MissingMathConstruction -> MathFormulaCapabilityCategory.MissingMathConstruction
         DiagnosticCode.MathVariantTooShort -> MathFormulaCapabilityCategory.InsufficientMathConstruction
         DiagnosticCode.MissingConstructionOutlineEvidence ->

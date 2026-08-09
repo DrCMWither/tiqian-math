@@ -1,0 +1,22 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=300
+\showboxdepth=300
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-TABLE-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-TABLE-ORACLE-#1-END}%
+}
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/]{STIXTwoMath-Regular.otf}
+\traceformula{ALIGNED}{\begin{aligned}a&=b\\c&=\frac{d}{e}\end{aligned}}
+\traceformula{PMATRIX}{\begin{pmatrix}a&b\\\frac{c}{d}&\sqrt{x}\end{pmatrix}}
+\traceformula{CASES}{\begin{cases}x&x>0\\\frac{a}{b}&x\leq0\end{cases}}
+\end{document}

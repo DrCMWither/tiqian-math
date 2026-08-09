@@ -11,7 +11,10 @@ Copyright The HarfBuzz Project Authors.
 Distributed under the Old MIT license. Its complete text is packaged at
 META-INF/HARFBUZZ-COPYING.
 
-Lete Sans Math
+Lete Sans Math v0.61 Regular and Bold
+Upstream revision 9b4e62d8ad0a8cb9fe4c84f97b0589bf972620c4.
+Regular SHA-256: ead643895be03f42f6fa201fb1176323f60dd330d4109387bac90bdf980fcf3e
+Bold SHA-256: a521f128db0821a9943e4f703103204d8982aeb39c933e12344c43e9d3b0907a
 Distributed under the SIL Open Font License 1.1. The complete OFL text is
 packaged at assets/org/tiqian/math/fonts/OFL.txt.
 

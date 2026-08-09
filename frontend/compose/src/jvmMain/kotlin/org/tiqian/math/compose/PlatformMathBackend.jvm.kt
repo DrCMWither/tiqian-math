@@ -13,18 +13,33 @@ import org.jetbrains.skia.Paint
 import org.jetbrains.skia.Point
 import org.jetbrains.skia.Rect
 import org.jetbrains.skia.TextBlobBuilder
+import org.tiqian.math.core.MathFaceId
+import org.tiqian.math.core.MathFontClass
+import org.tiqian.math.core.MathFontFaceSpec
+import org.tiqian.math.core.MathFontFamilySpec
+import org.tiqian.math.core.MathFontWeight
+import org.tiqian.math.core.MathReplayFaceOwnership
 import org.tiqian.math.font.opentype.LeteSansMath
-import org.tiqian.math.font.opentype.OpenTypeMathReader
 import org.tiqian.math.font.skia.MathConstructionOutlineResult
 import org.tiqian.math.font.skia.MathConstructionOutlineUnavailableException
-import org.tiqian.math.font.skia.SkiaMathFontFace
+import org.tiqian.math.font.skia.SkiaMathFontFamily
+import org.tiqian.math.font.skia.SkiaReplayCatalog
+import org.tiqian.math.font.skia.combineSkiaReplayCatalogs
 import org.tiqian.math.font.skia.formulaCapabilityEngine
 import org.tiqian.math.layout.MathComposeFontFace
 import org.tiqian.math.layout.MathFormulaCapabilityEngine
+import org.tiqian.math.layout.MathTextRunProvider
 
 @Composable
 internal actual fun rememberPlatformLeteMathFontFace(): MathComposeFontFace {
-    val face = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val face = remember { SkiaMathFontFamily.loadBundledLete() }
+    DisposableEffect(face) { onDispose(face::close) }
+    return face
+}
+
+@Composable
+internal actual fun rememberPlatformMathFontFamily(spec: MathFontFamilySpec): MathComposeFontFace {
+    val face = remember(spec) { SkiaMathFontFamily.fromSpec(spec) }
     DisposableEffect(face) { onDispose(face::close) }
     return face
 }
@@ -32,7 +47,18 @@ internal actual fun rememberPlatformLeteMathFontFace(): MathComposeFontFace {
 @Composable
 internal actual fun rememberPlatformMathFontFace(fontBytes: ByteArray): MathComposeFontFace {
     val face = remember(fontBytes) {
-        SkiaMathFontFace(OpenTypeMathReader().read(fontBytes.copyOf()))
+        SkiaMathFontFamily.fromSpec(
+            MathFontFamilySpec(
+                familyId = "legacy-single-math-face",
+                fontClass = MathFontClass.Serif,
+                faces = listOf(MathFontFaceSpec(
+                    MathFaceId.LegacySingleFace,
+                    fontBytes,
+                    MathFontClass.Serif,
+                    MathFontWeight.Regular,
+                )),
+            ),
+        )
     }
     DisposableEffect(face) { onDispose(face::close) }
     return face
@@ -40,15 +66,18 @@ internal actual fun rememberPlatformMathFontFace(fontBytes: ByteArray): MathComp
 
 internal actual fun platformFormulaCapabilityEngine(
     face: MathComposeFontFace,
-): MathFormulaCapabilityEngine = (face as? SkiaMathFontFace)?.formulaCapabilityEngine()
-    ?: error("Desktop Compose requires SkiaMathFontFace")
+    textRunProvider: MathTextRunProvider?,
+): MathFormulaCapabilityEngine = face.formulaCapabilityEngine(textRunProvider)
 
 internal actual fun DrawScope.drawPlatformMathPlan(
     face: MathComposeFontFace,
+    textRunProvider: MathTextRunProvider?,
     plan: RenderPlan,
     color: Color,
 ) {
-    val skiaFace = face as? SkiaMathFontFace ?: error("Desktop Compose requires SkiaMathFontFace")
+    val mathCatalog = face as? SkiaReplayCatalog ?: error("Desktop Compose requires a replayable Skia catalog")
+    val textCatalog = textRunProvider as? SkiaReplayCatalog
+    val skiaFace = combineSkiaReplayCatalogs(mathCatalog, textCatalog)
     drawIntoCanvas { canvas ->
         drawSkiaMathPlan(canvas.skiaCanvas, skiaFace, plan, color.toArgb())
     }
@@ -56,13 +85,13 @@ internal actual fun DrawScope.drawPlatformMathPlan(
 
 private fun drawSkiaMathPlan(
     canvas: org.jetbrains.skia.Canvas,
-    face: SkiaMathFontFace,
+    face: SkiaReplayCatalog,
     plan: RenderPlan,
     color: Int,
 ) {
     val paint = Paint().apply { this.color = color }
     val builder = TextBlobBuilder()
-    val fonts = mutableMapOf<Float, Font>()
+    val fonts = mutableMapOf<Pair<MathFaceId, Float>, Font>()
     try {
         plan.boxes.flatMap { positioned ->
             positioned.box.glyphs.filter { it.constructionGroupId == null }.map { glyph ->
@@ -72,8 +101,13 @@ private fun drawSkiaMathPlan(
                     positioned.baselineFromTop + glyph.baselineY,
                 )
             }
-        }.groupBy { it.first.fontSizePx }.forEach { (size, glyphs) ->
-            val font = fonts.getOrPut(size) { face.font(size) }
+        }.groupBy { it.first.faceId to it.first.fontSizePx }.forEach { (key, glyphs) ->
+            val (faceId, size) = key
+            check(face.replayFaceOwnership(faceId) != MathReplayFaceOwnership.Conflict) {
+                "Replay face ownership conflict for $faceId"
+            }
+            val replayFace = checkNotNull(face.replayFace(faceId)) { "No Skia replay face $faceId" }
+            val font = fonts.getOrPut(key) { replayFace.font(size) }
             builder.appendRunPos(
                 font,
                 glyphs.map { it.first.glyphId.toShort() }.toShortArray(),
@@ -103,7 +137,10 @@ private fun drawSkiaMathPlan(
                 "Construction paint ownership mismatch: known=$knownGroupIds referenced=$referencedGroupIds"
             }
             positioned.box.constructionPaintGroups.forEach { group ->
-                when (val outline = face.constructionOutline(positioned.box, group)) {
+                val constructionFace = checkNotNull(face.constructionFace(group.faceId)) {
+                    "No Skia construction face ${group.faceId}"
+                }
+                when (val outline = constructionFace.constructionOutline(positioned.box, group)) {
                     is MathConstructionOutlineResult.Available -> {
                         val saveCount = canvas.save()
                         try {

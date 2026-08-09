@@ -10,6 +10,7 @@ import org.tiqian.math.font.opentype.MathVerticalConstructionRequest
 import org.tiqian.math.font.opentype.MathVerticalAssemblyPolicy
 import org.tiqian.math.font.opentype.OpenTypeMathConstants
 import org.tiqian.math.font.opentype.OpenTypeMathException
+import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.parser.MacroExpansionLimits
 import org.tiqian.math.parser.MathFormulaParser
 import org.tiqian.math.parser.MathMacroDefinition
@@ -35,6 +36,10 @@ data class MathLayoutOptions(
     val delimiterFactor: Int = 901,
     /** Formula-scoped `\delimitershortfall` in pixels; null keeps the plain-TeX 5pt/10pt ratio. */
     val delimiterShortfallPx: Float? = null,
+    /** BCP-47 locale forwarded only to host-owned upright text atoms. */
+    val textLocale: String? = null,
+    /** TeX `\arraycolsep` for each side of a matrix/array cell; null is 0.5em. */
+    val arrayColumnSeparationPx: Float? = null,
 ) {
     init {
         require(fontSizePx > 0f) { "math font size must be positive" }
@@ -47,6 +52,9 @@ data class MathLayoutOptions(
         require(delimiterFactor > 0) { "delimiter factor must be positive" }
         require(delimiterShortfallPx == null || delimiterShortfallPx >= 0f) {
             "delimiter shortfall must not be negative"
+        }
+        require(arrayColumnSeparationPx == null || arrayColumnSeparationPx >= 0f) {
+            "array column separation must not be negative"
         }
     }
 }
@@ -71,12 +79,14 @@ interface MathFormulaProductionPipeline {
 class MathLayoutEngine(
     private val glyphSource: MathFontFace,
     private val parser: MathFormulaParser,
+    private val textRunProvider: MathTextRunProvider? = null,
 ) : MathFormulaProductionPipeline {
     constructor(
         glyphSource: MathFontFace,
         macros: List<MathMacroDefinition> = emptyList(),
         expansionLimits: MacroExpansionLimits = MacroExpansionLimits(),
-    ) : this(glyphSource, MathParser(macros, expansionLimits))
+        textRunProvider: MathTextRunProvider? = null,
+    ) : this(glyphSource, MathParser(macros, expansionLimits), textRunProvider)
 
     override fun prepare(source: String): MathPreparedFormula =
         MathPreparedFormula(parser.parse(source))
@@ -87,12 +97,13 @@ class MathLayoutEngine(
     override fun layout(
         prepared: MathPreparedFormula,
         options: MathLayoutOptions,
-    ): MathLayoutResult = MathLayoutPass(glyphSource).layout(prepared.parseResult, options)
+    ): MathLayoutResult = MathLayoutPass(glyphSource, textRunProvider).layout(prepared.parseResult, options)
 }
 
 /** Per-call mutable state; a public engine can safely serve concurrent layout requests. */
 private class MathLayoutPass(
     private val glyphSource: MathFontFace,
+    private val textRunProvider: MathTextRunProvider?,
 ) {
     private val diagnostics = mutableListOf<MathDiagnostic>()
     private val decisions = mutableListOf<MathLayoutDecision>()
@@ -101,7 +112,69 @@ private class MathLayoutPass(
     private var explicitScriptSpacePx: Float? = null
     private var delimiterFactor: Int = 901
     private var delimiterShortfallPx: Float = 12f
+    private var textLocale: String? = null
+    private var explicitArrayColumnSeparationPx: Float? = null
     private var nextConstructionPaintGroupId: Int = 1
+
+    /**
+     * Keep legacy/decorated single-face adapters virtual while allowing a real family to resolve
+     * a non-primary face. Kotlin interface delegation otherwise forwards the new family methods
+     * past test/host wrappers that intentionally override the primary face's evidence.
+     */
+    private fun mathFontForFace(faceId: MathFaceId): OpenTypeMathFont =
+        if (faceId == glyphSource.faceId) glyphSource.mathFont else glyphSource.mathFontFor(faceId)
+
+    private fun mathFontForFaceOrNull(faceId: MathFaceId): OpenTypeMathFont? =
+        if (faceId == glyphSource.faceId) glyphSource.mathFont else glyphSource.mathFontForOrNull(faceId)
+
+    private fun measureGlyphForFace(
+        faceId: MathFaceId,
+        glyphId: UShort,
+        size: Float,
+        style: MathStyle,
+        range: SourceRange,
+    ): MeasuredMathRun = if (faceId == glyphSource.faceId) {
+        glyphSource.measureGlyph(glyphId, size, style, range)
+    } else {
+        glyphSource.measureGlyphForFace(faceId, glyphId, size, style, range)
+    }
+
+    private fun measureGlyphOutlineForFace(
+        faceId: MathFaceId,
+        glyphId: UShort,
+        size: Float,
+        style: MathStyle,
+        range: SourceRange,
+    ): MeasuredMathRun = if (faceId == glyphSource.faceId) {
+        glyphSource.measureGlyphOutlineBounds(glyphId, size, style, range)
+    } else {
+        glyphSource.measureGlyphOutlineBoundsForFace(faceId, glyphId, size, style, range)
+    }
+
+    private fun measureConstructionGlyphForFace(
+        faceId: MathFaceId,
+        glyphId: UShort,
+        size: Float,
+        style: MathStyle,
+        range: SourceRange,
+    ): MeasuredOutlineConstructionRun = if (faceId == glyphSource.faceId) {
+        glyphSource.measureOutlineConstructionGlyph(glyphId, size, style, range)
+    } else {
+        glyphSource.measureOutlineConstructionGlyphForFace(faceId, glyphId, size, style, range)
+    }
+
+    private fun constructionBaseCandidates(
+        text: String,
+        size: Float,
+        range: SourceRange,
+    ): List<MeasuredOutlineConstructionRun> {
+        val candidates = glyphSource.shapeOutlineConstructionBaseCandidates(text, size, range)
+        return if (candidates.size <= 1) {
+            listOf(glyphSource.shapeOutlineConstructionBase(text, size, range))
+        } else {
+            candidates
+        }
+    }
 
     fun layout(parsed: MathParseResult, options: MathLayoutOptions): MathLayoutResult {
         val source = parsed.source
@@ -113,6 +186,8 @@ private class MathLayoutPass(
         delimiterFactor = options.delimiterFactor
         delimiterShortfallPx = options.delimiterShortfallPx
             ?: options.fontSizePx * DEFAULT_DELIMITER_SHORTFALL_EM
+        textLocale = options.textLocale
+        explicitArrayColumnSeparationPx = options.arrayColumnSeparationPx
         diagnostics += parsed.diagnostics
         val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
         val horizontal = layoutList(parsed.root, initialStyle)
@@ -202,6 +277,8 @@ private class MathLayoutPass(
         is MathText -> layoutText(node, style)
         is MathAccent -> layoutAccent(node, style, alphabetOverride)
         is MathRuleDecoration -> layoutRuleDecoration(node, style, alphabetOverride)
+        is MathExplicitSpace -> layoutExplicitSpace(node, style)
+        is MathTable -> layoutTable(node, style, alphabetOverride)
         is MathScripts -> when (val base = node.base) {
             is MathOperator -> layoutOperatorScripts(node, base, style, alphabetOverride)
             is MathOperatorName -> layoutOperatorNameScripts(node, base, style, alphabetOverride)
@@ -226,6 +303,14 @@ private class MathLayoutPass(
             style,
             ScriptBaseKind.CompoundBox,
         )
+        is MathAlphabetDeclaration -> LaidNode(
+            node,
+            emptyBox(node.range),
+            MathAtomClass.Ordinary,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
         is MathAlphabetScope -> layoutAlphabetScopeNode(node, style)
         is MathVersionScope -> layoutMathVersionScopeNode(node, style)
         is MathErrorNode -> LaidNode(
@@ -235,6 +320,306 @@ private class MathLayoutPass(
             0f,
             style,
             ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutExplicitSpace(node: MathExplicitSpace, style: MathStyle): LaidNode {
+        val width = node.mu * fontSize(style) / 18f
+        decision(
+            "TeXExplicitMathSpace",
+            node.range,
+            "command" to node.command,
+            "mu" to node.mu,
+            "style" to style,
+            "fontSizePx" to fontSize(style),
+            "advancePx" to width,
+            "policy" to "NamedTeXMuSkip",
+        )
+        return LaidNode(
+            node = node,
+            box = MathBox(
+                width = width,
+                ascent = 0f,
+                descent = 0f,
+                inkBounds = MathRect(0f, 0f, 0f, 0f),
+                glyphs = emptyList(),
+                rules = emptyList(),
+                range = node.range,
+                texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                    ascent = 0f,
+                    descent = 0f,
+                    policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                    evidence = setOf(MathTeXCleanBoxEvidence.Empty),
+                ),
+            ),
+            atomClass = MathAtomClass.Ordinary,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutTable(
+        node: MathTable,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val preservesEntryStyle = node.environment in setOf(
+            MathTableEnvironment.Aligned,
+            MathTableEnvironment.Split,
+        )
+        val cellStyle = if (preservesEntryStyle) {
+            style
+        } else {
+            when (style.level) {
+                MathStyleLevel.Display, MathStyleLevel.Text -> MathStyle.Text
+                MathStyleLevel.Script -> MathStyle.Script
+                MathStyleLevel.ScriptScript -> MathStyle.ScriptScript
+            }
+        }
+        val rowLayouts = node.rows.map { row ->
+            row.cells.mapIndexed { column, cell ->
+                val horizontal = layoutList(cell.body, cellStyle, alphabetOverride)
+                val needsAlignedRelationAnchor = preservesEntryStyle && column % 2 == 1
+                val preambleGlue = if (needsAlignedRelationAnchor) {
+                    horizontal.items.firstOrNull()?.let { first ->
+                        atomGlue(MathAtomClass.Ordinary, first.atomClass, first.laid.style, cell.range).naturalPx
+                    } ?: 0f
+                } else {
+                    0f
+                }
+                if (preambleGlue > 0f) {
+                    decision(
+                        "TeXAlignedRightColumnPreamble",
+                        cell.range,
+                        "column" to column,
+                        "firstAtomClass" to horizontal.items.first().atomClass,
+                        "leadingGluePx" to preambleGlue,
+                        "policy" to "AmsmathAlignedEmptyOrdBeforeRightColumn",
+                    )
+                    horizontal.laid.box.translated(preambleGlue, 0f).copy(
+                        width = horizontal.laid.box.width + preambleGlue,
+                        range = cell.range,
+                    )
+                } else {
+                    horizontal.laid.box
+                }
+            }
+        }
+        val columnCount = maxOf(
+            node.columnAlignments.size,
+            rowLayouts.maxOfOrNull { it.size } ?: 0,
+        )
+        val alignments = List(columnCount) { column ->
+            node.columnAlignments.getOrNull(column) ?: when (node.environment) {
+                MathTableEnvironment.Aligned,
+                MathTableEnvironment.Split,
+                -> if (column % 2 == 0) MathTableColumnAlignment.Right else MathTableColumnAlignment.Left
+                MathTableEnvironment.Cases -> MathTableColumnAlignment.Left
+                else -> MathTableColumnAlignment.Center
+            }
+        }
+        val columnWidths = List(columnCount) { column ->
+            rowLayouts.maxOfOrNull { row -> row.getOrNull(column)?.width ?: 0f } ?: 0f
+        }
+        val size = fontSize(cellStyle)
+        val cases = node.environment == MathTableEnvironment.Cases
+        val strutAscentEm = if (cases) TEX_CASES_STRUT_ASCENT_EM else TEX_ARRAY_STRUT_ASCENT_EM
+        val strutDescentEm = if (cases) TEX_CASES_STRUT_DESCENT_EM else TEX_ARRAY_STRUT_DESCENT_EM
+        val minimumRowAscent = strutAscentEm * size
+        val minimumRowDescent = strutDescentEm * size
+        val rowAscents = rowLayouts.map { row ->
+            maxOf(minimumRowAscent, row.maxOfOrNull { it.texCleanBoxMetrics.ascent } ?: 0f)
+        }
+        val rowDescents = rowLayouts.map { row ->
+            maxOf(minimumRowDescent, row.maxOfOrNull { it.texCleanBoxMetrics.descent } ?: 0f)
+        }
+        val arrayColumnSeparation = explicitArrayColumnSeparationPx ?: TEX_ARRAY_COLUMN_SEPARATION_EM * size
+        val columnGaps = List((columnCount - 1).coerceAtLeast(0)) { boundary ->
+            when (node.environment) {
+                MathTableEnvironment.Matrix,
+                MathTableEnvironment.ParenthesizedMatrix,
+                MathTableEnvironment.BracketedMatrix,
+                MathTableEnvironment.Determinant,
+                MathTableEnvironment.Array,
+                -> arrayColumnSeparation * 2f
+
+                MathTableEnvironment.Aligned,
+                MathTableEnvironment.Split,
+                -> if (boundary % 2 == 1) TEX_ALIGNED_PAIR_GAP_EM * size else 0f
+
+                else -> TEX_ARRAY_INTERCOLUMN_EM * size
+            }
+        }
+        val rowGapEm = if (preservesEntryStyle && node.rows.size > 1) TEX_ALIGNED_ROW_GAP_EM else 0f
+        val rowGap = rowGapEm * size
+        val outerPadding = if (node.environment == MathTableEnvironment.Array) {
+            arrayColumnSeparation
+        } else {
+            0f
+        }
+        val bodyWidth = outerPadding * 2f + columnWidths.sum() + columnGaps.sum()
+        val bodyHeight = rowAscents.zip(rowDescents).sumOf { (ascent, descent) ->
+            (ascent + descent).toDouble()
+        }.toFloat() + rowGap * (node.rows.size - 1).coerceAtLeast(0)
+        val axisHeight = scale(constants.axisHeight, style)
+        val bodyTop = -axisHeight - bodyHeight / 2f
+        var rowTop = bodyTop
+        val glyphs = mutableListOf<MathGlyphPlacement>()
+        val rules = mutableListOf<MathRulePlacement>()
+        val paintGroups = mutableListOf<MathConstructionPaintGroup>()
+        val positionedChildren = mutableListOf<Pair<MathBox, Float>>()
+        rowLayouts.forEachIndexed { rowIndex, row ->
+            val baselineY = rowTop + rowAscents[rowIndex]
+            var columnLeft = outerPadding
+            row.forEachIndexed { column, cell ->
+                val offset = when (alignments[column]) {
+                    MathTableColumnAlignment.Left -> 0f
+                    MathTableColumnAlignment.Center -> (columnWidths[column] - cell.width) / 2f
+                    MathTableColumnAlignment.Right -> columnWidths[column] - cell.width
+                }
+                val shifted = cell.translated(columnLeft + offset, baselineY)
+                glyphs += shifted.glyphs
+                rules += shifted.rules
+                paintGroups += shifted.constructionPaintGroups
+                positionedChildren += cell to baselineY
+                columnLeft += columnWidths[column] + columnGaps.getOrElse(column) { 0f }
+            }
+            rowTop += rowAscents[rowIndex] + rowDescents[rowIndex] +
+                if (rowIndex < rowLayouts.lastIndex) rowGap else 0f
+        }
+        val bodyBottom = bodyTop + bodyHeight
+        val paintedBody = geometryExtents(
+            bodyWidth,
+            glyphs,
+            rules,
+            node.range,
+            paintGroups,
+        )
+        val bodyBox = paintedBody.copy(
+            ascent = (-bodyTop).coerceAtLeast(0f),
+            descent = bodyBottom.coerceAtLeast(0f),
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = (-bodyTop).coerceAtLeast(0f),
+                descent = bodyBottom.coerceAtLeast(0f),
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = positionedChildren.flatMap { it.first.texCleanBoxMetrics.evidence }.toSet() +
+                    MathTeXCleanBoxEvidence.CompletedChildBox,
+            ),
+        )
+        val fenced = wrapTableDelimiters(node, bodyBox, style)
+        decision(
+            "TeXMathTable",
+            node.range,
+            "environmentName" to node.environmentName,
+            "environment" to node.environment,
+            "rowCount" to node.rows.size,
+            "columnCount" to columnCount,
+            "columnAlignments" to alignments.joinToString(","),
+            "columnWidthsPx" to columnWidths.joinToString(","),
+            "rowAscentsPx" to rowAscents.joinToString(","),
+            "rowDescentsPx" to rowDescents.joinToString(","),
+            "rowMetricPolicy" to "MaxOfTeXCleanCellBoxAndEnvironmentStrut",
+            "cellStyle" to cellStyle,
+            "axisHeightPx" to axisHeight,
+            "arrayStrutAscentEm" to strutAscentEm,
+            "arrayStrutDescentEm" to strutDescentEm,
+            "interColumnPolicy" to if (preservesEntryStyle) {
+                "ZeroWithinPairAndTwoEmBetweenEquationPairs"
+            } else {
+                "ArrayColumnSeparationOrEnvironmentGap"
+            },
+            "arrayColumnSeparationPx" to arrayColumnSeparation,
+            "columnGapsPx" to columnGaps.joinToString(","),
+            "rowGapEm" to rowGapEm,
+            "bodyWidthPx" to bodyWidth,
+            "bodyAscentPx" to bodyBox.ascent,
+            "bodyDescentPx" to bodyBox.descent,
+            "logicalAdvancePx" to fenced.width,
+            "groupBreakPolicy" to "UnbreakableTeXTableInnerNoad",
+            "policy" to "LaTeXEnvironmentSpecificStyleArrayStrutAndAxisCenteredVcenter",
+        )
+        return LaidNode(
+            node,
+            fenced,
+            MathAtomClass.Inner,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun wrapTableDelimiters(
+        node: MathTable,
+        body: MathBox,
+        style: MathStyle,
+    ): MathBox {
+        val environment = node.environment ?: return body
+        val leftIdentity = environment.leftDelimiter
+        val rightIdentity = environment.rightDelimiter
+        if (leftIdentity == null && rightIdentity == null) return body
+        val size = fontSize(style)
+        val axisHeight = glyphSource.mathFont.scaleDesignUnits(constants.axisHeight, size)
+        val maxAxisDistance = maxOf(body.descent + axisHeight, body.ascent - axisHeight).coerceAtLeast(0f)
+        val factorTarget = maxAxisDistance * delimiterFactor / 500f
+        val shortfallTarget = 2f * maxAxisDistance - delimiterShortfallPx
+        val target = DelimiterTargetEvidence(
+            innerCleanAscentPx = body.texCleanBoxMetrics.ascent,
+            innerCleanDescentPx = body.texCleanBoxMetrics.descent,
+            axisHeightPx = axisHeight,
+            maxAxisDistancePx = maxAxisDistance,
+            factor = delimiterFactor,
+            shortfallPx = delimiterShortfallPx,
+            factorTargetPx = factorTarget,
+            shortfallTargetPx = shortfallTarget,
+            targetPx = maxOf(factorTarget, shortfallTarget).coerceAtLeast(0f),
+        )
+        fun spec(identity: MathDelimiterIdentity, side: MathDelimiterSide): MathDelimiterSpec {
+            val range = if (side == MathDelimiterSide.Left) {
+                node.beginCommandRange.cover(node.beginNameRange)
+            } else {
+                node.endCommandRange?.let { command ->
+                    node.endNameRange?.let(command::cover) ?: command
+                } ?: SourceRange(node.range.endExclusive, node.range.endExclusive)
+            }
+            return MathDelimiterSpec(
+                sourceText = node.environmentName,
+                identity = identity,
+                side = side,
+                commandRange = if (side == MathDelimiterSide.Left) node.beginCommandRange else node.endCommandRange ?: range,
+                delimiterRange = if (side == MathDelimiterSide.Left) node.beginNameRange else node.endNameRange ?: range,
+                range = range,
+            )
+        }
+        val left = leftIdentity?.let { layoutDelimiter(spec(it, MathDelimiterSide.Left), style, target) }
+        val right = rightIdentity?.let { layoutDelimiter(spec(it, MathDelimiterSide.Right), style, target) }
+        var x = 0f
+        val glyphs = mutableListOf<MathGlyphPlacement>()
+        val rules = mutableListOf<MathRulePlacement>()
+        val groups = mutableListOf<MathConstructionPaintGroup>()
+        fun append(box: MathBox?) {
+            if (box == null) return
+            val shifted = box.translated(x, 0f)
+            glyphs += shifted.glyphs
+            rules += shifted.rules
+            groups += shifted.constructionPaintGroups
+            x += box.width
+        }
+        append(left)
+        append(body)
+        append(right)
+        val painted = geometryExtents(x, glyphs, rules, node.range, groups)
+        val children = listOfNotNull(left, body, right)
+        return painted.copy(
+            ascent = children.maxOfOrNull { it.ascent } ?: 0f,
+            descent = children.maxOfOrNull { it.descent } ?: 0f,
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = children.maxOfOrNull { it.texCleanBoxMetrics.ascent } ?: 0f,
+                descent = children.maxOfOrNull { it.texCleanBoxMetrics.descent } ?: 0f,
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = children.flatMap { it.texCleanBoxMetrics.evidence }.toSet() +
+                    MathTeXCleanBoxEvidence.CompletedChildBox,
+            ),
         )
     }
 
@@ -452,8 +837,27 @@ private class MathLayoutPass(
 
         val size = fontSize(style)
         val text = scalarString(checkNotNull(identity.scalar))
-        val baseMeasurement = glyphSource.shapeOutlineConstructionBase(text, size, spec.range)
+        val delimiterCandidates = constructionBaseCandidates(text, size, spec.range)
+            .mapNotNull { measurement ->
+                val glyph = measurement.run.glyphs.singleOrNull() ?: return@mapNotNull null
+                if (measurement.run.missingGlyph) return@mapNotNull null
+                measurement to selectVerticalConstruction(
+                    baseGlyphId = glyph.glyphId,
+                    normalRun = measurement.run,
+                    targetHeight = target.targetPx,
+                    size = size,
+                    style = style,
+                    range = spec.range,
+                    assemblyPolicy = MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
+                )
+            }
+        val selectedDelimiter = delimiterCandidates.firstOrNull { it.second?.reachesTarget == true }
+            ?: delimiterCandidates.firstOrNull()
+        val baseMeasurement = selectedDelimiter?.first
+            ?: glyphSource.shapeOutlineConstructionBase(text, size, spec.range)
         val baseRun = baseMeasurement.run
+        val constructionFaceId = baseRun.glyphs.singleOrNull()?.faceId ?: glyphSource.faceId
+        val constructionMathFont = mathFontForFace(constructionFaceId)
         val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
         if (baseRun.missingGlyph || baseGlyphId == null) {
             diagnostics += MathDiagnostic(
@@ -462,7 +866,7 @@ private class MathLayoutPass(
                 spec.delimiterRange,
             )
         }
-        val construction = baseGlyphId?.let {
+        val construction = selectedDelimiter?.second ?: baseGlyphId?.let {
             selectVerticalConstruction(
                 baseGlyphId = it,
                 normalRun = baseRun,
@@ -474,7 +878,8 @@ private class MathLayoutPass(
             )
         }
         val componentMeasurements = construction?.components?.map { component ->
-            component to glyphSource.measureOutlineConstructionGlyph(
+            component to measureConstructionGlyphForFace(
+                constructionFaceId,
                 component.glyphId,
                 size,
                 style,
@@ -501,7 +906,7 @@ private class MathLayoutPass(
             geometryExtents(placed.width, placed.glyphs, emptyList(), spec.range)
         }
         val achievedAdvance = construction?.let {
-            glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
+            constructionMathFont.scaleDesignUnits(it.advanceMeasurement, size)
         } ?: rawBox.inkBounds.height
         val axisY = -target.axisHeightPx
         val centeringAscent = if (construction?.kind == MathConstructionKind.Assembly) {
@@ -546,6 +951,7 @@ private class MathLayoutPass(
                 },
                 sourceRange = spec.range,
                 outlinePolicy = MathConstructionOutlinePolicy.RequireOutlineUnion,
+                faceId = constructionFaceId,
             )
         }
         val groupedGlyphs = shiftedGlyphs.map { glyph ->
@@ -594,7 +1000,7 @@ private class MathLayoutPass(
             )
         }
         val assemblyValidation = construction?.assemblyValidation
-            ?: baseGlyphId?.let(glyphSource.mathFont::verticalAssemblyValidation)
+            ?: baseGlyphId?.let(constructionMathFont::verticalAssemblyValidation)
         decision(
             "TeXContentDrivenDelimiter",
             spec.range,
@@ -617,6 +1023,11 @@ private class MathLayoutPass(
             "targetPolicy" to "XeTeXMakeLeftRightAxisFactorShortfall",
             "delimitedSubFormulaMinHeightUsed" to false,
             "baseGlyphId" to baseGlyphId,
+            "constructionFaceId" to constructionFaceId,
+            "fontClass" to baseRun.glyphs.firstOrNull()?.fontClass,
+            "requestedWeight" to baseRun.glyphs.firstOrNull()?.requestedWeight,
+            "resolvedWeight" to baseRun.glyphs.firstOrNull()?.resolvedWeight,
+            "fallbackReason" to baseRun.glyphs.firstOrNull()?.fallbackReason,
             "construction" to (construction?.kind ?: "NormalGlyphFallback"),
             "constructionPolicy" to construction?.constructionPolicy,
             "glyphIds" to groupedGlyphs.joinToString(",") { it.glyphId.toString() },
@@ -730,8 +1141,9 @@ private class MathLayoutPass(
                 node.range,
             )
         }
-        val lastGlyph = run.glyphs.lastOrNull()?.glyphId
-        val italicCorrection = lastGlyph?.let { glyphSource.mathFont.italicCorrection(it, size) } ?: 0f
+        val lastGlyph = run.glyphs.lastOrNull()
+        val symbolMathFont = lastGlyph?.let { mathFontForFaceOrNull(it.faceId) }
+        val italicCorrection = lastGlyph?.let { symbolMathFont?.italicCorrection(it.glyphId, size) } ?: 0f
         decision(
             "TeXMathSymbolResolution",
             node.range,
@@ -746,6 +1158,11 @@ private class MathLayoutPass(
             "resolvedAlphabet" to request.alphabet,
             "backendScalar" to unicodeLabel(resolved.backendScalar),
             "glyphIds" to run.glyphs.joinToString(",") { it.glyphId.toString() },
+            "faceIds" to run.glyphs.joinToString(",") { it.faceId.toString() },
+            "fontClass" to run.glyphs.firstOrNull()?.fontClass,
+            "requestedWeight" to run.glyphs.firstOrNull()?.requestedWeight,
+            "resolvedWeight" to run.glyphs.firstOrNull()?.resolvedWeight,
+            "fallbackReason" to run.glyphs.firstOrNull()?.fallbackReason,
             "italicCorrectionPx" to italicCorrection,
             "shaping" to "single-noad",
         )
@@ -759,6 +1176,11 @@ private class MathLayoutPass(
                 fontSizePx = size,
                 sourceRange = node.range,
                 style = style,
+                faceId = glyph.faceId,
+                fontClass = glyph.fontClass,
+                requestedWeight = glyph.requestedWeight,
+                resolvedWeight = glyph.resolvedWeight,
+                fallbackReason = glyph.fallbackReason,
             )
         }
         return LaidNode(
@@ -769,7 +1191,8 @@ private class MathLayoutPass(
             style = style,
             scriptBaseKind = when {
                 placements.size != 1 -> ScriptBaseKind.CompoundBox
-                placements.single().glyphId in glyphSource.mathFont.extendedShapeGlyphs -> ScriptBaseKind.ExtendedShape
+                mathFontForFaceOrNull(placements.single().faceId)
+                    ?.extendedShapeGlyphs?.contains(placements.single().glyphId) == true -> ScriptBaseKind.ExtendedShape
                 else -> ScriptBaseKind.Character
             },
         )
@@ -783,8 +1206,9 @@ private class MathLayoutPass(
         val size = fontSize(style)
         val resolved = glyphSource.resolveSymbols(requests, size)
         val coveredRange = SourceRange(symbols.first().range.start, symbols.last().range.endExclusive)
-        val finalItalicCorrection = resolved.run.glyphs.lastOrNull()?.glyphId
-            ?.let { glyphSource.mathFont.italicCorrection(it, size) }
+        val finalGlyph = resolved.run.glyphs.lastOrNull()
+        val finalItalicCorrection = finalGlyph
+            ?.let { mathFontForFaceOrNull(it.faceId)?.italicCorrection(it.glyphId, size) }
             ?: 0f
 
         symbols.indices.forEach { index ->
@@ -823,6 +1247,9 @@ private class MathLayoutPass(
                 "resolvedAlphabet" to request.alphabet,
                 "backendScalar" to unicodeLabel(resolved.backendScalars[index]),
                 "glyphIds" to glyphIds.joinToString(","),
+                "faceIds" to resolved.run.glyphs.indices
+                    .filter { resolved.glyphSourceRanges[it] == symbol.range }
+                    .joinToString(",") { resolved.run.glyphs[it].faceId.toString() },
                 "italicCorrectionPx" to if (index == symbols.lastIndex) finalItalicCorrection else 0f,
                 "shaping" to "compatible-ord-run",
             )
@@ -837,6 +1264,11 @@ private class MathLayoutPass(
                 fontSizePx = size,
                 sourceRange = resolved.glyphSourceRanges[index],
                 style = style,
+                faceId = glyph.faceId,
+                fontClass = glyph.fontClass,
+                requestedWeight = glyph.requestedWeight,
+                resolvedWeight = glyph.resolvedWeight,
+                fallbackReason = glyph.fallbackReason,
             )
         }
         val runNode = MathList(symbols, coveredRange)
@@ -890,19 +1322,30 @@ private class MathLayoutPass(
     )
 
     private fun layoutText(node: MathText, style: MathStyle): LaidNode {
-        val box = layoutTextSegments(node.segments, style, node.range)
+        val box = layoutTextSegments(node.segments, style, node.range, node.origin)
         decision(
             "TeXEmbeddedText",
             node.range,
             "commandRange" to node.commandRange,
             "contentRange" to node.contentRange,
             "text" to node.text,
+            "origin" to node.origin,
             "segmentCount" to node.segments.size,
             "spaceCount" to node.text.count { it.isWhitespace() || it == '\u00A0' },
             "style" to style,
             "fontSizePx" to fontSize(style),
             "shaping" to "TextRunNotMathNoadSequence",
-            "measurementPaintSource" to "SameMathFontFaceGlyphRun",
+            "measurementPaintSource" to "HostMathTextRunProvider",
+            "textLocale" to textLocale,
+            "faceIds" to box.glyphs.map { it.faceId }.distinct().joinToString(","),
+            "requestedWeights" to box.glyphs.map { it.requestedWeight }.distinct().joinToString(","),
+            "resolvedWeights" to box.glyphs.map { it.resolvedWeight }.distinct().joinToString(","),
+            "mathFallbackReasons" to box.glyphs.mapNotNull { it.fallbackReason }.distinct().joinToString(","),
+            "hostRoles" to box.glyphs.mapNotNull { it.hostTextDecision?.hostRole }.distinct().joinToString(","),
+            "hostFontKeys" to box.glyphs.mapNotNull { it.hostTextDecision?.fontKey }.distinct().joinToString(","),
+            "hostSelectionReasons" to box.glyphs.mapNotNull { it.hostTextDecision?.selectionReason }.distinct().joinToString(","),
+            "hostSubstitutionReasons" to box.glyphs.mapNotNull { it.hostTextDecision?.substitutionReason }.distinct().joinToString(","),
+            "hostCapabilityIssues" to box.glyphs.mapNotNull { it.hostTextDecision?.capabilityIssue?.code }.distinct().joinToString(","),
         )
         return LaidNode(
             node = node,
@@ -918,12 +1361,68 @@ private class MathLayoutPass(
         segments: List<MathTextSegment>,
         style: MathStyle,
         range: SourceRange,
+        origin: MathTextOrigin? = null,
     ): MathBox {
         val size = fontSize(style)
         var x = 0f
+        var hostLogicalAscent = 0f
+        var hostLogicalDescent = 0f
         val placements = mutableListOf<MathGlyphPlacement>()
         segments.forEach { segment ->
-            val run = glyphSource.shapeText(segment.text, size, segment.range)
+            val run = if (origin == null) {
+                // Declared operator names remain an operators-family math run, not host prose.
+                glyphSource.shapeText(segment.text, size, segment.range)
+            } else {
+                val provider = textRunProvider
+                if (provider == null) {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.MissingTextRunProvider,
+                        "Text atom '${segment.text}' requires an injected host MathTextRunProvider",
+                        segment.range,
+                    )
+                    return@forEach
+                }
+                when (val result = provider.shapeTextAtom(
+                    MathTextRunRequest(
+                        text = segment.text,
+                        sourceRange = segment.range,
+                        fontSizePx = size,
+                        requestedWeight = glyphSource.requestedWeight,
+                        locale = textLocale,
+                        origin = origin,
+                    ),
+                )) {
+                    is MathTextRunProviderResult.Ready -> result.run
+                    is MathTextRunProviderResult.CapabilityIssue -> {
+                        diagnostics += result.issue.asDiagnostic()
+                        return@forEach
+                    }
+                }
+            }
+            if (origin != null) {
+                validateHostTextRun(segment, run)?.let { invalid ->
+                    diagnostics += invalid
+                    return@forEach
+                }
+                hostLogicalAscent = max(hostLogicalAscent, run.ascent)
+                hostLogicalDescent = max(hostLogicalDescent, run.descent)
+                val invalidGlyph = run.glyphs.firstOrNull { glyph ->
+                    val host = glyph.hostTextDecision
+                    glyph.fallbackReason != null || host == null || host.faceId != glyph.faceId ||
+                        host.requestedWeight != glyph.requestedWeight ||
+                        host.resolvedWeight != glyph.resolvedWeight ||
+                        host.clusterRangeUtf16.start != glyph.textCluster ||
+                        host.sourceRange.start != segment.range.start + glyph.textCluster ||
+                        host.sourceRange.endExclusive > segment.range.endExclusive
+                }
+                if (invalidGlyph != null) {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.InvalidHostTextRunEvidence,
+                        "Host text glyph ${invalidGlyph.glyphId} does not carry a matching structured host face decision",
+                        segment.range,
+                    )
+                }
+            }
             if (run.missingGlyph) {
                 diagnostics += MathDiagnostic(
                     DiagnosticCode.MissingGlyph,
@@ -931,12 +1430,14 @@ private class MathLayoutPass(
                     segment.range,
                 )
             }
-            val clusters = run.glyphs.map { it.textCluster }
-            run.glyphs.forEachIndexed { index, glyph ->
+            val clusterBoundaries = (run.glyphs.map { it.textCluster } + segment.text.length)
+                .distinct()
+                .sorted()
+            run.glyphs.forEach { glyph ->
                 val sourceRange = textClusterSourceRange(
                     segment,
                     glyph.textCluster,
-                    clusters.getOrNull(index + 1),
+                    clusterBoundaries.firstOrNull { it > glyph.textCluster },
                 )
                 placements += MathGlyphPlacement(
                     glyphId = glyph.glyphId,
@@ -947,11 +1448,82 @@ private class MathLayoutPass(
                     fontSizePx = size,
                     sourceRange = sourceRange,
                     style = style,
+                    faceId = glyph.faceId,
+                    fontClass = glyph.fontClass,
+                    requestedWeight = glyph.requestedWeight,
+                    resolvedWeight = glyph.resolvedWeight,
+                    fallbackReason = glyph.fallbackReason,
+                    hostTextDecision = glyph.hostTextDecision?.copy(sourceRange = sourceRange),
                 )
             }
             x += run.width
         }
-        return geometryExtents(x, placements, emptyList(), range)
+        val geometry = geometryExtents(x, placements, emptyList(), range)
+        return if (origin == null) {
+            geometry
+        } else {
+            geometry.copy(
+                ascent = hostLogicalAscent,
+                descent = hostLogicalDescent,
+                texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                    ascent = hostLogicalAscent,
+                    descent = hostLogicalDescent,
+                    policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                    evidence = setOf(MathTeXCleanBoxEvidence.HostTextRunMetrics),
+                ),
+            )
+        }
+    }
+
+    private fun validateHostTextRun(
+        segment: MathTextSegment,
+        run: MeasuredMathRun,
+    ): MathDiagnostic? {
+        fun invalid(message: String) = MathDiagnostic(
+            DiagnosticCode.InvalidHostTextRunEvidence,
+            message,
+            segment.range,
+        )
+        if (!run.width.isFinite() || run.width < 0f ||
+            !run.ascent.isFinite() || run.ascent < 0f ||
+            !run.descent.isFinite() || run.descent < 0f
+        ) {
+            return invalid("Host text run has non-finite or negative logical metrics")
+        }
+        run.glyphs.forEach { glyph ->
+            val bounds = glyph.inkBounds
+            if (!glyph.x.isFinite() || !glyph.advance.isFinite() || glyph.advance < 0f ||
+                !glyph.baselineOffsetPx.isFinite() ||
+                !bounds.left.isFinite() || !bounds.top.isFinite() ||
+                !bounds.right.isFinite() || !bounds.bottom.isFinite() ||
+                bounds.right < bounds.left || bounds.bottom < bounds.top
+            ) {
+                return invalid("Host text glyph ${glyph.glyphId} has invalid placement or ink metrics")
+            }
+            if (glyph.textCluster !in segment.text.indices) {
+                return invalid("Host text glyph ${glyph.glyphId} has out-of-range UTF-16 cluster ${glyph.textCluster}")
+            }
+            val host = glyph.hostTextDecision
+                ?: return invalid("Host text glyph ${glyph.glyphId} is missing structured face evidence")
+            val cluster = host.clusterRangeUtf16
+            if (cluster.start != glyph.textCluster || cluster.endExclusive <= cluster.start ||
+                cluster.endExclusive > segment.text.length
+            ) {
+                return invalid("Host text glyph ${glyph.glyphId} has an invalid cluster range $cluster")
+            }
+            if (host.faceId != glyph.faceId || host.requestedWeight != glyph.requestedWeight ||
+                host.resolvedWeight != glyph.resolvedWeight || glyph.fallbackReason != null
+            ) {
+                return invalid("Host text glyph ${glyph.glyphId} has inconsistent face or weight evidence")
+            }
+            if (host.sourceRange.start < segment.range.start ||
+                host.sourceRange.endExclusive > segment.range.endExclusive || host.sourceRange.isEmpty
+            ) {
+                return invalid("Host text glyph ${glyph.glyphId} has an out-of-range source mapping")
+            }
+            host.capabilityIssue?.let { return it.asDiagnostic() }
+        }
+        return null
     }
 
     private fun textClusterSourceRange(
@@ -966,16 +1538,36 @@ private class MathLayoutPass(
         return SourceRange(start, end)
     }
 
+    private fun MathHostTextCapabilityIssue.asDiagnostic(): MathDiagnostic = MathDiagnostic(
+        code = when (code) {
+            MathHostTextCapabilityIssueCode.NonReplayableHostTextRun,
+            MathHostTextCapabilityIssueCode.PlatformMultiFaceStringDraw,
+            -> DiagnosticCode.NonReplayableHostTextRun
+
+            MathHostTextCapabilityIssueCode.UnsupportedBidirectionalText,
+            MathHostTextCapabilityIssueCode.UnsupportedComplexScript,
+            -> DiagnosticCode.UnsupportedHostTextShaping
+
+            MathHostTextCapabilityIssueCode.InvalidHostTextRunEvidence ->
+                DiagnosticCode.InvalidHostTextRunEvidence
+        },
+        message = message,
+        range = sourceRange,
+    )
+
     private fun resolveTopAccentAttachment(
+        faceId: MathFaceId,
         glyphId: UShort,
         fontSizePx: Float,
         fallbackAdvancePx: Float,
         range: SourceRange,
         role: String,
     ): AccentAttachmentEvidence = try {
+        val font = mathFontForFaceOrNull(faceId)
+            ?: return AccentAttachmentEvidence(fallbackAdvancePx / 2f, "TextFaceAdvanceCenter")
         AccentAttachmentEvidence(
-            glyphSource.mathFont.topAccentAttachment(glyphId, fontSizePx, fallbackAdvancePx),
-            if (glyphId in glyphSource.mathFont.topAccentAttachments) {
+            font.topAccentAttachment(glyphId, fontSizePx, fallbackAdvancePx),
+            if (glyphId in font.topAccentAttachments) {
                 "MathTopAccentAttachment"
             } else {
                 "OpenTypeAdvanceCenterFallback"
@@ -1009,7 +1601,10 @@ private class MathLayoutPass(
             )
             return base.copy(node = node, box = base.box.copy(range = node.range))
         }
-        val normalOutline = glyphSource.measureGlyphOutlineBounds(
+        val constructionFaceId = normalGlyph.faceId
+        val constructionMathFont = mathFontForFace(constructionFaceId)
+        val normalOutline = measureGlyphOutlineForFace(
+            constructionFaceId,
             normalGlyph.glyphId,
             size,
             style,
@@ -1018,9 +1613,9 @@ private class MathLayoutPass(
         val normalMeasuredGlyph = normalOutline.glyphs.single()
         val normalWidth = normalMeasuredGlyph.inkBounds.width.coerceAtLeast(normal.width)
         val targetWidth = base.box.width
-        val hasHorizontalConstruction = normalGlyph.glyphId in glyphSource.mathFont.horizontalConstructions
+        val hasHorizontalConstruction = normalGlyph.glyphId in constructionMathFont.horizontalConstructions
         val construction = if (node.identity.wide || hasHorizontalConstruction) {
-            glyphSource.mathFont.horizontalConstruction(
+            constructionMathFont.horizontalConstruction(
                 MathHorizontalConstructionRequest(
                     baseGlyphId = normalGlyph.glyphId,
                     targetSizePx = targetWidth,
@@ -1029,7 +1624,9 @@ private class MathLayoutPass(
                     normalGlyphOrthogonalExtentPx = normalMeasuredGlyph.inkBounds.height,
                 ),
             ) { glyphId ->
-                glyphSource.measureGlyphOutlineBounds(glyphId, size, style, node.commandRange)
+                measureGlyphOutlineForFace(
+                    constructionFaceId, glyphId, size, style, node.commandRange,
+                )
                     .glyphs.single().inkBounds.height
             }
         } else {
@@ -1038,7 +1635,7 @@ private class MathLayoutPass(
         val selected = construction ?: org.tiqian.math.font.opentype.MathVerticalConstruction(
             kind = MathConstructionKind.BaseGlyph,
             components = listOf(MathGlyphComponent(normalGlyph.glyphId, 0f)),
-            advanceMeasurement = normalWidth * glyphSource.mathFont.unitsPerEm / size,
+            advanceMeasurement = normalWidth * constructionMathFont.unitsPerEm / size,
             reachesTarget = !node.identity.wide,
             constructionPolicy = if (node.identity.wide) {
                 "VisibleNormalAccentAfterMissingHorizontalConstruction"
@@ -1060,13 +1657,14 @@ private class MathLayoutPass(
         // under-coverage remains auditable in the decision instead of becoming formula fallback.
         val groupId = if (selected.kind == MathConstructionKind.Assembly) nextConstructionPaintGroupId++ else null
         val accentGlyphs = selected.components.map { component ->
-            val measured = glyphSource.measureGlyphOutlineBounds(
+            val measured = measureGlyphOutlineForFace(
+                constructionFaceId,
                 component.glyphId,
                 size,
                 style,
                 node.commandRange,
             ).glyphs.single()
-            val componentX = glyphSource.mathFont.scaleDesignUnits(component.offset, size)
+            val componentX = constructionMathFont.scaleDesignUnits(component.offset, size)
             MathGlyphPlacement(
                 glyphId = component.glyphId,
                 x = componentX,
@@ -1077,13 +1675,18 @@ private class MathLayoutPass(
                 sourceRange = node.commandRange,
                 style = style,
                 constructionGroupId = groupId,
+                faceId = measured.faceId,
+                fontClass = measured.fontClass,
+                requestedWeight = measured.requestedWeight,
+                resolvedWeight = measured.resolvedWeight,
+                fallbackReason = measured.fallbackReason,
             )
         }
-        val achievedWidth = glyphSource.mathFont.scaleDesignUnits(selected.advanceMeasurement, size)
+        val achievedWidth = constructionMathFont.scaleDesignUnits(selected.advanceMeasurement, size)
         val accentAttachmentEvidence = if (selected.components.size == 1) {
             val placement = accentGlyphs.single()
             resolveTopAccentAttachment(
-                placement.glyphId, size, achievedWidth, node.commandRange, "accent",
+                placement.faceId, placement.glyphId, size, achievedWidth, node.commandRange, "accent",
             ).let { it.copy(valuePx = placement.x + it.valuePx) }
         } else {
             AccentAttachmentEvidence(achievedWidth / 2f, "AssemblyLogicalCenter")
@@ -1092,7 +1695,7 @@ private class MathLayoutPass(
         val baseGlyph = base.box.singleGlyphOrNull()
         val baseAttachmentEvidence = if (baseGlyph != null) {
             resolveTopAccentAttachment(
-                baseGlyph.glyphId, baseGlyph.fontSizePx, baseGlyph.advance, node.base.range, "base",
+                baseGlyph.faceId, baseGlyph.glyphId, baseGlyph.fontSizePx, baseGlyph.advance, node.base.range, "base",
             ).let { it.copy(valuePx = baseGlyph.x + it.valuePx) }
         } else {
             AccentAttachmentEvidence(base.box.width / 2f, "CompoundBoxLogicalCenter")
@@ -1119,6 +1722,7 @@ private class MathLayoutPass(
                         shapeKind = MathConstructionShapeKind.Assembly,
                         sourceRange = node.commandRange,
                         outlinePolicy = MathConstructionOutlinePolicy.RequireOutlineUnion,
+                        faceId = constructionFaceId,
                     ),
                 )
             }
@@ -1346,6 +1950,8 @@ private class MathLayoutPass(
             MathOperatorGlyphRequest(node.identity, style, node.commandRange),
             size,
         )
+        val operatorFaceId = resolved.run.glyphs.firstOrNull()?.faceId ?: glyphSource.faceId
+        val operatorMathFont = mathFontForFace(operatorFaceId)
         if (resolved.run.missingGlyph) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MissingGlyph,
@@ -1371,9 +1977,9 @@ private class MathLayoutPass(
             null
         }
         val assemblyValidation = construction?.assemblyValidation
-            ?: resolved.constructionBaseGlyphId?.let(glyphSource.mathFont::verticalAssemblyValidation)
+            ?: resolved.constructionBaseGlyphId?.let(operatorMathFont::verticalAssemblyValidation)
         val rawBox = if (construction != null) {
-            operatorConstructionBox(construction, node, style, size)
+            operatorConstructionBox(construction, node, style, size, operatorFaceId)
         } else {
             measuredRunBox(resolved.run, node.commandRange, style, size)
         }
@@ -1388,7 +1994,7 @@ private class MathLayoutPass(
         }
         val box = geometryExtents(rawBox.width, centeredPlacements, rawBox.rules, node.range)
         val achievedAdvance = construction?.let {
-            glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
+            operatorMathFont.scaleDesignUnits(it.advanceMeasurement, size)
         } ?: rawBox.inkBounds.height
         if (display && construction == null && achievedAdvance + GEOMETRY_EPSILON_PX < targetHeight) {
             diagnostics += MathDiagnostic(
@@ -1420,9 +2026,9 @@ private class MathLayoutPass(
             "MathItalicsCorrectionInfo"
         }
         val italicCorrection = construction?.assemblyItalicCorrection?.let {
-            glyphSource.mathFont.scaleDesignUnits(it, size)
+            operatorMathFont.scaleDesignUnits(it, size)
         } ?: finalGlyphId?.let {
-            glyphSource.mathFont.italicCorrection(it, size)
+            operatorMathFont.italicCorrection(it, size)
         } ?: 0f
         decision(
             "TeXOperatorNoad",
@@ -1468,7 +2074,7 @@ private class MathLayoutPass(
             style = style,
             scriptBaseKind = if (
                 (construction?.kind != null && construction.kind != MathConstructionKind.BaseGlyph) ||
-                box.glyphs.singleOrNull()?.glyphId in glyphSource.mathFont.extendedShapeGlyphs
+                box.glyphs.singleOrNull()?.glyphId in operatorMathFont.extendedShapeGlyphs
             ) {
                 ScriptBaseKind.ExtendedShape
             } else {
@@ -1493,6 +2099,11 @@ private class MathLayoutPass(
                 fontSizePx = size,
                 sourceRange = range,
                 style = style,
+                faceId = glyph.faceId,
+                fontClass = glyph.fontClass,
+                requestedWeight = glyph.requestedWeight,
+                resolvedWeight = glyph.resolvedWeight,
+                fallbackReason = glyph.fallbackReason,
             )
         }
         return geometryExtents(run.width, placements, emptyList(), range)
@@ -1507,22 +2118,27 @@ private class MathLayoutPass(
         style: MathStyle,
         range: SourceRange,
         assemblyPolicy: MathVerticalAssemblyPolicy = MathVerticalAssemblyPolicy.MathMLCoreUniformOverlap,
-    ): MathVerticalConstruction? = glyphSource.mathFont.verticalConstruction(
-        MathVerticalConstructionRequest(
-            baseGlyphId = baseGlyphId,
-            targetSizePx = targetHeight,
-            fontSizePx = size,
-            normalGlyphHeightPx = normalRun.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f,
-            normalGlyphAdvanceWidthPx = normalRun.width,
-            assemblyPolicy = assemblyPolicy,
-        ),
-        glyphVerticalExtentPx = { glyphId ->
-            glyphSource.measureGlyphOutlineBounds(glyphId, size, style, range)
-                .glyphs.singleOrNull()?.inkBounds?.height
-                ?: glyphSource.measureGlyph(glyphId, size, style, range).let { it.ascent + it.descent }
-        },
-    ) { glyphId ->
-        glyphSource.measureGlyph(glyphId, size, style, range).width
+    ): MathVerticalConstruction? {
+        val faceId = normalRun.glyphs.singleOrNull()?.faceId ?: glyphSource.faceId
+        val mathFont = mathFontForFace(faceId)
+        return mathFont.verticalConstruction(
+            MathVerticalConstructionRequest(
+                baseGlyphId = baseGlyphId,
+                targetSizePx = targetHeight,
+                fontSizePx = size,
+                normalGlyphHeightPx = normalRun.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f,
+                normalGlyphAdvanceWidthPx = normalRun.width,
+                assemblyPolicy = assemblyPolicy,
+            ),
+            glyphVerticalExtentPx = { glyphId ->
+                measureGlyphOutlineForFace(faceId, glyphId, size, style, range)
+                    .glyphs.singleOrNull()?.inkBounds?.height
+                    ?: measureGlyphForFace(faceId, glyphId, size, style, range)
+                        .let { it.ascent + it.descent }
+            },
+        ) { glyphId ->
+            measureGlyphForFace(faceId, glyphId, size, style, range).width
+        }
     }
 
     private fun operatorConstructionBox(
@@ -1530,9 +2146,10 @@ private class MathLayoutPass(
         node: MathOperator,
         style: MathStyle,
         size: Float,
+        faceId: MathFaceId,
     ): MathBox {
         val componentRuns = construction.components.map { component ->
-            component to glyphSource.measureGlyph(component.glyphId, size, style, node.commandRange)
+            component to measureGlyphForFace(faceId, component.glyphId, size, style, node.commandRange)
         }
         val placed = placeVerticalConstruction(
             construction = construction,
@@ -1590,7 +2207,8 @@ private class MathLayoutPass(
         val baselineOrigins = mutableListOf<Float>()
         val topStrokeCandidates = mutableListOf<MathConstructionOutlineEvidence.Available>()
         val placements = componentRuns.flatMapIndexed { componentIndex, (component, run) ->
-            val componentBottomY = -glyphSource.mathFont.scaleDesignUnits(component.offset, size)
+            val componentFont = run.glyphs.firstOrNull()?.faceId?.let(glyphSource::mathFontFor) ?: glyphSource.mathFont
+            val componentBottomY = -componentFont.scaleDesignUnits(component.offset, size)
             if (assembly) bottomOrigins += componentBottomY
             val runOriginX = when {
                 assembly -> 0f
@@ -1635,6 +2253,11 @@ private class MathLayoutPass(
                     fontSizePx = size,
                     sourceRange = sourceRange,
                     style = style,
+                    faceId = glyph.faceId,
+                    fontClass = glyph.fontClass,
+                    requestedWeight = glyph.requestedWeight,
+                    resolvedWeight = glyph.resolvedWeight,
+                    fallbackReason = glyph.fallbackReason,
                 )
             }
         }
@@ -1677,7 +2300,9 @@ private class MathLayoutPass(
         // Replay exact outlines for the radical's painted radicand without deriving its TeX box
         // from that flattened union. The already completed clean metric remains authoritative.
         val paintedGlyphs = box.glyphs.map { placement ->
-            val glyph = glyphSource.measureGlyphOutlineBounds(
+            if (mathFontForFaceOrNull(placement.faceId) == null) return@map placement
+            val glyph = measureGlyphOutlineForFace(
+                placement.faceId,
                 placement.glyphId,
                 placement.fontSizePx,
                 placement.style,
@@ -1739,8 +2364,69 @@ private class MathLayoutPass(
         val degreeStyle = MathStyle.ScriptScript
         val degree = node.degree?.let { layoutNode(it, degreeStyle, alphabetOverride).box }
         val size = fontSize(style)
-        val baseMeasurement = glyphSource.shapeOutlineConstructionBase(RADICAL_SIGN, size, node.commandRange)
+        data class RadicalFaceCandidate(
+            val measurement: MeasuredOutlineConstructionRun,
+            val faceId: MathFaceId,
+            val mathFont: OpenTypeMathFont,
+            val gapMin: Float,
+            val ruleThickness: Float,
+            val extraAscender: Float,
+            val targetHeight: Float,
+            val baseBox: MathBox,
+            val construction: MathVerticalConstruction?,
+        )
+        val faceCandidates = constructionBaseCandidates(
+            RADICAL_SIGN,
+            size,
+            node.commandRange,
+        ).mapNotNull { measurement ->
+            val run = measurement.run
+            val glyph = run.glyphs.singleOrNull() ?: return@mapNotNull null
+            if (run.missingGlyph) return@mapNotNull null
+            val faceMathFont = mathFontForFace(glyph.faceId)
+            val faceConstants = faceMathFont.constants
+            val candidateGap = faceMathFont.scaleDesignUnits(
+                if (style.level == MathStyleLevel.Display) {
+                    faceConstants.radicalDisplayStyleVerticalGap
+                } else {
+                    faceConstants.radicalVerticalGap
+                },
+                size,
+            )
+            val candidateRule = faceMathFont.scaleDesignUnits(faceConstants.radicalRuleThickness, size)
+            val candidateExtra = faceMathFont.scaleDesignUnits(faceConstants.radicalExtraAscender, size)
+            val candidateTarget = radicand.height + candidateGap + candidateRule
+            val candidateBox = measuredRunBox(run, node.commandRange, style, size)
+            RadicalFaceCandidate(
+                measurement,
+                glyph.faceId,
+                faceMathFont,
+                candidateGap,
+                candidateRule,
+                candidateExtra,
+                candidateTarget,
+                candidateBox,
+                selectVerticalConstruction(
+                    baseGlyphId = glyph.glyphId,
+                    normalRun = run,
+                    targetHeight = candidateTarget,
+                    size = size,
+                    style = style,
+                    range = node.commandRange,
+                    assemblyPolicy = MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
+                ),
+            )
+        }
+        val selectedFace = faceCandidates.firstOrNull { it.construction?.reachesTarget == true }
+            ?: faceCandidates.firstOrNull()
+        val baseMeasurement = selectedFace?.measurement
+            ?: glyphSource.shapeOutlineConstructionBase(RADICAL_SIGN, size, node.commandRange)
         val baseRun = baseMeasurement.run
+        val constructionFaceId = selectedFace?.faceId
+            ?: baseRun.glyphs.singleOrNull()?.faceId
+            ?: glyphSource.faceId
+        val constructionMathFont = selectedFace?.mathFont ?: mathFontForFace(constructionFaceId)
+        val constructionConstants = constructionMathFont.constants
         val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
         if (baseRun.missingGlyph || baseGlyphId == null) {
             diagnostics += MathDiagnostic(
@@ -1750,37 +2436,30 @@ private class MathLayoutPass(
             )
         }
 
-        val gapMin = scale(
-            if (style.level == MathStyleLevel.Display) {
-                constants.radicalDisplayStyleVerticalGap
-            } else {
-                constants.radicalVerticalGap
-            },
-            style,
+        val gapMin = selectedFace?.gapMin ?: constructionMathFont.scaleDesignUnits(
+            if (style.level == MathStyleLevel.Display) constructionConstants.radicalDisplayStyleVerticalGap
+            else constructionConstants.radicalVerticalGap,
+            size,
         )
-        val ruleThickness = scale(constants.radicalRuleThickness, style)
-        val extraAscender = scale(constants.radicalExtraAscender, style)
+        val ruleThickness = selectedFace?.ruleThickness
+            ?: constructionMathFont.scaleDesignUnits(constructionConstants.radicalRuleThickness, size)
+        val extraAscender = selectedFace?.extraAscender
+            ?: constructionMathFont.scaleDesignUnits(constructionConstants.radicalExtraAscender, size)
         // XeTeX make_radical selects the delimiter from clean_box height + depth. A leaf native
         // math glyph contributes its exact glyph bbox to that box, while a compound nucleus
         // contributes the already-completed logical box (including an inner radical's reserve).
         // The painted subtree ink union is deliberately not a substitute for clean_box.
-        val targetHeight = radicand.height + gapMin + ruleThickness
-        val baseRadical = measuredRunBox(baseRun, node.commandRange, style, size)
+        val targetHeight = selectedFace?.targetHeight ?: radicand.height + gapMin + ruleThickness
+        val baseRadical = selectedFace?.baseBox ?: measuredRunBox(baseRun, node.commandRange, style, size)
         val baseGlyphHeight = baseRadical.inkBounds.height
-        val construction = baseGlyphId?.let {
-            selectVerticalConstruction(
-                baseGlyphId = it,
-                normalRun = baseRun,
-                targetHeight = targetHeight,
-                size = size,
-                style = style,
-                range = node.commandRange,
-                assemblyPolicy = MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
-            )
+        val construction = selectedFace?.construction ?: baseGlyphId?.let {
+            selectVerticalConstruction(it, baseRun, targetHeight, size, style, node.commandRange,
+                MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue)
         }
         val baseGlyphCoversTarget = construction?.kind == MathConstructionKind.BaseGlyph
         val constructionMeasurements = construction?.components?.map { component ->
-            component to glyphSource.measureOutlineConstructionGlyph(
+            component to measureConstructionGlyphForFace(
+                constructionFaceId,
                 component.glyphId,
                 size,
                 style,
@@ -1804,12 +2483,12 @@ private class MathLayoutPass(
             )
         }
         val assemblyValidation = construction?.assemblyValidation
-            ?: baseGlyphId?.let(glyphSource.mathFont::verticalAssemblyValidation)
+            ?: baseGlyphId?.let(constructionMathFont::verticalAssemblyValidation)
         val assemblyTable = baseGlyphId?.let {
-            glyphSource.mathFont.verticalConstructions[it]?.assembly
+            constructionMathFont.verticalConstructions[it]?.assembly
         }
         val achievedAdvance = construction?.let {
-            glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, size)
+            constructionMathFont.scaleDesignUnits(it.advanceMeasurement, size)
         } ?: baseGlyphHeight
         val constructionExcess = (achievedAdvance - targetHeight).coerceAtLeast(0f)
         val actualClearance = gapMin + constructionExcess / 2f
@@ -1932,6 +2611,7 @@ private class MathLayoutPass(
             },
             sourceRange = node.commandRange,
             outlinePolicy = MathConstructionOutlinePolicy.RequireOutlineUnion,
+            faceId = constructionFaceId,
         )
         val groupedRadicalInB = radicalInB.copy(
             glyphs = radicalInB.glyphs.map {
@@ -1970,8 +2650,14 @@ private class MathLayoutPass(
         // unicode-math's XeTeX root wrapper supplies signed MATH kerns and raises the degree by
         // (height(B) - depth(B)) * RadicalDegreeBottomRaisePercent. Horizontal TeX clamping is
         // independent and remains unchanged.
-        val kernBeforeDegree = if (degree == null) 0f else scale(constants.radicalKernBeforeDegree, style)
-        val kernAfterDegree = if (degree == null) 0f else scale(constants.radicalKernAfterDegree, style)
+        val kernBeforeDegree = if (degree == null) 0f else constructionMathFont.scaleDesignUnits(
+            constructionConstants.radicalKernBeforeDegree,
+            size,
+        )
+        val kernAfterDegree = if (degree == null) 0f else constructionMathFont.scaleDesignUnits(
+            constructionConstants.radicalKernAfterDegree,
+            size,
+        )
         val degreeHorizontalPlacement = degree?.let {
             resolveRadicalDegreeHorizontalPlacement(
                 degreeWidthPx = it.width,
@@ -1983,7 +2669,7 @@ private class MathLayoutPass(
         val degreeX = degreeHorizontalPlacement?.degreeX
         val unindexedX = degreeHorizontalPlacement?.radicalX ?: 0f
         val logicalWidth = unindexedX + unindexedBox.width
-        val degreeRaisePercent = constants.radicalDegreeBottomRaisePercent
+        val degreeRaisePercent = constructionConstants.radicalDegreeBottomRaisePercent
         val degreeRaiseReferencePx = if (degree == null) null else unindexedBox.ascent - unindexedBox.descent
         val degreeRaisePx = if (degree == null) {
             null
@@ -2044,6 +2730,11 @@ private class MathLayoutPass(
             "OpenTypeRadicalConstruction",
             node.commandRange,
             "baseGlyphId" to baseGlyphId,
+            "constructionFaceId" to constructionFaceId,
+            "fontClass" to baseRun.glyphs.firstOrNull()?.fontClass,
+            "requestedWeight" to baseRun.glyphs.firstOrNull()?.requestedWeight,
+            "resolvedWeight" to baseRun.glyphs.firstOrNull()?.resolvedWeight,
+            "fallbackReason" to baseRun.glyphs.firstOrNull()?.fallbackReason,
             "construction" to constructionLabel,
             "componentGlyphIds" to construction?.components?.joinToString(",") { it.glyphId.toString() },
             "componentOffsetsDesignUnits" to construction?.components?.joinToString(",") { it.offset.toString() },
@@ -2633,7 +3324,12 @@ private class MathLayoutPass(
         }
         val evidence = mutableSetOf<MathTeXCleanBoxEvidence>()
         val outlineGlyphs = box.glyphs.map { placement ->
-            val measured = glyphSource.measureGlyphOutlineBounds(
+            if (mathFontForFaceOrNull(placement.faceId) == null) {
+                evidence += MathTeXCleanBoxEvidence.GlyphOutline
+                return@map placement
+            }
+            val measured = measureGlyphOutlineForFace(
+                placement.faceId,
                 placement.glyphId,
                 placement.fontSizePx,
                 placement.style,
@@ -2692,23 +3388,28 @@ private class MathLayoutPass(
             decision("OpenTypeMathKern", range, "kind" to "superscript", "strategy" to "box-zero", "kernPx" to 0f)
             return 0f
         }
-        val first = glyphSource.mathFont.mathKern(
+        if (baseGlyph.faceId != scriptGlyph.faceId) {
+            decision("OpenTypeMathKern", range, "kind" to "superscript", "strategy" to "cross-face-zero", "kernPx" to 0f)
+            return 0f
+        }
+        val mathFont = mathFontForFaceOrNull(baseGlyph.faceId) ?: return 0f
+        val first = mathFont.mathKern(
             baseGlyph.glyphId,
             MathKernCorner.TopRight,
             shift - script.box.inkBounds.bottom,
             baseGlyph.fontSizePx,
-        ) + glyphSource.mathFont.mathKern(
+        ) + mathFont.mathKern(
             scriptGlyph.glyphId,
             MathKernCorner.BottomLeft,
             -script.box.inkBounds.bottom,
             scriptGlyph.fontSizePx,
         )
-        val second = glyphSource.mathFont.mathKern(
+        val second = mathFont.mathKern(
             baseGlyph.glyphId,
             MathKernCorner.TopRight,
             -base.box.inkBounds.top,
             baseGlyph.fontSizePx,
-        ) + glyphSource.mathFont.mathKern(
+        ) + mathFont.mathKern(
             scriptGlyph.glyphId,
             MathKernCorner.BottomLeft,
             -shift - base.box.inkBounds.top,
@@ -2743,23 +3444,28 @@ private class MathLayoutPass(
             decision("OpenTypeMathKern", range, "kind" to "subscript", "strategy" to "box-zero", "kernPx" to 0f)
             return 0f
         }
-        val first = glyphSource.mathFont.mathKern(
+        if (baseGlyph.faceId != scriptGlyph.faceId) {
+            decision("OpenTypeMathKern", range, "kind" to "subscript", "strategy" to "cross-face-zero", "kernPx" to 0f)
+            return 0f
+        }
+        val mathFont = mathFontForFaceOrNull(baseGlyph.faceId) ?: return 0f
+        val first = mathFont.mathKern(
             baseGlyph.glyphId,
             MathKernCorner.BottomRight,
             -shift - script.box.inkBounds.top,
             baseGlyph.fontSizePx,
-        ) + glyphSource.mathFont.mathKern(
+        ) + mathFont.mathKern(
             scriptGlyph.glyphId,
             MathKernCorner.TopLeft,
             -script.box.inkBounds.top,
             scriptGlyph.fontSizePx,
         )
-        val second = glyphSource.mathFont.mathKern(
+        val second = mathFont.mathKern(
             baseGlyph.glyphId,
             MathKernCorner.BottomRight,
             -base.box.inkBounds.bottom,
             baseGlyph.fontSizePx,
-        ) + glyphSource.mathFont.mathKern(
+        ) + mathFont.mathKern(
             scriptGlyph.glyphId,
             MathKernCorner.TopLeft,
             shift - base.box.inkBounds.bottom,
@@ -2982,8 +3688,6 @@ private class MathLayoutPass(
         // the content-driven \left/\right policy and from DelimitedSubFormulaMinHeight.
         val delimiterStyle = MathStyle.Text
         val delimiterFontSize = fontSize(delimiterStyle)
-        val leftBase = glyphSource.shapeOutlineConstructionBase("(", delimiterFontSize, node.range).run
-        val rightBase = glyphSource.shapeOutlineConstructionBase(")", delimiterFontSize, node.range).run
         val axisY = -scale(constants.axisHeight, delimiterStyle)
 
         fun construction(baseRun: MeasuredMathRun, side: String): MathVerticalConstruction? {
@@ -2998,6 +3702,21 @@ private class MathLayoutPass(
                     range = node.range,
                 )
             }
+            return selected
+        }
+
+        fun chooseDelimiter(text: String, side: String): Pair<MeasuredMathRun, MathVerticalConstruction?> {
+            val candidates = constructionBaseCandidates(text, delimiterFontSize, node.range)
+                .map { it.run }
+                .filter { !it.missingGlyph && it.glyphs.size == 1 }
+                .map { it to construction(it, side) }
+            return candidates.firstOrNull { it.second?.reachesTarget == true }
+                ?: candidates.firstOrNull()
+                ?: (glyphSource.shapeOutlineConstructionBase(text, delimiterFontSize, node.range).run to null)
+        }
+        val (leftBase, leftConstruction) = chooseDelimiter("(", "left")
+        val (rightBase, rightConstruction) = chooseDelimiter(")", "right")
+        listOf("left" to leftConstruction, "right" to rightConstruction).forEach { (side, selected) ->
             if (selected == null) {
                 diagnostics += MathDiagnostic(
                     DiagnosticCode.MissingMathConstruction,
@@ -3005,21 +3724,20 @@ private class MathLayoutPass(
                     node.range,
                 )
             }
-            return selected
         }
-
-        val leftConstruction = construction(leftBase, "left")
-        val rightConstruction = construction(rightBase, "right")
         fun delimiterBox(
             side: String,
             construction: MathVerticalConstruction?,
             baseRun: MeasuredMathRun,
         ): MathBox {
             val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
+            val delimiterFaceId = baseRun.glyphs.singleOrNull()?.faceId ?: glyphSource.faceId
+            val delimiterMathFont = mathFontForFace(delimiterFaceId)
             val assemblyValidation = construction?.assemblyValidation
-                ?: baseGlyphId?.let(glyphSource.mathFont::verticalAssemblyValidation)
+                ?: baseGlyphId?.let(delimiterMathFont::verticalAssemblyValidation)
             val componentRuns = construction?.components?.map { component ->
-                component to glyphSource.measureOutlineConstructionGlyph(
+                component to measureConstructionGlyphForFace(
+                    delimiterFaceId,
                     component.glyphId,
                     delimiterFontSize,
                     delimiterStyle,
@@ -3047,6 +3765,11 @@ private class MathLayoutPass(
                         fontSizePx = delimiterFontSize,
                         sourceRange = node.range,
                         style = delimiterStyle,
+                        faceId = glyph.faceId,
+                        fontClass = glyph.fontClass,
+                        requestedWeight = glyph.requestedWeight,
+                        resolvedWeight = glyph.resolvedWeight,
+                        fallbackReason = glyph.fallbackReason,
                     )
                 }
             } else {
@@ -3064,7 +3787,7 @@ private class MathLayoutPass(
             val advance = placedConstruction?.width ?: baseRun.width
             val box = geometryExtents(advance, placements, emptyList(), node.range)
             val achievedAdvance = construction?.let {
-                glyphSource.mathFont.scaleDesignUnits(it.advanceMeasurement, delimiterFontSize)
+                delimiterMathFont.scaleDesignUnits(it.advanceMeasurement, delimiterFontSize)
             } ?: baseRun.ascent + baseRun.descent
             val inkHeight = box.inkBounds.height
             val coversStackTop = box.inkBounds.top <= stack.inkBounds.top + GEOMETRY_EPSILON_PX
@@ -3175,18 +3898,23 @@ private class MathLayoutPass(
     ): HorizontalLayout {
         val raw = flattenListChildren(list, style, alphabetOverride)
         val classes = raw.map { it.laid.atomClass }.toMutableList()
-        for (index in classes.indices) {
-            val previous = classes.getOrNull(index - 1)
+        val noadIndices = raw.indices.filter { raw[it].participatesInNoadSpacing }
+        for (position in noadIndices.indices) {
+            val index = noadIndices[position]
+            val previousIndex = noadIndices.getOrNull(position - 1)
+            val previous = previousIndex?.let(classes::get)
             val current = classes[index]
             if (previous == MathAtomClass.Binary && current in binaryRightCanceller) {
-                classes[index - 1] = MathAtomClass.Ordinary
+                classes[checkNotNull(previousIndex)] = MathAtomClass.Ordinary
             }
-            val resolvedPrevious = classes.getOrNull(index - 1)
+            val resolvedPrevious = previousIndex?.let(classes::get)
             if (current == MathAtomClass.Binary && (resolvedPrevious == null || resolvedPrevious in binaryLeftCanceller)) {
                 classes[index] = MathAtomClass.Ordinary
             }
         }
-        if (classes.lastOrNull() == MathAtomClass.Binary) classes[classes.lastIndex] = MathAtomClass.Ordinary
+        noadIndices.lastOrNull()?.let { last ->
+            if (classes[last] == MathAtomClass.Binary) classes[last] = MathAtomClass.Ordinary
+        }
         raw.indices.forEach { index ->
             if (raw[index].laid.atomClass != classes[index]) {
                 decision(
@@ -3200,9 +3928,9 @@ private class MathLayoutPass(
         }
 
         val spacedItems = raw.mapIndexed { index, item ->
-            val leftClass = classes.getOrNull(index - 1)
+            val leftClass = noadIndices.lastOrNull { it < index }?.let(classes::get)
             val rightClass = classes[index]
-            val glue = if (leftClass == null) {
+            val glue = if (!item.participatesInNoadSpacing || leftClass == null) {
                 MathGlueAdjustment.Zero
             } else {
                 atomGlue(leftClass, rightClass, item.laid.style, item.node.range)
@@ -3210,7 +3938,7 @@ private class MathLayoutPass(
             item.copy(glueBefore = glue, atomClass = rightClass)
         }
         val items = spacedItems.mapIndexed { index, item ->
-            val rightClass = classes.getOrNull(index + 1)
+            val rightClass = noadIndices.firstOrNull { it > index }?.let(classes::get)
             val correction = item.laid.italicCorrectionPx.coerceAtLeast(0f)
             if (correction > 0f) {
                 decision(
@@ -3273,6 +4001,7 @@ private class MathLayoutPass(
         alphabetOverride: MathAlphabetOverride?,
     ): List<PendingHorizontalItem> {
         var currentStyle = initialStyle
+        var currentAlphabetOverride = alphabetOverride
         return buildList {
             list.children.forEach { child ->
                 if (child is MathStyleDeclaration) {
@@ -3285,8 +4014,18 @@ private class MathLayoutPass(
                         "listRange" to "${list.range.start}..${list.range.endExclusive}",
                     )
                     currentStyle = nextStyle
+                } else if (child is MathAlphabetDeclaration) {
+                    currentAlphabetOverride = MathAlphabetOverride(child.family, child.alphabet)
+                    decision(
+                        "TeXMathAlphabetDeclaration",
+                        child.range,
+                        "family" to child.family,
+                        "alphabet" to child.alphabet,
+                        "listRange" to "${list.range.start}..${list.range.endExclusive}",
+                        "policy" to "LegacyTeXListDeclaration",
+                    )
                 } else {
-                    addAll(flattenPendingHorizontal(child, currentStyle, alphabetOverride))
+                    addAll(flattenPendingHorizontal(child, currentStyle, currentAlphabetOverride))
                 }
             }
         }
@@ -3343,6 +4082,7 @@ private class MathLayoutPass(
         laid = layoutNode(node, style, alphabetOverride),
         glueBefore = MathGlueAdjustment.Zero,
         atomClass = MathAtomClass.Ordinary,
+        participatesInNoadSpacing = node !is MathExplicitSpace,
     )
 
     private fun PendingHorizontalItem.ordRunKey(): OrdRunKey? {
@@ -3463,7 +4203,12 @@ private class MathLayoutPass(
     ): MathBox {
         val cleanEvidence = mutableSetOf<MathTeXCleanBoxEvidence>()
         val cleanGlyphs = glyphs.map { placement ->
-            val measured = glyphSource.measureGlyphOutlineBounds(
+            if (mathFontForFaceOrNull(placement.faceId) == null) {
+                cleanEvidence += MathTeXCleanBoxEvidence.GlyphOutline
+                return@map placement
+            }
+            val measured = measureGlyphOutlineForFace(
+                placement.faceId,
                 placement.glyphId,
                 placement.fontSizePx,
                 placement.style,
@@ -3625,6 +4370,9 @@ private class MathLayoutPass(
             appendLine(
                 "glyph[$index] id=${glyph.glyphId} range=${glyph.sourceRange.start}..${glyph.sourceRange.endExclusive} " +
                     "style=${glyph.style} size=${glyph.fontSizePx} x=${glyph.x} baseline=${glyph.baselineY} " +
+                    "face=${glyph.faceId} class=${glyph.fontClass} weight=${glyph.requestedWeight}->${glyph.resolvedWeight} " +
+                    "mathFallback=${glyph.fallbackReason} " +
+                    "hostDecision=${glyph.hostTextDecision} " +
                     "ink=${glyph.inkBounds.left},${glyph.inkBounds.top},${glyph.inkBounds.right},${glyph.inkBounds.bottom} " +
                     "constructionGroup=${glyph.constructionGroupId}",
             )
@@ -3638,6 +4386,7 @@ private class MathLayoutPass(
         box.constructionPaintGroups.forEach { group ->
             appendLine(
                 "constructionPaintGroup[${group.id}] kind=${group.kind} shape=${group.shapeKind} " +
+                    "face=${group.faceId} " +
                     "range=${group.sourceRange.start}..${group.sourceRange.endExclusive} " +
                     "outlinePolicy=${group.outlinePolicy}",
             )
@@ -3713,6 +4462,8 @@ private class MathLayoutPass(
         val glueBefore: MathGlueAdjustment,
         val atomClass: MathAtomClass,
         val trailingItalicCorrectionPx: Float = 0f,
+        /** False for explicit glue/kern nodes, which never become TeX noads or alter Bin repair. */
+        val participatesInNoadSpacing: Boolean = true,
     )
 
     private data class PendingHorizontalItem(
@@ -3753,6 +4504,16 @@ private class MathLayoutPass(
         const val LATEX_XETEX_GENFRAC_TEXT_DELIMITER_EM = 1f
         const val LATEX_XETEX_GENFRAC_SCRIPT_DELIMITER_EM = 1.45f
         const val LATEX_XETEX_GENFRAC_SCRIPT_SCRIPT_DELIMITER_EM = 1.35f
+        // Reviewed amsmath/XeTeX showbox policy: matrix/aligned rows use a 0.7em/0.3em strut,
+        // cases applies arraystretch=1.2, and aligned inserts its named inter-row separation.
+        const val TEX_ARRAY_STRUT_ASCENT_EM = 0.7f
+        const val TEX_ARRAY_STRUT_DESCENT_EM = 0.3f
+        const val TEX_CASES_STRUT_ASCENT_EM = 0.84f
+        const val TEX_CASES_STRUT_DESCENT_EM = 0.36f
+        const val TEX_ALIGNED_ROW_GAP_EM = 1f / 6f
+        const val TEX_ALIGNED_PAIR_GAP_EM = 2f
+        const val TEX_ARRAY_INTERCOLUMN_EM = 1f
+        const val TEX_ARRAY_COLUMN_SEPARATION_EM = 0.5f
 
         val binaryLeftCanceller = setOf(
             MathAtomClass.Binary,

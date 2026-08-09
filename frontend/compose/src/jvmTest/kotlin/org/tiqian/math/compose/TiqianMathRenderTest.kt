@@ -1,11 +1,13 @@
 package org.tiqian.math.compose
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -18,6 +20,7 @@ import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -25,9 +28,23 @@ import androidx.compose.ui.use
 import org.tiqian.math.core.MathLayoutResult
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.font.opentype.LeteSansMath
+import org.tiqian.math.font.skia.SkiaMathFontFamily
 import org.tiqian.math.font.skia.SkiaMathFontFace
+import org.tiqian.math.font.skia.SkiaReplayCatalog
+import org.tiqian.math.font.skia.SkiaReplayFace
+import org.tiqian.math.font.skia.SkiaMathTextRunProvider
+import org.tiqian.math.core.MathFaceId
+import org.tiqian.math.core.MathHostTextFaceDecision
+import org.tiqian.math.core.SourceRange
+import org.tiqian.math.core.MathFontFallbackReason
+import org.tiqian.math.core.MathFontWeight
+import org.tiqian.math.core.MathStyle
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathTextRunProvider
+import org.tiqian.math.layout.MathTextRunRequest
+import org.tiqian.math.layout.MathTextRunProviderResult
+import org.tiqian.math.layout.MeasuredMathRun
 import org.tiqian.math.layout.breakIntoLines
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -39,6 +56,113 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalComposeUiApi::class)
 class TiqianMathRenderTest {
+    @Test
+    fun legacySingleFaceRememberApiPreservesTheSurroundingWeightRequest() {
+        var observed: MathLayoutResult? = null
+        ImageComposeScene(width = 180, height = 100, density = Density(1f)) {
+            val face = rememberMathFontFace(LeteSansMath.loadBytes())
+            TiqianMath(
+                source = "x+1",
+                style = TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Bold),
+                fontFace = face,
+                onMathLayout = { observed = it },
+            )
+        }.use { it.render() }
+        val glyphs = assertNotNull(observed).box.glyphs
+        assertTrue(glyphs.all { it.requestedWeight == MathFontWeight.Bold })
+        assertTrue(glyphs.all { it.resolvedWeight == MathFontWeight.Regular })
+        assertTrue(glyphs.all { it.fallbackReason == MathFontFallbackReason.RequestedWeightUnavailable })
+    }
+
+    @Test
+    fun surroundingTextStyleWeightSelectsLeteBoldAndForwardsWeightToExplicitHostTextProvider() {
+        var regular: MathLayoutResult? = null
+        var bold: MathLayoutResult? = null
+        SkiaMathFontFamily.loadBundledLete().use { regularFamily ->
+            val boldFamily = regularFamily.selectWeight(MathFontWeight.Bold) as SkiaMathFontFamily
+            ComposeTestHostTextProvider(
+                SkiaMathFontFace(
+                    LeteSansMath.load(),
+                    MathFaceId("compose-test-host-text"),
+                    resolvedWeight = MathFontWeight.Bold,
+                    requestedWeight = MathFontWeight.Bold,
+                ),
+            ).use { provider ->
+                ImageComposeScene(width = 520, height = 180, density = Density(1f)) {
+                    TiqianMath(
+                        "x+\\aleph_0",
+                        style = TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Normal),
+                        fontFace = regularFamily,
+                        onMathLayout = { regular = it },
+                    )
+                    TiqianMath(
+                        "x+\\text{中文}+x^{中文2}+\\aleph_0",
+                        style = TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Bold),
+                        fontFace = boldFamily,
+                        textRunProvider = provider,
+                        onMathLayout = { bold = it },
+                    )
+                }.use { it.render() }
+                val regularGlyphs = assertNotNull(regular).box.glyphs
+                val boldGlyphs = assertNotNull(bold).box.glyphs
+                assertTrue(regularGlyphs.any { it.faceId.value == "lete-sans-math-regular" })
+                assertTrue(boldGlyphs.any { it.faceId.value == "lete-sans-math-bold" })
+                val hostGlyphs = boldGlyphs.filter { it.faceId == provider.faceId }
+                assertTrue(hostGlyphs.isNotEmpty())
+                assertTrue(hostGlyphs.all { it.requestedWeight == MathFontWeight.Bold })
+                assertTrue(hostGlyphs.any { it.fontSizePx < 32f }, "script text is shaped at the actual MATH script size")
+                assertTrue(boldGlyphs.any {
+                    it.faceId.value == "lete-sans-math-regular" &&
+                        it.fallbackReason == MathFontFallbackReason.MissingGlyphInRequestedWeight
+                }, "Lete Bold's missing aleph falls back to Lete Regular without changing the formula weight request")
+            }
+        }
+    }
+
+    @Test
+    fun collidingHostFaceIdUsesOnlyFallbackBeforeAnyMathPaint() {
+        SkiaMathFontFamily.loadBundledLete().use { math ->
+            ComposeTestHostTextProvider(
+                SkiaMathFontFace(
+                    LeteSansMath.load(),
+                    MathFaceId("lete-sans-math-regular"),
+                ),
+            ).use { provider ->
+                var captured: org.tiqian.math.layout.MathFormulaCapabilityResult.FallbackRequired? = null
+                ImageComposeScene(width = 100, height = 70, density = Density(1f)) {
+                    Box(Modifier.fillMaxSize().background(Color.White)) {
+                        TiqianMathOrFallback(
+                            source = "\\text{中}",
+                            fontFace = math,
+                            textRunProvider = provider,
+                            fallback = {
+                                captured = it
+                                Canvas(Modifier.size(50.dp, 30.dp)) { drawRect(Color.Magenta) }
+                            },
+                        )
+                    }
+                }.use { scene ->
+                    val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                    var magenta = 0
+                    var dark = 0
+                    repeat(pixels.height) { y ->
+                        repeat(pixels.width) { x ->
+                            val pixel = pixels[x, y]
+                            if (pixel.red > 0.8f && pixel.blue > 0.8f && pixel.green < 0.2f) magenta++
+                            if (pixel.red < 0.3f && pixel.green < 0.3f && pixel.blue < 0.3f) dark++
+                        }
+                    }
+                    assertEquals(50 * 30, magenta)
+                    assertEquals(0, dark, "conflicting face ownership must not paint Tiqian glyphs")
+                }
+                val fallback = assertNotNull(captured)
+                assertTrue(fallback.diagnostics.any {
+                    it.code == org.tiqian.math.core.DiagnosticCode.ReplayFaceOwnershipConflict
+                })
+            }
+        }
+    }
+
     @Test
     fun explicitTeXNullDelimiterSpaceReachesTheFractionNoad() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
@@ -171,44 +295,51 @@ class TiqianMathRenderTest {
     @Test
     fun actualRendererReplaysTextOperatorAccentsAndRuleDecorationsFromOneLayoutResult() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
-            var observed: MathLayoutResult? = null
-            val source = "\\text{rate }+\\operatorname{rank}_A+\\vec{abcdefghijklmno}+" +
-                "\\overline{x+y}+\\underline{\\frac{a}{b}}"
-            ImageComposeScene(width = 900, height = 260, density = Density(1f)) {
-                Box(Modifier.fillMaxSize().background(Color.White)) {
-                    TiqianMath(
-                        source = source,
-                        modifier = Modifier.padding(16.dp),
-                        mode = MathMode.Display,
-                        fontSizePx = 40f,
-                        fontFace = face,
-                        color = Color.Black.copy(alpha = 0.5f),
-                        onMathLayout = { observed = it },
-                    )
+            SkiaMathTextRunProvider.fromBytes(
+                MathFaceId("compose-standalone-text"),
+                LeteSansMath.loadBytes(),
+            ).use { textProvider ->
+                var observed: MathLayoutResult? = null
+                val source = "\\text{rate }+\\operatorname{rank}_A+\\vec{abcdefghijklmno}+" +
+                    "\\overline{x+y}+\\underline{\\frac{a}{b}}"
+                ImageComposeScene(width = 900, height = 260, density = Density(1f)) {
+                    Box(Modifier.fillMaxSize().background(Color.White)) {
+                        TiqianMath(
+                            source = source,
+                            modifier = Modifier.padding(16.dp),
+                            mode = MathMode.Display,
+                            fontSizePx = 40f,
+                            fontFace = face,
+                            textRunProvider = textProvider,
+                            color = Color.Black.copy(alpha = 0.5f),
+                            onMathLayout = { observed = it },
+                        )
+                    }
+                }.use { scene ->
+                    val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                    val layout = assertNotNull(observed)
+                    assertTrue(layout.diagnostics.isEmpty(), layout.diagnostics.toString())
+                    assertTrue(layout.box.glyphs.any { it.faceId == textProvider.faceId })
+                    assertTrue(layout.decisions.any { it.name == "TeXEmbeddedText" })
+                    assertTrue(layout.decisions.any { it.name == "TeXDeclaredOperatorName" })
+                    assertTrue(layout.decisions.any { it.name == "OpenTypeMathAccent" })
+                    assertEquals(2, layout.decisions.count { it.name == "OpenTypeMathRuleDecoration" })
+                    val accentGroups = layout.box.constructionPaintGroups.filter {
+                        it.kind == org.tiqian.math.core.MathConstructionPaintKind.Accent
+                    }
+                    assertTrue(accentGroups.isNotEmpty(), "wide vector should exercise horizontal assembly replay")
+                    var maximumAlpha = 0f
+                    var painted = 0
+                    for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                        val alpha = 1f - pixels[x, y].red
+                        maximumAlpha = maxOf(maximumAlpha, alpha)
+                        if (alpha > 0.15f) painted++
+                    }
+                    assertTrue(painted > 500, "all extended structures were rasterized")
+                    assertTrue(maximumAlpha in 0.45f..0.53f, "assembly overlap is union-painted once")
+                    val stats = face.constructionOutlineCacheStats()
+                    assertTrue(stats.entries >= accentGroups.size)
                 }
-            }.use { scene ->
-                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
-                val layout = assertNotNull(observed)
-                assertTrue(layout.diagnostics.isEmpty(), layout.diagnostics.toString())
-                assertTrue(layout.decisions.any { it.name == "TeXEmbeddedText" })
-                assertTrue(layout.decisions.any { it.name == "TeXDeclaredOperatorName" })
-                assertTrue(layout.decisions.any { it.name == "OpenTypeMathAccent" })
-                assertEquals(2, layout.decisions.count { it.name == "OpenTypeMathRuleDecoration" })
-                val accentGroups = layout.box.constructionPaintGroups.filter {
-                    it.kind == org.tiqian.math.core.MathConstructionPaintKind.Accent
-                }
-                assertTrue(accentGroups.isNotEmpty(), "wide vector should exercise horizontal assembly replay")
-                var maximumAlpha = 0f
-                var painted = 0
-                for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
-                    val alpha = 1f - pixels[x, y].red
-                    maximumAlpha = maxOf(maximumAlpha, alpha)
-                    if (alpha > 0.15f) painted++
-                }
-                assertTrue(painted > 500, "all extended structures were rasterized")
-                assertTrue(maximumAlpha in 0.45f..0.53f, "assembly overlap is union-painted once")
-                val stats = face.constructionOutlineCacheStats()
-                assertTrue(stats.entries >= accentGroups.size)
             }
         }
     }
@@ -564,4 +695,40 @@ private fun assertRuleRasterMatchesPlacement(
 
 private fun assertNear(expected: Float, actual: Float) {
     assertTrue(abs(expected - actual) <= 0.03f, "expected $expected, got $actual")
+}
+
+private class ComposeTestHostTextProvider(
+    private val face: SkiaMathFontFace,
+) : MathTextRunProvider, SkiaReplayCatalog, AutoCloseable {
+    val faceId: MathFaceId get() = face.faceId
+
+    override fun shapeTextAtom(request: MathTextRunRequest): MathTextRunProviderResult {
+        val replacement = buildString { repeat(request.text.length) { append('x') } }
+        val run = face.shape(replacement, request.fontSizePx, MathStyle.Text, request.sourceRange)
+        return MathTextRunProviderResult.Ready(run.copy(glyphs = run.glyphs.map { glyph ->
+            glyph.copy(
+                fontClass = null,
+                requestedWeight = request.requestedWeight,
+                resolvedWeight = face.resolvedWeight,
+                fallbackReason = null,
+                hostTextDecision = MathHostTextFaceDecision(
+                    sourceRange = SourceRange(
+                        request.sourceRange.start + glyph.textCluster,
+                        (request.sourceRange.start + glyph.textCluster + 1).coerceAtMost(request.sourceRange.endExclusive),
+                    ),
+                    clusterRangeUtf16 = SourceRange(glyph.textCluster, (glyph.textCluster + 1).coerceAtMost(request.text.length)),
+                    hostRole = request.origin.name,
+                    faceId = face.faceId,
+                    fontKey = "compose-test-host",
+                    requestedWeight = request.requestedWeight,
+                    resolvedWeight = face.resolvedWeight,
+                    selectionReason = "ComposeTestHostSelection",
+                ),
+            )
+        }))
+    }
+
+    override fun replayFace(faceId: MathFaceId): SkiaReplayFace? = face.takeIf { it.faceId == faceId }
+    override fun constructionFace(faceId: MathFaceId): SkiaMathFontFace? = null
+    override fun close() = face.close()
 }

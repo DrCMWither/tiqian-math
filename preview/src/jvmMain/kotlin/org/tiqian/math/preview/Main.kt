@@ -17,6 +17,8 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.use
@@ -30,15 +32,28 @@ import org.jetbrains.skia.Rect
 import org.jetbrains.skia.Surface as SkiaSurface
 import org.jetbrains.skia.Color as SkiaColor
 import org.tiqian.math.compose.TiqianMath
+import org.tiqian.math.core.MathFaceId
+import org.tiqian.math.core.MathFontWeight
+import org.tiqian.math.core.MathHostTextFaceDecision
+import org.tiqian.math.core.MathRect
+import org.tiqian.math.core.SourceRange
 import org.tiqian.math.core.MathConstructionPaintKind
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.skia.MathConstructionOutlineResult
 import org.tiqian.math.font.skia.SkiaMathFontFace
+import org.tiqian.math.font.skia.SkiaMathFontFamily
+import org.tiqian.math.font.skia.SkiaMathTextRunProvider
+import org.tiqian.math.font.skia.SkiaReplayCatalog
+import org.tiqian.math.font.skia.SkiaReplayFace
 import org.tiqian.math.font.skia.radicalSeamGeometry
 import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathTextRunProvider
+import org.tiqian.math.layout.MathTextRunProviderResult
+import org.tiqian.math.layout.MathTextRunRequest
+import org.tiqian.math.layout.MeasuredMathRun
 import java.io.File
 import kotlin.system.exitProcess
 
@@ -60,10 +75,12 @@ fun main(args: Array<String>) {
 private fun PreviewScreen() {
     val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
     val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
-    DisposableEffect(lete, stix) {
+    val textProvider = remember { loadPreviewHostTextProvider() }
+    DisposableEffect(lete, stix, textProvider) {
         onDispose {
             lete.close()
             stix.close()
+            textProvider.close()
         }
     }
 
@@ -80,8 +97,8 @@ private fun PreviewScreen() {
                 FontSample("Lete Sans Math · display", lete, MathMode.Display)
                 FontSample("STIX Two Math · display", stix, MathMode.Display)
                 Text("Embedded text, declared operators, accents and rule decorations", fontSize = 13.sp)
-                ExtendedStructureSample("Lete Sans Math", lete)
-                ExtendedStructureSample("STIX Two Math", stix)
+                ExtendedStructureSample("Lete Sans Math", lete, textProvider)
+                ExtendedStructureSample("STIX Two Math", stix, textProvider)
                 Text("Indexed, nested, fraction and stretched radicals", fontSize = 13.sp)
                 RadicalSample("Lete Sans Math", lete)
                 RadicalSample("STIX Two Math", stix)
@@ -113,19 +130,28 @@ private fun PreviewScreen() {
 }
 
 @Composable
-private fun ExtendedStructureSample(label: String, face: SkiaMathFontFace) {
+private fun ExtendedStructureSample(
+    label: String,
+    face: SkiaMathFontFace,
+    textProvider: MathTextRunProvider,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, fontSize = 12.sp, color = Color(0xFF55504A))
         Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            ExtendedStructureTier("text / operator", "\\text{rank and rate}+\\operatorname{rank}_A", face)
-            ExtendedStructureTier("fixed / wide accents", "\\hat{x}+\\bar{x}+\\vec{v}+\\widehat{x+y+z}+\\widetilde{abc}", face)
-            ExtendedStructureTier("nested rules", "\\overline{x+\\underline{\\frac{a}{b}}}+\\underline{\\sqrt{x}}", face)
+            ExtendedStructureTier("text / operator", "\\text{rank and rate}+\\operatorname{rank}_A", face, textProvider)
+            ExtendedStructureTier("fixed / wide accents", "\\hat{x}+\\bar{x}+\\vec{v}+\\widehat{x+y+z}+\\widetilde{abc}", face, textProvider)
+            ExtendedStructureTier("nested rules", "\\overline{x+\\underline{\\frac{a}{b}}}+\\underline{\\sqrt{x}}", face, textProvider)
         }
     }
 }
 
 @Composable
-private fun ExtendedStructureTier(label: String, source: String, face: SkiaMathFontFace) {
+private fun ExtendedStructureTier(
+    label: String,
+    source: String,
+    face: SkiaMathFontFace,
+    textProvider: MathTextRunProvider,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(label, fontSize = 9.sp, color = Color(0xFF6B655E))
         TiqianMath(
@@ -133,6 +159,7 @@ private fun ExtendedStructureTier(label: String, source: String, face: SkiaMathF
             modifier = Modifier.background(Color.White).padding(5.dp),
             mode = MathMode.Display,
             fontFace = face,
+            textRunProvider = textProvider,
             style = MaterialTheme.typography.bodyLarge.copy(fontSize = 24.sp, lineHeight = 38.sp),
             softWrap = false,
         )
@@ -372,6 +399,152 @@ private fun FontSample(label: String, face: SkiaMathFontFace, mode: MathMode) {
     }
 }
 
+private fun loadPreviewHostTextProvider(): PreviewHostTextRunProvider {
+    fun font(env: String, vararg defaults: String): File =
+        listOfNotNull(System.getenv(env)?.let(::File), *defaults.map(::File).toTypedArray())
+            .firstOrNull(File::isFile)
+            ?: error("Preview host text requires $env or one of ${defaults.joinToString()}")
+
+    val regular = font(
+        "MATH_COMPOSE_PREVIEW_TEXT_FONT_REGULAR",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    )
+    val bold = font(
+        "MATH_COMPOSE_PREVIEW_TEXT_FONT_BOLD",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        regular.absolutePath,
+    )
+    val extension = font(
+        "MATH_COMPOSE_PREVIEW_TEXT_FONT_EXTENSION",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    )
+    return PreviewHostTextRunProvider(regular, bold, extension)
+}
+
+private class PreviewHostTextRunProvider(
+    regularFile: File,
+    boldFile: File,
+    extensionFile: File,
+) : MathTextRunProvider, SkiaReplayCatalog, AutoCloseable {
+    private data class Owned(
+        val provider: SkiaMathTextRunProvider,
+        val source: File,
+        val selectionReason: String,
+    )
+
+    private val regular = Owned(
+        SkiaMathTextRunProvider.fromBytes(MathFaceId("preview-host-regular-primary"), regularFile.readBytes(), MathFontWeight.Regular),
+        regularFile,
+        "PreviewPrimaryCoverage",
+    )
+    private val bold = Owned(
+        SkiaMathTextRunProvider.fromBytes(MathFaceId("preview-host-bold-primary"), boldFile.readBytes(), MathFontWeight.Bold),
+        boldFile,
+        "PreviewRequestedBoldOrNearest",
+    )
+    private val regularExtension = Owned(
+        SkiaMathTextRunProvider.fromBytes(MathFaceId("preview-host-regular-extension"), extensionFile.readBytes(), MathFontWeight.Regular),
+        extensionFile,
+        "PreviewExtensionCoverage",
+    )
+    private val boldExtension = Owned(
+        SkiaMathTextRunProvider.fromBytes(MathFaceId("preview-host-bold-extension"), extensionFile.readBytes(), MathFontWeight.Regular),
+        extensionFile,
+        "PreviewExtensionCoverageWeightFallback",
+    )
+    private val all = listOf(regular, bold, regularExtension, boldExtension)
+    val description: String = buildString {
+        append("Regular=").append(regular.source.absolutePath)
+        append(" · Bold/nearest=").append(bold.source.absolutePath)
+        append(" · Extension=").append(regularExtension.source.absolutePath)
+    }
+    fun auditLabel(requested: MathFontWeight): String {
+        val primary = if (requested == MathFontWeight.Bold) bold else regular
+        val extension = if (requested == MathFontWeight.Bold) boldExtension else regularExtension
+        return "requested=$requested · primary=${primary.provider.faceId} resolved=${if (requested == MathFontWeight.Bold) MathFontWeight.Bold else MathFontWeight.Regular} reason=${primary.selectionReason} · " +
+            "extension=${extension.provider.faceId} resolved=${MathFontWeight.Regular} reason=${extension.selectionReason}"
+    }
+
+    override fun shapeTextAtom(request: MathTextRunRequest): MathTextRunProviderResult {
+        var inputOffset = 0
+        var x = 0f
+        var ascent = 0f
+        var descent = 0f
+        var missing = false
+        val glyphs = mutableListOf<org.tiqian.math.layout.MeasuredMathGlyph>()
+        while (inputOffset < request.text.length) {
+            val scalar = Character.codePointAt(request.text, inputOffset)
+            val count = Character.charCount(scalar)
+            val extension = scalar in 0x30A0..0x30FF || scalar in 0xAC00..0xD7AF ||
+                (scalar in 0x4E00..0x9FFF && inputOffset % 2 == 1)
+            val owned = when {
+                request.requestedWeight == MathFontWeight.Bold && extension -> boldExtension
+                request.requestedWeight == MathFontWeight.Bold -> bold
+                extension -> regularExtension
+                else -> regular
+            }
+            val childRequest = request.copy(
+                text = request.text.substring(inputOffset, inputOffset + count),
+                sourceRange = SourceRange(
+                    request.sourceRange.start + inputOffset,
+                    request.sourceRange.start + inputOffset + count,
+                ),
+            )
+            when (val shaped = owned.provider.shapeTextAtom(childRequest)) {
+                is MathTextRunProviderResult.CapabilityIssue -> return shaped
+                is MathTextRunProviderResult.Ready -> {
+                    val run = shaped.run
+                    run.glyphs.forEach { glyph ->
+                        val localStart = inputOffset + glyph.textCluster
+                        val localEnd = inputOffset + count
+                        glyphs += glyph.copy(
+                            x = x + glyph.x,
+                            textCluster = localStart,
+                            hostTextDecision = glyph.hostTextDecision?.copy(
+                                sourceRange = SourceRange(
+                                    request.sourceRange.start + localStart,
+                                    request.sourceRange.start + localEnd,
+                                ),
+                                clusterRangeUtf16 = SourceRange(localStart, localEnd),
+                                hostRole = request.origin.name,
+                                fontKey = owned.source.absolutePath,
+                                selectionReason = owned.selectionReason,
+                                substitutionReason = when {
+                                    extension && request.requestedWeight == MathFontWeight.Bold ->
+                                        "ExtensionFaceAndRequestedWeightFallback"
+                                    extension -> "PrimaryFaceMissingPreviewCluster"
+                                    request.requestedWeight != glyph.resolvedWeight -> "RequestedWeightUnavailable"
+                                    else -> null
+                                },
+                            ),
+                        )
+                    }
+                    x += run.width
+                    ascent = maxOf(ascent, run.ascent)
+                    descent = maxOf(descent, run.descent)
+                    missing = missing || run.missingGlyph
+                }
+            }
+            inputOffset += count
+        }
+        return MathTextRunProviderResult.Ready(MeasuredMathRun(
+            glyphs = glyphs,
+            width = x,
+            ascent = ascent,
+            descent = descent,
+            missingGlyph = missing,
+            boundsSource = org.tiqian.math.layout.MathGlyphBoundsSource.Outline,
+        ))
+    }
+
+    override fun replayFace(faceId: MathFaceId): SkiaReplayFace? =
+        all.firstNotNullOfOrNull { it.provider.replayFace(faceId) }
+    override fun constructionFace(faceId: MathFaceId): SkiaMathFontFace? = null
+    override fun close() = all.forEach { it.provider.close() }
+}
+
 @OptIn(ExperimentalComposeUiApi::class)
 private fun renderSnapshot() {
     auditRadicalPreviewTiers()
@@ -388,6 +561,13 @@ private fun renderSnapshot() {
         output.parentFile.mkdirs()
         output.writeBytes(data.bytes)
         println("text-accent-decoration=${output.absolutePath} bytes=${output.length()}")
+    }
+    ImageComposeScene(width = 1400, height = 980) { FontFamilyFallbackScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-font-family-fallback.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("font-family-fallback=${output.absolutePath} bytes=${output.length()}")
     }
     ImageComposeScene(width = 900, height = 190) { RadicalDegreeOracleScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
@@ -424,15 +604,146 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("delimiter-noad-oracle=${output.absolutePath} bytes=${output.length()}")
     }
+    ImageComposeScene(width = 1400, height = 1050) { TableEnvironmentOracleScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-table-environments.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("table-environment-oracle=${output.absolutePath} bytes=${output.length()}")
+    }
     renderRadicalSeamReport()
+}
+
+@Composable
+private fun TableEnvironmentOracleScreen() {
+    val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
+    DisposableEffect(lete, stix) {
+        onDispose {
+            lete.close()
+            stix.close()
+        }
+    }
+    MaterialTheme {
+        Surface(color = Color.White) {
+            Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Structured TeX tables · source-aware cells · real MATH delimiters", fontSize = 18.sp)
+                Text(
+                    "32 px display style · identical sources · Lete Sans Math / STIX Two Math",
+                    fontSize = 11.sp,
+                    color = Color(0xFF55504A),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(30.dp)) {
+                    TableEnvironmentFontColumn("Lete Sans Math", lete)
+                    TableEnvironmentFontColumn("STIX Two Math", stix)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TableEnvironmentFontColumn(label: String, face: SkiaMathFontFace) {
+    Column(Modifier.width(655.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(label, fontSize = 13.sp, color = Color(0xFF55504A))
+        TABLE_ENVIRONMENT_PREVIEW_CASES.forEach { (caseLabel, source) ->
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("$caseLabel · $source", fontSize = 8.sp, color = Color(0xFF6B655E))
+                TiqianMath(
+                    source = source,
+                    modifier = Modifier.background(Color(0xFFF7F5F1)).padding(6.dp),
+                    mode = MathMode.Display,
+                    fontFace = face,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 32.sp, lineHeight = 48.sp),
+                    softWrap = false,
+                )
+            }
+        }
+    }
+}
+
+private val TABLE_ENVIRONMENT_PREVIEW_CASES = listOf(
+    "aligned equations" to """\begin{aligned}a&=b\\c&=\frac{d}{e}\end{aligned}""",
+    "parenthesized matrix + scripts" to """\begin{pmatrix}a&b\\\frac{c}{d}&\sqrt{x}\end{pmatrix}_0^1""",
+    "cases" to """\begin{cases}x&x>0\\\frac{a}{b}&x\le0\end{cases}""",
+    "nested table structures" to
+        """\begin{bmatrix}\sqrt{x}&\binom{n}{k}\\\sum_{i=1}^{n}i&\begin{matrix}a&b\\c&d\end{matrix}\end{bmatrix}""",
+)
+
+@Composable
+private fun FontFamilyFallbackScreen() {
+    val family = remember { SkiaMathFontFamily.loadBundledLete() }
+    val textProvider = remember { loadPreviewHostTextProvider() }
+    DisposableEffect(family, textProvider) { onDispose { family.close(); textProvider.close() } }
+    MaterialTheme {
+        Surface(color = Color(0xFFF7F5F1)) {
+            Column(Modifier.fillMaxSize().padding(30.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Text("Math family weight + explicit host text provider", fontSize = 22.sp)
+                Text(
+                    "provider=${textProvider.description} · requested/resolved weight and selection reason are recorded per glyph",
+                    fontSize = 11.sp,
+                    color = Color(0xFF55504A),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                    FontFamilyColumn("Regular heading", FontWeight.Normal, family, textProvider)
+                    FontFamilyColumn("Bold heading", FontWeight.Bold, family, textProvider)
+                }
+                Text("Construction ownership · Bold request falls back as one complete MATH atom when needed", fontSize = 13.sp)
+                TiqianMath(
+                    source = "\\sqrt{\\frac{\\frac{a+中文}{b}}{\\frac{c}{d}}}+\\left(\\frac{中文+x}{b}\\right)+\\binom{2n}{n}",
+                    fontFace = family,
+                    textRunProvider = textProvider,
+                    mode = MathMode.Display,
+                    style = TextStyle(fontSize = 44.sp, fontWeight = FontWeight.Bold),
+                    modifier = Modifier.background(Color.White).padding(12.dp),
+                    softWrap = false,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FontFamilyColumn(
+    label: String,
+    weight: FontWeight,
+    family: SkiaMathFontFamily,
+    textProvider: PreviewHostTextRunProvider,
+) {
+    Column(Modifier.width(650.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, fontSize = 15.sp, fontWeight = weight)
+        Text(
+            textProvider.auditLabel(if (weight == FontWeight.Bold) MathFontWeight.Bold else MathFontWeight.Regular),
+            fontSize = 8.sp,
+            color = Color(0xFF6B655E),
+        )
+        listOf(
+            "math + official missing-glyph fallback" to "x+y+\\alpha+\\aleph_0+\\int_0^1",
+            "embedded and raw CJK" to "\\text{速率 rate 2}+原始中文+x",
+            "mixed scripts at MATH script size" to "x^{中文2}+y_{片仮名3}+z^{한글4}",
+        ).forEach { (caseLabel, source) ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(caseLabel, fontSize = 10.sp, color = Color(0xFF69635C))
+                TiqianMath(
+                    source = source,
+                    fontFace = family,
+                    textRunProvider = textProvider,
+                    style = TextStyle(fontSize = 34.sp, fontWeight = weight),
+                    modifier = Modifier.background(Color.White).padding(10.dp),
+                    softWrap = false,
+                )
+            }
+        }
+    }
 }
 
 @Composable
 private fun ExtendedStructureOracleScreen() {
     val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
     val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
-    DisposableEffect(lete, stix) {
-        onDispose { lete.close(); stix.close() }
+    val textProvider = remember { loadPreviewHostTextProvider() }
+    DisposableEffect(lete, stix, textProvider) {
+        onDispose { lete.close(); stix.close(); textProvider.close() }
     }
     MaterialTheme {
         Surface(color = Color.White) {
@@ -455,6 +766,7 @@ private fun ExtendedStructureOracleScreen() {
                                     modifier = Modifier.background(Color(0xFFF7F5F1)).padding(7.dp),
                                     mode = MathMode.Display,
                                     fontFace = face,
+                                    textRunProvider = textProvider,
                                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = 32.sp, lineHeight = 52.sp),
                                     softWrap = false,
                                 )

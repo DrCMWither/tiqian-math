@@ -18,6 +18,7 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -30,11 +31,63 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.tiqian.math.core.MathLayoutResult
 import org.tiqian.math.font.android.AndroidMathFontFace
+import org.tiqian.math.font.android.AndroidMathFontFamily
+import org.tiqian.math.font.android.AndroidReplayCatalog
+import org.tiqian.math.font.android.AndroidReplayFace
+import org.tiqian.math.core.MathFaceId
+import org.tiqian.math.core.MathHostTextFaceDecision
+import org.tiqian.math.core.MathFontClass
+import org.tiqian.math.core.MathFontFallbackReason
+import org.tiqian.math.core.MathStyle
+import org.tiqian.math.core.MathFontWeight
+import org.tiqian.math.core.SourceRange
+import org.tiqian.math.layout.MathTextRunProvider
+import org.tiqian.math.layout.MathTextRunRequest
+import org.tiqian.math.layout.MathTextRunProviderResult
+import org.tiqian.math.layout.MeasuredMathRun
 
 @RunWith(AndroidJUnit4::class)
 class AndroidTiqianMathDeviceTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun surroundingBoldStyleSelectsNativeBoldAndExplicitHostTextReplayAtApi23Boundary() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AndroidMathFontFamily.loadBundledLete(context).use { family ->
+            val providerFace = AndroidMathFontFace.fromBytes(
+                context.assets.open(AndroidMathFontFace.LeteAssetPath).use { it.readBytes() },
+                faceId = MathFaceId("compose-android-test-host-text"),
+                fontClass = MathFontClass.SansSerif,
+                weight = MathFontWeight.Bold,
+                requestedWeight = MathFontWeight.Bold,
+            )
+            DeviceTestHostTextProvider(providerFace).use { provider ->
+                var result: MathLayoutResult? = null
+                compose.setContent {
+                    TiqianMath(
+                        source = "x+\\aleph_0+\\text{中文}+x^{中文2}",
+                        style = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                        fontFace = family,
+                        textRunProvider = provider,
+                        modifier = Modifier.testTag(WeightedFormulaTag),
+                        onMathLayout = { result = it },
+                    )
+                }
+                compose.waitForIdle()
+                val glyphs = assertNotNull(result).box.glyphs
+                assertTrue(glyphs.any { it.resolvedWeight == MathFontWeight.Bold && it.faceId.value == "lete-sans-math-bold" })
+                val hostGlyphs = glyphs.filter { it.faceId == provider.faceId }
+                assertTrue(hostGlyphs.isNotEmpty())
+                assertTrue(hostGlyphs.all { it.requestedWeight == MathFontWeight.Bold })
+                assertTrue(hostGlyphs.minOf { it.fontSizePx } < hostGlyphs.maxOf { it.fontSizePx })
+                assertTrue(glyphs.any {
+                    it.requestedWeight == MathFontWeight.Bold && it.resolvedWeight == MathFontWeight.Regular
+                })
+                compose.onNodeWithTag(WeightedFormulaTag).assertIsDisplayed()
+            }
+        }
+    }
 
     @Test
     fun productionComposableReplaysNativeLayoutWithBaselineFontScaleAndSoftWrap() {
@@ -108,10 +161,47 @@ class AndroidTiqianMathDeviceTest {
                     fontFace = face,
                 )
             }
-            compose.onNodeWithContentDescription("Math formula error: UnsupportedSyntax")
+            compose.onNodeWithContentDescription("Math formula error: MissingTextProvider")
                 .assertIsDisplayed()
         }
     }
 }
 
 private const val FormulaTag = "android-tiqian-math"
+private const val WeightedFormulaTag = "android-weighted-tiqian-math"
+
+private class DeviceTestHostTextProvider(
+    private val face: AndroidMathFontFace,
+) : MathTextRunProvider, AndroidReplayCatalog, AutoCloseable {
+    val faceId: MathFaceId get() = face.faceId
+
+    override fun shapeTextAtom(request: MathTextRunRequest): MathTextRunProviderResult {
+        val replacement = buildString { repeat(request.text.length) { append('x') } }
+        val run = face.shape(replacement, request.fontSizePx, MathStyle.Text, request.sourceRange)
+        return MathTextRunProviderResult.Ready(run.copy(glyphs = run.glyphs.map { glyph ->
+            glyph.copy(
+                fontClass = null,
+                requestedWeight = request.requestedWeight,
+                resolvedWeight = face.resolvedWeight,
+                fallbackReason = null,
+                hostTextDecision = MathHostTextFaceDecision(
+                    sourceRange = SourceRange(
+                        request.sourceRange.start + glyph.textCluster,
+                        (request.sourceRange.start + glyph.textCluster + 1).coerceAtMost(request.sourceRange.endExclusive),
+                    ),
+                    clusterRangeUtf16 = SourceRange(glyph.textCluster, (glyph.textCluster + 1).coerceAtMost(request.text.length)),
+                    hostRole = request.origin.name,
+                    faceId = face.faceId,
+                    fontKey = "android-device-test-host",
+                    requestedWeight = request.requestedWeight,
+                    resolvedWeight = face.resolvedWeight,
+                    selectionReason = "AndroidDeviceTestHostSelection",
+                ),
+            )
+        }))
+    }
+
+    override fun replayFace(faceId: MathFaceId): AndroidReplayFace? = face.takeIf { it.faceId == faceId }
+    override fun constructionFace(faceId: MathFaceId): AndroidMathFontFace? = null
+    override fun close() = face.close()
+}

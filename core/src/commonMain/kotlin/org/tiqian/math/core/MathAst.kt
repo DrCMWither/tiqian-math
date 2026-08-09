@@ -183,6 +183,36 @@ enum class MathNamedSymbol(val debugName: String, val baseScalar: Int) {
     DoubleLeftRightArrow("double-left-right-arrow", 0x21D4),
     MapsTo("maps-to", 0x21A6),
     ApproximatelyEqual("approximately-equal", 0x2248),
+    LessThanOrSlantedEqual("less-than-or-slanted-equal", 0x2A7D),
+    GreaterThanOrSlantedEqual("greater-than-or-slanted-equal", 0x2A7E),
+    HorizontalEllipsis("horizontal-ellipsis", 0x2026),
+    CenteredEllipsis("centered-ellipsis", 0x22EF),
+    VerticalEllipsis("vertical-ellipsis", 0x22EE),
+    DiagonalEllipsis("diagonal-ellipsis", 0x22F1),
+    Prime("prime", 0x2032),
+    LeftAngleBracket("left-angle-bracket", 0x27E8),
+    RightAngleBracket("right-angle-bracket", 0x27E9),
+    UpArrow("up-arrow", 0x2191),
+    DownArrow("down-arrow", 0x2193),
+    UpDownArrow("up-down-arrow", 0x2195),
+    DoubleUpDownArrow("double-up-down-arrow", 0x21D5),
+    LongLeftArrow("long-left-arrow", 0x27F5),
+    LongRightArrow("long-right-arrow", 0x27F6),
+    LongLeftRightArrow("long-left-right-arrow", 0x27F7),
+    LongDoubleLeftArrow("long-double-left-arrow", 0x27F8),
+    LongDoubleRightArrow("long-double-right-arrow", 0x27F9),
+    LongDoubleLeftRightArrow("long-double-left-right-arrow", 0x27FA),
+    DoubleVerticalBar("double-vertical-bar", 0x2016),
+    LeftCeiling("left-ceiling", 0x2308),
+    RightCeiling("right-ceiling", 0x2309),
+    LeftFloor("left-floor", 0x230A),
+    RightFloor("right-floor", 0x230B),
+    Angle("angle", 0x2220),
+    Therefore("therefore", 0x2234),
+    TriangleEqual("triangle-equal", 0x225C),
+    RightTriangle("right-triangle", 0x25B9),
+    Dagger("dagger", 0x2020),
+    BlackStar("black-star", 0x2605),
     VerticalBar("vertical-bar", 0x007C),
 }
 
@@ -247,6 +277,9 @@ enum class MathLargeOperatorIdentity(
     Product("product", 0x220F, MathLimitsPolicy.Auto),
     Integral("integral", 0x222B, MathLimitsPolicy.NoLimits),
     ContourIntegral("contour-integral", 0x222E, MathLimitsPolicy.NoLimits),
+    BigIntersection("big-intersection", 0x22C2, MathLimitsPolicy.Auto),
+    BigUnion("big-union", 0x22C3, MathLimitsPolicy.Auto),
+    BigCircledTimes("big-circled-times", 0x2A02, MathLimitsPolicy.Auto),
 }
 
 /** A real TeX operator noad, kept distinct from a Unicode symbol with Operator spacing. */
@@ -284,9 +317,12 @@ data class MathText(
     val commandRange: SourceRange,
     val contentRange: SourceRange,
     override val range: SourceRange,
+    val origin: MathTextOrigin = MathTextOrigin.TextCommand,
 ) : MathNode {
     val text: String get() = segments.joinToString("") { it.text }
 }
+
+enum class MathTextOrigin { TextCommand, ImplicitCjk }
 
 data class MathOperatorName(
     val name: String,
@@ -310,6 +346,9 @@ enum class MathAccentIdentity(
 ) {
     Hat("hat", 0x0302, false),
     Bar("bar", 0x0304, false),
+    Tilde("tilde", 0x0303, false),
+    Dot("dot", 0x0307, false),
+    DoubleDot("double-dot", 0x0308, false),
     Vec("vec", 0x20D7, false),
     WideHat("widehat", 0x0302, true),
     WideTilde("widetilde", 0x0303, true),
@@ -335,6 +374,61 @@ data class MathRuleDecoration(
     override val range: SourceRange,
 ) : MathNode {
     val atomClass: MathAtomClass get() = MathAtomClass.Ordinary
+}
+
+/** Explicit TeX math space, resolved in mu units at the active math style's font size. */
+data class MathExplicitSpace(
+    val command: String,
+    val mu: Float,
+    override val range: SourceRange,
+) : MathNode {
+    init {
+        require(mu >= 0f) { "negative math spaces require a kern-aware horizontal list" }
+    }
+}
+
+enum class MathTableEnvironment(
+    val sourceName: String,
+    val leftDelimiter: MathDelimiterIdentity? = null,
+    val rightDelimiter: MathDelimiterIdentity? = null,
+) {
+    Matrix("matrix"),
+    ParenthesizedMatrix("pmatrix", MathDelimiterIdentity.LeftParenthesis, MathDelimiterIdentity.RightParenthesis),
+    BracketedMatrix("bmatrix", MathDelimiterIdentity.LeftBracket, MathDelimiterIdentity.RightBracket),
+    Determinant("vmatrix", MathDelimiterIdentity.VerticalBar, MathDelimiterIdentity.VerticalBar),
+    Array("array"),
+    Aligned("aligned"),
+    Cases("cases", MathDelimiterIdentity.LeftBrace, MathDelimiterIdentity.Invisible),
+    Split("split"),
+}
+
+enum class MathTableColumnAlignment { Left, Center, Right }
+
+data class MathTableCell(
+    val body: MathList,
+    val columnSeparatorRange: SourceRange? = null,
+    val range: SourceRange,
+)
+
+data class MathTableRow(
+    val cells: List<MathTableCell>,
+    val rowSeparatorRange: SourceRange? = null,
+    val range: SourceRange,
+)
+
+/** Structured TeX/LaTeX alignment environment; row and column separators retain source ranges. */
+data class MathTable(
+    val environmentName: String,
+    val environment: MathTableEnvironment?,
+    val rows: List<MathTableRow>,
+    val columnAlignments: List<MathTableColumnAlignment>,
+    val beginCommandRange: SourceRange,
+    val beginNameRange: SourceRange,
+    val endCommandRange: SourceRange?,
+    val endNameRange: SourceRange?,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = MathAtomClass.Inner
 }
 
 data class MathScripts(
@@ -447,6 +541,13 @@ data class MathDelimited(
 /** A TeX style declaration. It changes the remainder of the containing mlist. */
 data class MathStyleDeclaration(
     val requestedLevel: MathStyleLevel,
+    override val range: SourceRange,
+) : MathNode
+
+/** Legacy TeX list declaration such as `\rm`; affects later variable-family atoms in this mlist. */
+data class MathAlphabetDeclaration(
+    val family: MathFamily,
+    val alphabet: MathAlphabet,
     override val range: SourceRange,
 ) : MathNode
 

@@ -8,6 +8,21 @@ import org.tiqian.math.core.*
 
 class MathTextAccentParserTest {
     @Test
+    fun rawCjkScalarsBecomeUprightTextAtomsWithoutSourceRewriting() {
+        val source = "中あ한+x^{中文2}"
+        val parsed = MathParser().parse(source)
+        assertTrue(parsed.diagnostics.isEmpty(), parsed.diagnostics.toString())
+        val raw = assertIs<MathText>(parsed.root.children.first())
+        assertEquals("中あ한", raw.text)
+        assertEquals(MathTextOrigin.ImplicitCjk, raw.origin)
+        assertEquals(SourceRange(0, 3), raw.range)
+        val scripts = assertIs<MathScripts>(parsed.root.children.last())
+        val group = assertIs<MathGroup>(scripts.superscript)
+        assertEquals("中文", assertIs<MathText>(group.body.children.first()).text)
+        assertEquals(SourceRange(4, source.length), scripts.range)
+    }
+
+    @Test
     fun textPreservesSpacesUnicodeEscapesAndSourceRangesWithoutMathNoads() {
         val source = "\\text{hello  世界 ~ \\{x\\}}"
         val parsed = MathParser().parse(source)
@@ -25,6 +40,21 @@ class MathTextAccentParserTest {
         val text = assertIs<MathText>(parsed.root.children.single())
         assertEquals("a b c", text.text)
         assertTrue(parsed.diagnostics.isEmpty())
+    }
+
+    @Test
+    fun textAcceptsTeXSingleTokenArgumentsWithoutInventingBraces() {
+        val source = "S_{\\text F}+\\text x"
+        val parsed = MathParser().parse(source)
+        assertTrue(parsed.diagnostics.isEmpty(), parsed.diagnostics.toString())
+        val texts = buildList {
+            val scripts = assertIs<MathScripts>(parsed.root.children.first())
+            val group = assertIs<MathGroup>(scripts.subscript)
+            add(assertIs<MathText>(group.body.children.single()))
+            add(assertIs<MathText>(parsed.root.children.last()))
+        }
+        assertEquals(listOf("F", "x"), texts.map { it.text })
+        assertEquals(listOf("F", "x"), texts.map { source.substring(it.contentRange.start, it.contentRange.endExclusive) })
     }
 
     @Test

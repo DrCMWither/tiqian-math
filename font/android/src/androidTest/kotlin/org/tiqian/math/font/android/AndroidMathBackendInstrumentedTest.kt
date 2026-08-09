@@ -23,13 +23,149 @@ import org.tiqian.math.core.MathLayoutResult
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
+import org.tiqian.math.core.MathFontWeight
+import org.tiqian.math.core.MathFaceId
+import org.tiqian.math.core.MathHostTextFaceDecision
+import org.tiqian.math.core.MathFontFallbackReason
 import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathGlyphBoundsSource
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathTextRunProvider
+import org.tiqian.math.layout.MathTextRunRequest
+import org.tiqian.math.layout.MathTextRunProviderResult
+import org.tiqian.math.layout.MeasuredMathRun
 
 @RunWith(AndroidJUnit4::class)
 class AndroidMathBackendInstrumentedTest {
+    @Test
+    fun collidingMathAndHostFaceIdsFailPreflightInsteadOfDrawingTheMathFace() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AndroidMathFontFamily.loadBundledLete(context).use { math ->
+            val collidingHostFace = AndroidMathFontFace.fromBytes(
+                context.assets.open(AndroidMathFontFace.LeteAssetPath).use { it.readBytes() },
+                faceId = MathFaceId("lete-sans-math-regular"),
+                fontClass = org.tiqian.math.core.MathFontClass.SansSerif,
+            )
+            AndroidTestHostTextProvider(collidingHostFace).use { provider ->
+                val fallback = assertIs<MathFormulaCapabilityResult.FallbackRequired>(
+                    math.androidFormulaCapabilityEngine(provider).evaluate("\\text{中}"),
+                )
+                val diagnostic = fallback.diagnostics.single {
+                    it.code == org.tiqian.math.core.DiagnosticCode.ReplayFaceOwnershipConflict
+                }
+                assertEquals(SourceRange(6, 7), diagnostic.range)
+                val combined = combineAndroidReplayCatalogs(math, provider)
+                assertEquals(
+                    org.tiqian.math.core.MathReplayFaceOwnership.Conflict,
+                    combined.replayFaceOwnership(MathFaceId("lete-sans-math-regular")),
+                )
+                assertEquals(null, combined.replayFace(MathFaceId("lete-sans-math-regular")))
+                val lowLevel = MathLayoutEngine(math, textRunProvider = provider).layout("\\text{中}")
+                assertFailsWith<IllegalStateException> {
+                    AndroidMathRenderer(combined).drawBox(
+                        Canvas(Bitmap.createBitmap(80, 60, Bitmap.Config.ARGB_8888)),
+                        lowLevel.box,
+                        0f,
+                        lowLevel.box.ascent,
+                        Color.BLACK,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun explicitAndroidStandaloneProviderRejectsRtlBeforeNativeShaping() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AndroidMathFontFace.loadLete(context).use { math ->
+            AndroidMathTextRunProvider.fromBytes(
+                MathFaceId("android-restricted-text"),
+                context.assets.open(AndroidMathFontFace.LeteAssetPath).use { it.readBytes() },
+            ).use { provider ->
+                val fallback = assertIs<MathFormulaCapabilityResult.FallbackRequired>(
+                    math.androidFormulaCapabilityEngine(provider).evaluate("\\text{abc אבג}"),
+                )
+                assertTrue(fallback.diagnostics.any {
+                    it.code == org.tiqian.math.core.DiagnosticCode.UnsupportedHostTextShaping
+                })
+            }
+        }
+    }
+
+    @Test
+    fun explicitSingleFaceHostTextProviderShapesAndReplaysWithoutJoiningTheMathFamily() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AndroidMathFontFace.loadLete(context).use { mathFace ->
+            AndroidMathTextRunProvider.fromBytes(
+                faceId = MathFaceId("android-explicit-host-text"),
+                fontBytes = context.assets.open(AndroidMathFontFace.LeteAssetPath).use { it.readBytes() },
+            ).use { textProvider ->
+                val ready = assertIs<MathFormulaCapabilityResult.Ready>(
+                    mathFace.androidFormulaCapabilityEngine(textProvider).evaluate("\\text{host}+x"),
+                )
+                val textGlyphs = ready.layoutResult.box.glyphs.filter { it.faceId == textProvider.faceId }
+                assertTrue(textGlyphs.isNotEmpty())
+                assertTrue(textGlyphs.all { it.fontClass == null })
+                assertTrue(textGlyphs.all { it.fallbackReason == null })
+                assertTrue(textGlyphs.all { it.hostTextDecision?.selectionReason == "ExplicitStandaloneSingleFace" })
+                assertTrue(textGlyphs.all {
+                    textProvider.replayFace(it.faceId)?.glyphPath(it.glyphId, it.fontSizePx) != null
+                })
+                assertRasterHasInk(
+                    CombinedAndroidReplayCatalog(mathFace, textProvider),
+                    ready.layoutResult,
+                    "explicit host text provider",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun bundledMathFamilyAndExplicitHostTextProviderKeepIndependentReplayOwnership() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AndroidMathFontFamily.loadBundledLete(context).use { regular ->
+            val bold = regular.selectWeight(MathFontWeight.Bold) as AndroidMathFontFamily
+            val hostFace = AndroidMathFontFace.fromBytes(
+                context.assets.open(AndroidMathFontFace.LeteAssetPath).use { it.readBytes() },
+                faceId = MathFaceId("android-test-host-text"),
+                fontClass = org.tiqian.math.core.MathFontClass.SansSerif,
+                weight = MathFontWeight.Bold,
+                requestedWeight = MathFontWeight.Bold,
+            )
+            AndroidTestHostTextProvider(hostFace).use { provider ->
+                val source = "x+\\aleph_0+\\text{中文}+原始+x^{中文2}+\\sqrt{\\frac{\\frac{a}{b}}{c}}"
+                val capability = bold.androidFormulaCapabilityEngine(provider).evaluate(
+                    source,
+                    MathLayoutOptions(MathMode.Display, 40f),
+                )
+                val result = assertIs<MathFormulaCapabilityResult.Ready>(capability).layoutResult
+                assertTrue(result.box.glyphs.any { it.faceId == MathFaceId("lete-sans-math-bold") })
+                assertTrue(result.box.glyphs.any {
+                    it.faceId == MathFaceId("lete-sans-math-regular") &&
+                        it.fallbackReason in setOf(
+                            MathFontFallbackReason.MissingGlyphInRequestedWeight,
+                            MathFontFallbackReason.MissingMathConstructionInRequestedWeight,
+                        )
+                })
+                val textGlyphs = result.box.glyphs.filter { it.faceId == hostFace.faceId }
+                assertTrue(textGlyphs.isNotEmpty())
+                assertTrue(textGlyphs.all { it.requestedWeight == MathFontWeight.Bold })
+                assertTrue(textGlyphs.any { it.style.level == org.tiqian.math.core.MathStyleLevel.Script && it.fontSizePx < 40f })
+                result.box.glyphs.forEach { glyph ->
+                    val replay = provider.replayFace(glyph.faceId) ?: bold.replayFace(glyph.faceId)
+                    assertNotNull(replay)
+                    assertNotNull(replay.glyphPath(glyph.glyphId, glyph.fontSizePx))
+                }
+                result.box.constructionPaintGroups.forEach { group ->
+                    assertTrue(result.box.glyphs.filter { it.constructionGroupId == group.id }.all { it.faceId == group.faceId })
+                    assertNotNull(bold.constructionFace(group.faceId))
+                }
+                assertRasterHasInk(CombinedAndroidReplayCatalog(bold, provider), result, "Lete weighted family")
+            }
+        }
+    }
+
     @Test
     fun pinnedNativeBackendShapesMeasuresAndReplaysKnownGlyphsFromTheSameFace() {
         withAcceptanceFaces { oracle ->
@@ -267,7 +403,7 @@ private fun requireReady(
 }
 
 private fun assertRasterHasInk(
-    face: AndroidMathFontFace,
+    face: AndroidReplayCatalog,
     result: MathLayoutResult,
     label: String,
 ) {
@@ -293,6 +429,52 @@ private fun assertRasterHasInk(
 
 private fun assertNear(expected: Float, actual: Float, label: String, epsilon: Float = 0.02f) {
     assertTrue(kotlin.math.abs(expected - actual) <= epsilon, "$label expected=$expected actual=$actual")
+}
+
+private class AndroidTestHostTextProvider(
+    private val face: AndroidMathFontFace,
+) : MathTextRunProvider, AndroidReplayCatalog, AutoCloseable {
+    override fun shapeTextAtom(request: MathTextRunRequest): MathTextRunProviderResult {
+        val replacement = buildString { repeat(request.text.length) { append('x') } }
+        val run = face.shape(replacement, request.fontSizePx, MathStyle.Text, request.sourceRange)
+        return MathTextRunProviderResult.Ready(run.copy(glyphs = run.glyphs.map { glyph ->
+            glyph.copy(
+                fontClass = null,
+                requestedWeight = request.requestedWeight,
+                resolvedWeight = face.resolvedWeight,
+                fallbackReason = null,
+                hostTextDecision = MathHostTextFaceDecision(
+                    sourceRange = SourceRange(
+                        request.sourceRange.start + glyph.textCluster,
+                        (request.sourceRange.start + glyph.textCluster + 1).coerceAtMost(request.sourceRange.endExclusive),
+                    ),
+                    clusterRangeUtf16 = SourceRange(glyph.textCluster, (glyph.textCluster + 1).coerceAtMost(request.text.length)),
+                    hostRole = request.origin.name,
+                    faceId = face.faceId,
+                    fontKey = "android-test-host",
+                    requestedWeight = request.requestedWeight,
+                    resolvedWeight = face.resolvedWeight,
+                    selectionReason = "AndroidTestHostSelection",
+                ),
+            )
+        }))
+    }
+
+    override fun replayFace(faceId: MathFaceId): AndroidReplayFace? = face.takeIf { it.faceId == faceId }
+    override fun constructionFace(faceId: MathFaceId): AndroidMathFontFace? = null
+    override fun close() = face.close()
+}
+
+private class CombinedAndroidReplayCatalog(
+    private val math: AndroidReplayCatalog,
+    private val text: AndroidReplayCatalog,
+) : AndroidReplayCatalog {
+    private val combined = combineAndroidReplayCatalogs(math, text)
+    override fun replayFace(faceId: MathFaceId): AndroidReplayFace? = combined.replayFace(faceId)
+    override fun replayFaceOwnership(faceId: MathFaceId) = combined.replayFaceOwnership(faceId)
+
+    override fun constructionFace(faceId: MathFaceId): AndroidMathFontFace? =
+        math.constructionFace(faceId)
 }
 
 private const val RasterPadding = 8f

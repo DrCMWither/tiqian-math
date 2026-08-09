@@ -3,10 +3,11 @@ package org.tiqian.math.font.android
 import android.graphics.Canvas
 import android.graphics.Paint
 import org.tiqian.math.core.MathBox
+import org.tiqian.math.core.MathReplayFaceOwnership
 
 /** Replays one immutable layout box without remeasuring or resolving any glyph. */
 class AndroidMathRenderer(
-    private val face: AndroidMathFontFace,
+    private val faces: AndroidReplayCatalog,
 ) {
     fun drawBox(
         canvas: Canvas,
@@ -21,7 +22,13 @@ class AndroidMathRenderer(
         }
 
         box.glyphs.filter { it.constructionGroupId == null }.forEach { glyph ->
-            val path = face.glyphPath(glyph.glyphId, glyph.fontSizePx)
+            check(faces.replayFaceOwnership(glyph.faceId) != MathReplayFaceOwnership.Conflict) {
+                "Replay face ownership conflict for ${glyph.faceId}"
+            }
+            val replayFace = checkNotNull(faces.replayFace(glyph.faceId)) {
+                "No Android replay face ${glyph.faceId}"
+            }
+            val path = replayFace.glyphPath(glyph.glyphId, glyph.fontSizePx)
                 ?: error("Glyph ${glyph.glyphId} passed Android preflight without a replayable path")
             path.offset(originX + glyph.x, baselineFromTop + glyph.baselineY)
             canvas.drawPath(path, paint)
@@ -45,7 +52,10 @@ class AndroidMathRenderer(
             "Construction paint ownership mismatch: known=$knownGroupIds referenced=$referencedGroupIds"
         }
         box.constructionPaintGroups.forEach { group ->
-            when (val construction = face.constructionPath(box, group)) {
+            val constructionFace = checkNotNull(faces.constructionFace(group.faceId)) {
+                "No Android construction face ${group.faceId}"
+            }
+            when (val construction = constructionFace.constructionPath(box, group)) {
                 is AndroidMathConstructionPathResult.Available -> {
                     val saveCount = canvas.save()
                     try {

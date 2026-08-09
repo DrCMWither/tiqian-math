@@ -23,11 +23,14 @@ import org.tiqian.math.core.MathBox
 import org.tiqian.math.core.MathBrokenLayout
 import org.tiqian.math.core.MathLayoutResult
 import org.tiqian.math.core.MathMode
+import org.tiqian.math.core.MathFontFamilySpec
+import org.tiqian.math.core.MathFontWeight
 import org.tiqian.math.layout.MathComposeFontFace
 import org.tiqian.math.layout.MathFormulaCapabilityEngine
 import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathFormulaStrictException
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathTextRunProvider
 import org.tiqian.math.layout.breakIntoLines
 import kotlin.math.ceil
 
@@ -39,6 +42,11 @@ fun rememberLeteMathFontFace(): MathComposeFontFace = rememberPlatformLeteMathFo
 @Composable
 fun rememberMathFontFace(fontBytes: ByteArray): MathComposeFontFace =
     rememberPlatformMathFontFace(fontBytes)
+
+/** Loads a class-safe, weighted OpenType MATH family whose selected face ids survive into replay. */
+@Composable
+fun rememberMathFontFamily(spec: MathFontFamilySpec): MathComposeFontFace =
+    rememberPlatformMathFontFamily(spec)
 
 /** Stable measured presentation shared by an embedding paragraph and the math canvas. */
 class TiqianMathFormula internal constructor(
@@ -100,6 +108,8 @@ fun rememberTiqianMathFormula(
     delimiterShortfallPx: Float? = null,
     color: Color = Color.Unspecified,
     fontFace: MathComposeFontFace? = null,
+    textRunProvider: MathTextRunProvider? = null,
+    textLocale: String? = null,
 ): TiqianMathFormula = TiqianMathFormula(
     rememberResolvedFormulaCapability(
         source = source,
@@ -112,6 +122,8 @@ fun rememberTiqianMathFormula(
         delimiterShortfallPx = delimiterShortfallPx,
         color = color,
         fontFace = fontFace,
+        textRunProvider = textRunProvider,
+        textLocale = textLocale,
     ),
 )
 
@@ -136,6 +148,7 @@ fun TiqianMathFormulaCanvas(
         modifier = modifier,
         color = formula.resolved.color,
         face = formula.resolved.face,
+        textRunProvider = formula.resolved.textRunProvider,
     )
 }
 
@@ -153,6 +166,7 @@ fun TiqianMathFormulaCanvas(
         modifier = modifier,
         color = formula.resolved.color,
         face = formula.resolved.face,
+        textRunProvider = formula.resolved.textRunProvider,
     )
 }
 
@@ -180,6 +194,8 @@ fun TiqianMath(
     color: Color = Color.Unspecified,
     softWrap: Boolean = true,
     fontFace: MathComposeFontFace? = null,
+    textRunProvider: MathTextRunProvider? = null,
+    textLocale: String? = null,
     onMathLayout: (MathLayoutResult) -> Unit = {},
     onMathError: (MathFormulaCapabilityResult.FallbackRequired) -> Unit = {},
 ) {
@@ -194,6 +210,8 @@ fun TiqianMath(
         delimiterShortfallPx,
         color,
         fontFace,
+        textRunProvider,
+        textLocale,
     )
     FormulaCapabilityContent(
         resolved = resolved,
@@ -218,6 +236,8 @@ fun StrictTiqianMath(
     color: Color = Color.Unspecified,
     softWrap: Boolean = true,
     fontFace: MathComposeFontFace? = null,
+    textRunProvider: MathTextRunProvider? = null,
+    textLocale: String? = null,
     onMathLayout: (MathLayoutResult) -> Unit = {},
 ) {
     val resolved = rememberResolvedFormulaCapability(
@@ -231,6 +251,8 @@ fun StrictTiqianMath(
         null,
         color,
         fontFace,
+        textRunProvider,
+        textLocale,
     )
     FormulaCapabilityContent(resolved, modifier, softWrap, onMathLayout, fallback = null)
 }
@@ -253,6 +275,8 @@ fun TiqianMathOrFallback(
     color: Color = Color.Unspecified,
     softWrap: Boolean = true,
     fontFace: MathComposeFontFace? = null,
+    textRunProvider: MathTextRunProvider? = null,
+    textLocale: String? = null,
     onMathLayout: (MathLayoutResult) -> Unit = {},
     fallback: @Composable (MathFormulaCapabilityResult.FallbackRequired) -> Unit,
 ) {
@@ -267,6 +291,8 @@ fun TiqianMathOrFallback(
         delimiterShortfallPx,
         color,
         fontFace,
+        textRunProvider,
+        textLocale,
     )
     FormulaCapabilityContent(resolved, modifier, softWrap, onMathLayout, fallback)
 }
@@ -294,6 +320,8 @@ internal fun TiqianMathCapabilityBoundaryForTest(
         null,
         Color.Black,
         fontFace,
+        null,
+        null,
         capabilityEngine,
     )
     FormulaCapabilityContent(
@@ -321,6 +349,7 @@ private fun FormulaCapabilityContent(
             resolved.color,
             softWrap,
             resolved.face,
+            resolved.textRunProvider,
             onMathLayout,
         )
         is MathFormulaCapabilityResult.FallbackRequired -> {
@@ -350,6 +379,7 @@ private fun TiqianMathError(
 
 internal data class ResolvedFormulaCapability(
     val face: MathComposeFontFace,
+    val textRunProvider: MathTextRunProvider?,
     val capability: MathFormulaCapabilityResult,
     val requestedLineHeightPx: Float?,
     val resolvedFontSizePx: Float,
@@ -375,6 +405,8 @@ private fun rememberResolvedFormulaCapability(
     delimiterShortfallPx: Float?,
     color: Color,
     fontFace: MathComposeFontFace?,
+    textRunProvider: MathTextRunProvider?,
+    textLocale: String?,
     capabilityEngineOverride: MathFormulaCapabilityEngine? = null,
 ): ResolvedFormulaCapability {
     val density = LocalDensity.current
@@ -392,9 +424,14 @@ private fun rememberResolvedFormulaCapability(
         else -> Color.Black
     }
     val defaultFace = if (fontFace == null) rememberPlatformLeteMathFontFace() else null
-    val resolvedFace = fontFace ?: checkNotNull(defaultFace)
-    val defaultCapabilityEngine = remember(resolvedFace) {
-        platformFormulaCapabilityEngine(resolvedFace)
+    val familyFace = fontFace ?: checkNotNull(defaultFace)
+    val requestedWeight = MathFontWeight.nearest(style.fontWeight?.weight ?: MathFontWeight.Regular.cssWeight)
+    val resolvedFace = remember(familyFace, requestedWeight) {
+        familyFace.selectWeight(requestedWeight) as? MathComposeFontFace
+            ?: error("Selected math weight is not Compose-replayable")
+    }
+    val defaultCapabilityEngine = remember(resolvedFace, textRunProvider) {
+        platformFormulaCapabilityEngine(resolvedFace, textRunProvider)
     }
     val capabilityEngine = capabilityEngineOverride ?: defaultCapabilityEngine
     val capability = remember(
@@ -405,6 +442,7 @@ private fun rememberResolvedFormulaCapability(
         scriptSpacePx,
         delimiterFactor,
         delimiterShortfallPx,
+        textLocale,
         capabilityEngine,
     ) {
         capabilityEngine.evaluate(
@@ -416,11 +454,13 @@ private fun rememberResolvedFormulaCapability(
                 scriptSpacePx = scriptSpacePx,
                 delimiterFactor = delimiterFactor,
                 delimiterShortfallPx = delimiterShortfallPx,
+                textLocale = textLocale,
             ),
         )
     }
     return ResolvedFormulaCapability(
         resolvedFace,
+        textRunProvider,
         capability,
         requestedLineHeightPx,
         resolvedFontSizePx,
@@ -436,6 +476,7 @@ private fun ReadyTiqianMath(
     color: Color,
     softWrap: Boolean,
     face: MathComposeFontFace,
+    textRunProvider: MathTextRunProvider?,
     onMathLayout: (MathLayoutResult) -> Unit,
 ) {
     SideEffect { onMathLayout(result) }
@@ -445,7 +486,7 @@ private fun ReadyTiqianMath(
         modifier = modifier,
         content = {
             Canvas(Modifier.fillMaxSize()) {
-                drawPlatformMathPlan(face, renderPlan, color)
+                drawPlatformMathPlan(face, textRunProvider, renderPlan, color)
             }
         },
     ) { measurables, constraints ->
@@ -478,12 +519,13 @@ private fun FixedTiqianMathPlan(
     modifier: Modifier,
     color: Color,
     face: MathComposeFontFace,
+    textRunProvider: MathTextRunProvider?,
 ) {
     Layout(
         modifier = modifier,
         content = {
             Canvas(Modifier.fillMaxSize()) {
-                drawPlatformMathPlan(face, plan, color)
+                drawPlatformMathPlan(face, textRunProvider, plan, color)
             }
         },
     ) { measurables, constraints ->

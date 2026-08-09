@@ -29,6 +29,14 @@ data class MathGlyphPlacement(
     val style: MathStyle,
     /** Non-null when this glyph participates in one semantic outline construction. */
     val constructionGroupId: Int? = null,
+    val faceId: MathFaceId = MathFaceId.LegacySingleFace,
+    val fontClass: MathFontClass? = MathFontClass.Serif,
+    val requestedWeight: MathFontWeight = MathFontWeight.Regular,
+    val resolvedWeight: MathFontWeight = MathFontWeight.Regular,
+    /** Present only for MATH-family glyph selection. */
+    val fallbackReason: MathFontFallbackReason? = MathFontFallbackReason.RequestedFace,
+    /** Present only for glyphs measured by a host text provider. */
+    val hostTextDecision: MathHostTextFaceDecision? = null,
 )
 
 data class MathRulePlacement(
@@ -65,6 +73,7 @@ data class MathConstructionPaintGroup(
     val shapeKind: MathConstructionShapeKind,
     val sourceRange: SourceRange,
     val outlinePolicy: MathConstructionOutlinePolicy,
+    val faceId: MathFaceId = MathFaceId.LegacySingleFace,
 )
 
 enum class MathTeXCleanBoxPolicy {
@@ -78,6 +87,7 @@ enum class MathTeXCleanBoxPolicy {
 enum class MathTeXCleanBoxEvidence {
     GlyphOutline,
     FontReportedGlyphBounds,
+    HostTextRunMetrics,
     RuleGeometry,
     CompletedChildBox,
     Empty,

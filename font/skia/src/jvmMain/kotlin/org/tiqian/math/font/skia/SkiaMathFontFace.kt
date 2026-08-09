@@ -40,9 +40,29 @@ import kotlin.math.max
  * A formula-wide face: one sfnt, one MATH table, and one Skia typeface. There is
  * intentionally no fallback font manager in the shaping path.
  */
+interface SkiaReplayFace {
+    val faceId: MathFaceId
+    val resolvedWeight: MathFontWeight
+    fun font(fontSizePx: Float): Font
+    fun glyphPath(glyphId: UShort, fontSizePx: Float): Path?
+    /** Valid outline-less glyphs such as spaces remain replayable; invalid ids do not. */
+    fun canReplayGlyph(glyphId: UShort): Boolean
+}
+
+interface SkiaReplayCatalog {
+    fun replayFace(faceId: MathFaceId): SkiaReplayFace?
+    fun constructionFace(faceId: MathFaceId): SkiaMathFontFace?
+    fun replayFaceOwnership(faceId: MathFaceId): MathReplayFaceOwnership =
+        if (replayFace(faceId) == null) MathReplayFaceOwnership.Missing else MathReplayFaceOwnership.Unique
+}
+
 class SkiaMathFontFace(
     override val mathFont: OpenTypeMathFont,
-) : MathComposeFontFace, AutoCloseable {
+    override val faceId: MathFaceId = MathFaceId.LegacySingleFace,
+    override val fontClass: MathFontClass = MathFontClass.Serif,
+    override val resolvedWeight: MathFontWeight = MathFontWeight.Regular,
+    override val requestedWeight: MathFontWeight = resolvedWeight,
+) : MathComposeFontFace, SkiaReplayFace, SkiaReplayCatalog, AutoCloseable {
     val typeface: Typeface
     private val shaper = Shaper.makeShaperDrivenWrapper()
     private val constructionOutlineCache = MathConstructionOutlineCache(this)
@@ -254,9 +274,20 @@ class SkiaMathFontFace(
      * shaper quantizes [RunInfo.advanceX] to whole device pixels even though the selected glyph's
      * OpenType advance remains fractional, which moves following noads at phase-dependent sizes.
      */
-    fun font(fontSizePx: Float): Font = Font(typeface, fontSizePx).apply {
+    override fun font(fontSizePx: Float): Font = Font(typeface, fontSizePx).apply {
         isSubpixel = true
     }
+
+    override fun glyphPath(glyphId: UShort, fontSizePx: Float): Path? = font(fontSizePx).use { font ->
+        font.getPath(glyphId.toShort())
+    }
+
+    override fun canReplayGlyph(glyphId: UShort): Boolean =
+        glyphId.toInt() != 0 && glyphId.toInt() < typeface.glyphsCount
+
+    override fun replayFace(faceId: MathFaceId): SkiaReplayFace? = if (faceId == this.faceId) this else null
+
+    override fun constructionFace(faceId: MathFaceId): SkiaMathFontFace? = if (faceId == this.faceId) this else null
 
     fun constructionOutline(
         box: MathBox,
@@ -300,6 +331,10 @@ class SkiaMathFontFace(
                 advance = widths[glyphIndex],
                 inkBounds = MathRect(bound.left, bound.top, bound.right, bound.bottom),
                 textCluster = clusters.getOrElse(glyphIndex) { 0 },
+                faceId = faceId,
+                fontClass = fontClass,
+                requestedWeight = requestedWeight,
+                resolvedWeight = resolvedWeight,
             )
         }
         val ascent = glyphs.maxOfOrNull { (-it.inkBounds.top).coerceAtLeast(0f) } ?: 0f

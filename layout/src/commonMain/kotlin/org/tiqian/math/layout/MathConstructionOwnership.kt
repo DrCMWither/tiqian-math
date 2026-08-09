@@ -30,6 +30,17 @@ fun MathBox.constructionPaintOwnershipDiagnostics(): List<MathDiagnostic> {
                 groups.map { it.sourceRange }.coveringRange(),
             )
         }
+        val declaredFace = groups.first().faceId
+        val foreignGlyphs = glyphs.filter {
+            it.constructionGroupId == groupId && it.faceId != declaredFace
+        }
+        if (foreignGlyphs.isNotEmpty()) {
+            diagnostics += ownershipDiagnostic(
+                "group $groupId owns face $declaredFace but references glyphs from " +
+                    foreignGlyphs.map { it.faceId }.distinct().joinToString(),
+                foreignGlyphs.map { it.sourceRange }.coveringRange(),
+            )
+        }
     }
     references.entries.sortedBy { it.key }.forEach { (groupId, ranges) ->
         if (groupId !in declarations) {

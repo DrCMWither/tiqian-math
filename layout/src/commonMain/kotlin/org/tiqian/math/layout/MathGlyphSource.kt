@@ -1,6 +1,11 @@
 package org.tiqian.math.layout
 
 import org.tiqian.math.core.MathRect
+import org.tiqian.math.core.MathFaceId
+import org.tiqian.math.core.MathFontClass
+import org.tiqian.math.core.MathFontFallbackReason
+import org.tiqian.math.core.MathFontWeight
+import org.tiqian.math.core.MathHostTextFaceDecision
 import org.tiqian.math.core.MathAlphabet
 import org.tiqian.math.core.MathFamily
 import org.tiqian.math.core.MathLargeOperatorIdentity
@@ -18,6 +23,14 @@ data class MeasuredMathGlyph(
     val textCluster: Int = 0,
     /** Backend shaping offset from the noad baseline; down is positive. */
     val baselineOffsetPx: Float = 0f,
+    val faceId: MathFaceId = MathFaceId.LegacySingleFace,
+    val fontClass: MathFontClass? = MathFontClass.Serif,
+    val requestedWeight: MathFontWeight = MathFontWeight.Regular,
+    val resolvedWeight: MathFontWeight = MathFontWeight.Regular,
+    /** Present only for MATH-family glyph selection. */
+    val fallbackReason: MathFontFallbackReason? = MathFontFallbackReason.RequestedFace,
+    /** Present only for host-owned upright text atoms. */
+    val hostTextDecision: MathHostTextFaceDecision? = null,
 )
 
 data class MeasuredMathRun(
@@ -159,6 +172,23 @@ data class ResolvedMathSymbolRun(
 /** Platform font adapter. Layout consumes only immutable, replayable evidence. */
 interface MathFontFace {
     val mathFont: OpenTypeMathFont
+    val faceId: MathFaceId get() = MathFaceId.LegacySingleFace
+    val fontClass: MathFontClass get() = MathFontClass.Serif
+    val requestedWeight: MathFontWeight get() = MathFontWeight.Regular
+    val resolvedWeight: MathFontWeight get() = MathFontWeight.Regular
+
+    /** Binds a family to the requested host weight; legacy single faces retain themselves. */
+    fun selectWeight(weight: MathFontWeight): MathFontFace = this
+
+    /** Returns the MATH table that owns [faceId], never one from an unrelated fallback face. */
+    fun mathFontFor(faceId: MathFaceId): OpenTypeMathFont = if (faceId == this.faceId) {
+        mathFont
+    } else {
+        error("Face $faceId does not belong to this math font source")
+    }
+
+    fun mathFontForOrNull(faceId: MathFaceId): OpenTypeMathFont? =
+        if (faceId == this.faceId) mathFont else null
 
     fun resolveSymbol(
         request: MathSymbolGlyphRequest,
@@ -208,6 +238,28 @@ interface MathFontFace {
         sourceRange: SourceRange,
     ): MeasuredMathRun = measureGlyph(glyphId, fontSizePx, style, sourceRange)
 
+    fun measureGlyphForFace(
+        faceId: MathFaceId,
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun {
+        require(faceId == this.faceId) { "Glyph $glyphId belongs to $faceId, not ${this.faceId}" }
+        return measureGlyph(glyphId, fontSizePx, style, sourceRange)
+    }
+
+    fun measureGlyphOutlineBoundsForFace(
+        faceId: MathFaceId,
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun {
+        require(faceId == this.faceId) { "Glyph $glyphId belongs to $faceId, not ${this.faceId}" }
+        return measureGlyphOutlineBounds(glyphId, fontSizePx, style, sourceRange)
+    }
+
     /**
      * Returns logical measurement plus independent outline evidence for semantic construction
      * painting. Backends without replayable outlines retain [measureGlyph]'s measurement and
@@ -224,6 +276,17 @@ interface MathFontFace {
             MathConstructionOutlineUnavailableReason.AdapterDoesNotProvideOutlineEvidence,
         ),
     )
+
+    fun measureOutlineConstructionGlyphForFace(
+        faceId: MathFaceId,
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredOutlineConstructionRun {
+        require(faceId == this.faceId) { "Construction glyph $glyphId belongs to $faceId" }
+        return measureOutlineConstructionGlyph(glyphId, fontSizePx, style, sourceRange)
+    }
 
     /**
      * Resolves the Unicode base glyph used as the key in MathVariants coverage.
@@ -246,6 +309,14 @@ interface MathFontFace {
             MathConstructionOutlineUnavailableReason.AdapterDoesNotProvideOutlineEvidence,
         ),
     )
+
+    /** Ordered whole-face candidates. Layout may only select construction parts from one entry. */
+    fun shapeOutlineConstructionBaseCandidates(
+        text: String,
+        fontSizePx: Float,
+        sourceRange: SourceRange,
+    ): List<MeasuredOutlineConstructionRun> =
+        listOf(shapeOutlineConstructionBase(text, fontSizePx, sourceRange))
 }
 
 /** Math face whose platform module can preflight and replay every accepted placement. */

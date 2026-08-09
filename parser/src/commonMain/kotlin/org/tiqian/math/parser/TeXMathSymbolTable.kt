@@ -275,6 +275,44 @@ internal object TeXMathSymbolTable {
         put("Leftrightarrow", named(MathNamedSymbol.DoubleLeftRightArrow, MathAtomClass.Relation, MathFamily.Symbols))
         put("mapsto", named(MathNamedSymbol.MapsTo, MathAtomClass.Relation, MathFamily.Symbols))
         put("approx", named(MathNamedSymbol.ApproximatelyEqual, MathAtomClass.Relation, MathFamily.Symbols))
+        put("leqslant", named(MathNamedSymbol.LessThanOrSlantedEqual, MathAtomClass.Relation, MathFamily.Symbols))
+        put("geqslant", named(MathNamedSymbol.GreaterThanOrSlantedEqual, MathAtomClass.Relation, MathFamily.Symbols))
+        put("implies", getValue("Rightarrow"))
+        put("iff", getValue("Leftrightarrow"))
+        put("dots", named(MathNamedSymbol.HorizontalEllipsis, MathAtomClass.Inner, MathFamily.Symbols))
+        put("ldots", getValue("dots"))
+        put("cdots", named(MathNamedSymbol.CenteredEllipsis, MathAtomClass.Inner, MathFamily.Symbols))
+        put("vdots", named(MathNamedSymbol.VerticalEllipsis, MathAtomClass.Ordinary, MathFamily.Symbols))
+        put("ddots", named(MathNamedSymbol.DiagonalEllipsis, MathAtomClass.Ordinary, MathFamily.Symbols))
+        put("prime", named(MathNamedSymbol.Prime, MathAtomClass.Ordinary, MathFamily.Symbols))
+        put("langle", named(MathNamedSymbol.LeftAngleBracket, MathAtomClass.Opening, MathFamily.Symbols))
+        put("rangle", named(MathNamedSymbol.RightAngleBracket, MathAtomClass.Closing, MathFamily.Symbols))
+        put("lbrack", named(MathNamedSymbol.LeftBracket, MathAtomClass.Opening, MathFamily.Operators))
+        put("rbrack", named(MathNamedSymbol.RightBracket, MathAtomClass.Closing, MathFamily.Operators))
+        put("uparrow", named(MathNamedSymbol.UpArrow, MathAtomClass.Relation, MathFamily.Symbols))
+        put("downarrow", named(MathNamedSymbol.DownArrow, MathAtomClass.Relation, MathFamily.Symbols))
+        put("updownarrow", named(MathNamedSymbol.UpDownArrow, MathAtomClass.Relation, MathFamily.Symbols))
+        put("Updownarrow", named(MathNamedSymbol.DoubleUpDownArrow, MathAtomClass.Relation, MathFamily.Symbols))
+        put("longleftarrow", named(MathNamedSymbol.LongLeftArrow, MathAtomClass.Relation, MathFamily.Symbols))
+        put("longrightarrow", named(MathNamedSymbol.LongRightArrow, MathAtomClass.Relation, MathFamily.Symbols))
+        put("longleftrightarrow", named(MathNamedSymbol.LongLeftRightArrow, MathAtomClass.Relation, MathFamily.Symbols))
+        put("Longleftarrow", named(MathNamedSymbol.LongDoubleLeftArrow, MathAtomClass.Relation, MathFamily.Symbols))
+        put("Longrightarrow", named(MathNamedSymbol.LongDoubleRightArrow, MathAtomClass.Relation, MathFamily.Symbols))
+        put("Longleftrightarrow", named(MathNamedSymbol.LongDoubleLeftRightArrow, MathAtomClass.Relation, MathFamily.Symbols))
+        put("vert", named(MathNamedSymbol.VerticalBar, MathAtomClass.Ordinary, MathFamily.Symbols))
+        put("lVert", named(MathNamedSymbol.DoubleVerticalBar, MathAtomClass.Opening, MathFamily.Symbols))
+        put("rVert", named(MathNamedSymbol.DoubleVerticalBar, MathAtomClass.Closing, MathFamily.Symbols))
+        put("lceil", named(MathNamedSymbol.LeftCeiling, MathAtomClass.Opening, MathFamily.Symbols))
+        put("rceil", named(MathNamedSymbol.RightCeiling, MathAtomClass.Closing, MathFamily.Symbols))
+        put("lfloor", named(MathNamedSymbol.LeftFloor, MathAtomClass.Opening, MathFamily.Symbols))
+        put("rfloor", named(MathNamedSymbol.RightFloor, MathAtomClass.Closing, MathFamily.Symbols))
+        put("angle", named(MathNamedSymbol.Angle, MathAtomClass.Ordinary, MathFamily.Symbols))
+        put("therefore", named(MathNamedSymbol.Therefore, MathAtomClass.Relation, MathFamily.Symbols))
+        put("triangleq", named(MathNamedSymbol.TriangleEqual, MathAtomClass.Relation, MathFamily.Symbols))
+        put("triangleright", named(MathNamedSymbol.RightTriangle, MathAtomClass.Binary, MathFamily.Symbols))
+        put("dagger", named(MathNamedSymbol.Dagger, MathAtomClass.Binary, MathFamily.Symbols))
+        put("bigstar", named(MathNamedSymbol.BlackStar, MathAtomClass.Ordinary, MathFamily.Symbols))
+        put("varnothing", getValue("emptyset"))
     }
 
     private val largeOperators = mapOf(
@@ -282,6 +320,9 @@ internal object TeXMathSymbolTable {
         "prod" to MathLargeOperatorIdentity.Product,
         "int" to MathLargeOperatorIdentity.Integral,
         "oint" to MathLargeOperatorIdentity.ContourIntegral,
+        "bigcap" to MathLargeOperatorIdentity.BigIntersection,
+        "bigcup" to MathLargeOperatorIdentity.BigUnion,
+        "bigotimes" to MathLargeOperatorIdentity.BigCircledTimes,
     )
 
     private val controlSymbols = mapOf(
@@ -291,6 +332,7 @@ internal object TeXMathSymbolTable {
         "#" to fixedLiteral('#'.code),
         "_" to fixedLiteral('_'.code),
         "^" to fixedLiteral('^'.code),
+        "|" to named(MathNamedSymbol.DoubleVerticalBar, MathAtomClass.Ordinary, MathFamily.Symbols),
         "\\" to fixedLiteral('\\'.code),
     )
 

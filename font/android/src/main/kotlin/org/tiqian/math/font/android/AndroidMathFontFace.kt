@@ -2,7 +2,12 @@ package org.tiqian.math.font.android
 
 import android.content.Context
 import android.graphics.Path
+import org.tiqian.math.core.MathFaceId
+import org.tiqian.math.core.MathFontClass
+import org.tiqian.math.core.MathFontFallbackReason
+import org.tiqian.math.core.MathFontWeight
 import org.tiqian.math.core.MathRect
+import org.tiqian.math.core.MathReplayFaceOwnership
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.MathStyleLevel
 import org.tiqian.math.core.SourceRange
@@ -30,10 +35,27 @@ import kotlin.math.max
  * One Android formula-wide face backed by one immutable byte array, one HarfBuzz face, and one
  * FreeType face. No Android system-font fallback or character-level Paint measurement is used.
  */
+interface AndroidReplayFace {
+    val faceId: MathFaceId
+    val resolvedWeight: MathFontWeight
+    fun glyphPath(glyphId: UShort, fontSizePx: Float): Path?
+}
+
+interface AndroidReplayCatalog {
+    fun replayFace(faceId: MathFaceId): AndroidReplayFace?
+    fun constructionFace(faceId: MathFaceId): AndroidMathFontFace?
+    fun replayFaceOwnership(faceId: MathFaceId): MathReplayFaceOwnership =
+        if (replayFace(faceId) == null) MathReplayFaceOwnership.Missing else MathReplayFaceOwnership.Unique
+}
+
 class AndroidMathFontFace private constructor(
     override val mathFont: OpenTypeMathFont,
     nativeBytes: ByteArray,
-) : MathComposeFontFace, AutoCloseable {
+    override val faceId: MathFaceId,
+    override val fontClass: MathFontClass,
+    override val resolvedWeight: MathFontWeight,
+    override val requestedWeight: MathFontWeight,
+) : MathComposeFontFace, AndroidReplayFace, AndroidReplayCatalog, AutoCloseable {
     private val faceLock = Any()
     private var nativeHandle = NativeMathBridge.createFace(nativeBytes)
     private val glyphPathCache = NativeGlyphPathCache(maximumEntries = 512)
@@ -118,7 +140,7 @@ class AndroidMathFontFace private constructor(
         val packed = withNativeHandle { handle ->
             NativeMathBridge.shape(handle, text, fontSizePx, style.nativeStyleLevel())
         }
-        return decodeRun(packed)
+        return decodeRun(packed, faceId, fontClass, requestedWeight, resolvedWeight)
     }
 
     override fun measureGlyph(
@@ -126,7 +148,13 @@ class AndroidMathFontFace private constructor(
         fontSizePx: Float,
         style: MathStyle,
         sourceRange: SourceRange,
-    ): MeasuredMathRun = decodeGlyphMeasurement(nativeGlyphMeasurement(glyphId, fontSizePx))
+    ): MeasuredMathRun = decodeGlyphMeasurement(
+        nativeGlyphMeasurement(glyphId, fontSizePx),
+        faceId,
+        fontClass,
+        requestedWeight,
+        resolvedWeight,
+    )
 
     override fun measureGlyphOutlineBounds(
         glyphId: UShort,
@@ -155,7 +183,7 @@ class AndroidMathFontFace private constructor(
     )
 
     /** Returns a caller-owned copy; the cached path is never exposed for mutation. */
-    fun glyphPath(glyphId: UShort, fontSizePx: Float): Path? = withNativeHandle { handle ->
+    override fun glyphPath(glyphId: UShort, fontSizePx: Float): Path? = withNativeHandle { handle ->
         synchronized(glyphPathCache) {
             glyphPathCache.get(glyphId, fontSizePx)?.let(::Path) ?: run {
                 val commands = NativeMathBridge.glyphOutline(handle, glyphId.toInt(), fontSizePx)
@@ -178,6 +206,10 @@ class AndroidMathFontFace private constructor(
         constructionPathCache.stats()
 
     fun nativeVersions(): String = NativeMathBridge.nativeVersions()
+
+    override fun replayFace(faceId: MathFaceId): AndroidReplayFace? = if (faceId == this.faceId) this else null
+
+    override fun constructionFace(faceId: MathFaceId): AndroidMathFontFace? = if (faceId == this.faceId) this else null
 
     private fun nativeGlyphMeasurement(glyphId: UShort, fontSizePx: Float): FloatArray =
         withNativeHandle { handle -> NativeMathBridge.measureGlyph(handle, glyphId.toInt(), fontSizePx) }
@@ -239,9 +271,22 @@ class AndroidMathFontFace private constructor(
     companion object {
         const val LeteAssetPath = "org/tiqian/math/fonts/LeteSansMath-Regular.otf"
 
-        fun fromBytes(fontBytes: ByteArray): AndroidMathFontFace {
+        fun fromBytes(
+            fontBytes: ByteArray,
+            faceId: MathFaceId = MathFaceId.LegacySingleFace,
+            fontClass: MathFontClass = MathFontClass.Serif,
+            weight: MathFontWeight = MathFontWeight.Regular,
+            requestedWeight: MathFontWeight = weight,
+        ): AndroidMathFontFace {
             val immutableBytes = fontBytes.copyOf()
-            return AndroidMathFontFace(OpenTypeMathReader().read(immutableBytes), immutableBytes)
+            return AndroidMathFontFace(
+                OpenTypeMathReader().read(immutableBytes),
+                immutableBytes,
+                faceId,
+                fontClass,
+                weight,
+                requestedWeight,
+            )
         }
 
         fun fromAsset(context: Context, assetPath: String): AndroidMathFontFace =
@@ -251,11 +296,22 @@ class AndroidMathFontFace private constructor(
             fromBytes(context.applicationContext.resources.openRawResource(resourceId).use { it.readBytes() })
 
         fun loadLete(context: Context): AndroidMathFontFace =
-            fromAsset(context, LeteAssetPath)
+            fromBytes(
+                context.applicationContext.assets.open(LeteAssetPath).use { it.readBytes() },
+                faceId = MathFaceId("lete-sans-math-regular"),
+                fontClass = MathFontClass.SansSerif,
+            )
     }
 }
 
-private fun decodeRun(packed: FloatArray): MeasuredMathRun {
+internal fun decodeRun(
+    packed: FloatArray,
+    faceId: MathFaceId = MathFaceId.LegacySingleFace,
+    fontClass: MathFontClass? = MathFontClass.Serif,
+    requestedWeight: MathFontWeight = MathFontWeight.Regular,
+    resolvedWeight: MathFontWeight = MathFontWeight.Regular,
+    fallbackReason: MathFontFallbackReason? = MathFontFallbackReason.RequestedFace,
+): MeasuredMathRun {
     require(packed.size >= RunHeaderSize) { "Truncated native shaping result" }
     val glyphCount = packed[0].toInt()
     require(packed.size == RunHeaderSize + glyphCount * RunGlyphStride) {
@@ -275,6 +331,11 @@ private fun decodeRun(packed: FloatArray): MeasuredMathRun {
                 packed[base + 7],
                 packed[base + 8],
             ),
+            faceId = faceId,
+            fontClass = fontClass,
+            requestedWeight = requestedWeight,
+            resolvedWeight = resolvedWeight,
+            fallbackReason = fallbackReason,
         )
     }
     val glyphAdvanceWidth = glyphs.maxOfOrNull { it.x + it.advance } ?: 0f
@@ -288,13 +349,23 @@ private fun decodeRun(packed: FloatArray): MeasuredMathRun {
     )
 }
 
-private fun decodeGlyphMeasurement(packed: FloatArray): MeasuredMathRun {
+internal fun decodeGlyphMeasurement(
+    packed: FloatArray,
+    faceId: MathFaceId = MathFaceId.LegacySingleFace,
+    fontClass: MathFontClass? = MathFontClass.Serif,
+    requestedWeight: MathFontWeight = MathFontWeight.Regular,
+    resolvedWeight: MathFontWeight = MathFontWeight.Regular,
+): MeasuredMathRun {
     require(packed.size == 7) { "Malformed native glyph measurement" }
     val glyph = MeasuredMathGlyph(
         glyphId = packed[0].toInt().toUShort(),
         x = 0f,
         advance = packed[1],
         inkBounds = MathRect(packed[2], packed[3], packed[4], packed[5]),
+        faceId = faceId,
+        fontClass = fontClass,
+        requestedWeight = requestedWeight,
+        resolvedWeight = resolvedWeight,
     )
     return MeasuredMathRun(
         glyphs = listOf(glyph),
@@ -310,7 +381,7 @@ private fun decodeGlyphMeasurement(packed: FloatArray): MeasuredMathRun {
     )
 }
 
-private fun MathStyle.nativeStyleLevel(): Int = when (level) {
+internal fun MathStyle.nativeStyleLevel(): Int = when (level) {
     MathStyleLevel.Display, MathStyleLevel.Text -> 0
     MathStyleLevel.Script -> 1
     MathStyleLevel.ScriptScript -> 2
@@ -325,7 +396,7 @@ private data class BackendSpan(
     val range: SourceRange,
 )
 
-private class NativeGlyphPathCache(private val maximumEntries: Int) {
+internal class NativeGlyphPathCache(private val maximumEntries: Int) {
     private val paths = object : LinkedHashMap<GlyphPathKey, Path>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<GlyphPathKey, Path>?): Boolean =
             size > maximumEntries

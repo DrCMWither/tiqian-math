@@ -189,9 +189,14 @@ class MathFormulaCorpusScanner(
         DiagnosticCode.MissingConstructionOutlineEvidence,
         DiagnosticCode.MissingGlyphOutlineEvidence,
         DiagnosticCode.InvalidConstructionPaintOwnership,
+        DiagnosticCode.ReplayFaceOwnershipConflict,
         -> MathFormulaFailureStage.RenderPreflight
 
         DiagnosticCode.MissingGlyph,
+        DiagnosticCode.MissingTextRunProvider,
+        DiagnosticCode.NonReplayableHostTextRun,
+        DiagnosticCode.UnsupportedHostTextShaping,
+        DiagnosticCode.InvalidHostTextRunEvidence,
         DiagnosticCode.MissingMathTable,
         DiagnosticCode.MalformedFont,
         DiagnosticCode.UnsupportedMathDeviceAdjustment,

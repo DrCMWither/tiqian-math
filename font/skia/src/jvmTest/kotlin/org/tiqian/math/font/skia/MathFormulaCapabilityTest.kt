@@ -124,6 +124,7 @@ class MathFormulaCapabilityTest {
 
             listOf(
                 DiagnosticCode.MissingGlyph,
+                DiagnosticCode.MissingTextRunProvider,
                 DiagnosticCode.MissingMathConstruction,
                 DiagnosticCode.MathVariantTooShort,
                 DiagnosticCode.MissingConstructionOutlineEvidence,

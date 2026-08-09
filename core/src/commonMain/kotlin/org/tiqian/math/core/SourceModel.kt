@@ -51,6 +51,11 @@ enum class DiagnosticCode {
     UnsupportedCommand,
     UnsupportedMathAlphabet,
     MissingGlyph,
+    MissingTextRunProvider,
+    NonReplayableHostTextRun,
+    UnsupportedHostTextShaping,
+    InvalidHostTextRunEvidence,
+    ReplayFaceOwnershipConflict,
     MissingMathTable,
     MalformedFont,
     UnsupportedMathDeviceAdjustment,
@@ -66,6 +71,14 @@ enum class DiagnosticCode {
     MiddleOutsideDelimitedGroup,
     MissingRightDelimiter,
     UnsupportedDelimiter,
+    MissingEnvironmentName,
+    UnsupportedEnvironment,
+    MissingEnvironmentEnd,
+    MismatchedEnvironmentEnd,
+    MissingArrayColumnSpecification,
+    InvalidArrayColumnSpecification,
+    UnexpectedAlignmentTab,
+    UnexpectedRowSeparator,
 }
 
 data class MathDiagnostic(

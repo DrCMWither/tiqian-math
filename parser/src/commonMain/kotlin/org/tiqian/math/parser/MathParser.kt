@@ -64,7 +64,7 @@ private class ParserState(
                     )
                     children += MathErrorNode(token.text, token.range)
                 }
-                else -> parseAtomWithScripts()?.let(children::add)
+                else -> parseAtomWithScripts()?.let { children.appendParsedNode(it) }
             }
         }
 
@@ -90,7 +90,7 @@ private class ParserState(
         }
 
         var base = parsePrimary() ?: return null
-        if (base is MathStyleDeclaration) return base
+        if (base is MathStyleDeclaration || base is MathAlphabetDeclaration) return base
         var superscript: MathNode? = null
         var subscript: MathNode? = null
         var totalRange = base.range
@@ -173,7 +173,24 @@ private class ParserState(
         skipIgnored()
         val token = advance()
         return when (token.kind) {
-            MathTokenKind.Symbol -> symbolNode(token, TeXMathSymbolTable.literal(token.text))
+            MathTokenKind.Symbol -> if (token.text == "&") {
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.UnexpectedAlignmentTab,
+                    "Alignment tab & is only valid inside a supported table environment",
+                    token.range,
+                )
+                MathErrorNode(token.text, token.range)
+            } else if (token.text.scalarValues().all { it.isCjkMathTextScalar() }) {
+                MathText(
+                    segments = listOf(MathTextSegment(token.text, token.range)),
+                    commandRange = SourceRange(token.range.start, token.range.start),
+                    contentRange = token.range,
+                    range = token.range,
+                    origin = MathTextOrigin.ImplicitCjk,
+                )
+            } else {
+                symbolNode(token, TeXMathSymbolTable.literal(token.text))
+            }
             MathTokenKind.ControlSymbol -> parseControlSymbol(token)
             MathTokenKind.ControlWord -> parseControlWord(token)
             MathTokenKind.OpenGroup -> parseGroup(token)
@@ -208,6 +225,17 @@ private class ParserState(
     }
 
     private fun parseControlSymbol(token: MathToken): MathNode {
+        explicitControlSpaces[token.text]?.let { mu ->
+            return MathExplicitSpace(sourceSlice(token.range), mu, token.range)
+        }
+        if (token.text == "\\") {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.UnexpectedRowSeparator,
+                "Row separator \\\\ is only valid inside a supported table environment",
+                token.range,
+            )
+            return MathErrorNode(sourceSlice(token.range), token.range)
+        }
         val spec = TeXMathSymbolTable.controlSymbol(token.text)
         if (spec == null) {
             diagnostics += MathDiagnostic(
@@ -221,9 +249,23 @@ private class ParserState(
     }
 
     private fun parseControlWord(token: MathToken): MathNode {
+        if (token.text == "begin") return parseEnvironment(token)
+        if (token.text == "end") {
+            val name = parseEnvironmentName(token)
+            val range = name?.totalRange?.let(token.range::cover) ?: token.range
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MismatchedEnvironmentEnd,
+                "Command \\end has no matching \\begin",
+                range,
+            )
+            return MathErrorNode(sourceSlice(range), range)
+        }
         if (token.text == "left") return parseDelimited(token)
         if (token.text == "right") return parseStrayDelimiterCommand(token, MathDelimiterSide.Right)
         if (token.text == "middle") return parseStrayDelimiterCommand(token, MathDelimiterSide.Middle)
+        explicitMathSpaces[token.text]?.let { mu ->
+            return MathExplicitSpace(sourceSlice(token.range), mu, token.range)
+        }
         TeXMathSymbolTable.largeOperator(token.text)?.let { identity ->
             return MathOperator(
                 sourceText = sourceSlice(token.range),
@@ -239,6 +281,9 @@ private class ParserState(
         }
         styleCommands[token.text]?.let { level ->
             return MathStyleDeclaration(level, token.range)
+        }
+        if (token.text == "rm") {
+            return MathAlphabetDeclaration(MathFamily.Operators, MathAlphabet.Roman, token.range)
         }
         if (token.text == "text") {
             val argument = parseTextArgument(token, "text content")
@@ -345,6 +390,206 @@ private class ParserState(
         return MathErrorNode(sourceSlice(token.range), token.range)
     }
 
+    private fun parseEnvironment(beginCommand: MathToken): MathNode {
+        val parsedName = parseEnvironmentName(beginCommand)
+        if (parsedName == null) {
+            return MathErrorNode(sourceSlice(beginCommand.range), beginCommand.range)
+        }
+        val environment = tableEnvironments[parsedName.name]
+        if (environment == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.UnsupportedEnvironment,
+                "Environment ${parsedName.name} is not supported",
+                parsedName.contentRange,
+            )
+        }
+        val columnAlignments = if (environment == MathTableEnvironment.Array) {
+            parseArrayColumnSpecification(beginCommand)
+        } else {
+            emptyList()
+        }
+
+        val rows = mutableListOf<MathTableRow>()
+        var currentNodes = mutableListOf<MathNode>()
+        var currentCells = mutableListOf<MathTableCell>()
+        var currentCellStart = parsedName.totalRange.endExclusive
+        var currentRowStart = currentCellStart
+        var endCommand: MathToken? = null
+        var endName: ParsedEnvironmentName? = null
+
+        fun finishCell(separatorRange: SourceRange?) {
+            val range = if (currentNodes.isEmpty()) {
+                val insertion = separatorRange?.start ?: peek().range.start
+                SourceRange(insertion, insertion)
+            } else {
+                currentNodes.first().range.cover(currentNodes.last().range)
+            }
+            currentCells += MathTableCell(
+                body = MathList(currentNodes.toList(), range),
+                columnSeparatorRange = separatorRange,
+                range = range,
+            )
+            currentNodes = mutableListOf()
+            currentCellStart = separatorRange?.endExclusive ?: range.endExclusive
+        }
+
+        fun finishRow(separatorRange: SourceRange?, allowEmpty: Boolean) {
+            finishCell(null)
+            val hasContent = currentCells.any { it.body.children.isNotEmpty() }
+            if (hasContent || allowEmpty) {
+                val range = currentCells.firstOrNull()?.range?.cover(currentCells.last().range)
+                    ?: SourceRange(currentRowStart, currentRowStart)
+                rows += MathTableRow(currentCells.toList(), separatorRange, range)
+            }
+            currentCells = mutableListOf()
+            currentRowStart = separatorRange?.endExclusive ?: currentCellStart
+            currentCellStart = currentRowStart
+        }
+
+        while (true) {
+            skipIgnored()
+            val token = peek()
+            when {
+                token.kind == MathTokenKind.End -> {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.MissingEnvironmentEnd,
+                        "Environment ${parsedName.name} is missing \\end{${parsedName.name}}",
+                        beginCommand.range.cover(parsedName.totalRange),
+                    )
+                    finishRow(null, rows.isEmpty())
+                    break
+                }
+                token.kind == MathTokenKind.ControlWord && token.text == "end" -> {
+                    val closingCommand = advance()
+                    val closingName = parseEnvironmentName(closingCommand)
+                    endCommand = closingCommand
+                    endName = closingName
+                    if (closingName == null || closingName.name != parsedName.name) {
+                        val range = closingName?.totalRange?.let(closingCommand.range::cover) ?: closingCommand.range
+                        diagnostics += MathDiagnostic(
+                            DiagnosticCode.MismatchedEnvironmentEnd,
+                            "Expected \\end{${parsedName.name}} but found \\end{${closingName?.name.orEmpty()}}",
+                            range,
+                        )
+                    }
+                    finishRow(null, rows.isEmpty())
+                    break
+                }
+                token.kind == MathTokenKind.Symbol && token.text == "&" -> {
+                    val separator = advance()
+                    finishCell(separator.range)
+                }
+                token.kind == MathTokenKind.ControlSymbol && token.text == "\\" -> {
+                    val separator = advance()
+                    finishRow(separator.range, true)
+                }
+                else -> parseAtomWithScripts()?.let { currentNodes.appendParsedNode(it) }
+            }
+        }
+
+        val finalRange = endName?.totalRange?.let(beginCommand.range::cover)
+            ?: rows.lastOrNull()?.range?.let(beginCommand.range::cover)
+            ?: beginCommand.range.cover(parsedName.totalRange)
+        return MathTable(
+            environmentName = parsedName.name,
+            environment = environment,
+            rows = rows,
+            columnAlignments = columnAlignments,
+            beginCommandRange = beginCommand.range,
+            beginNameRange = parsedName.contentRange,
+            endCommandRange = endCommand?.range,
+            endNameRange = endName?.contentRange,
+            range = finalRange,
+        )
+    }
+
+    private fun parseEnvironmentName(command: MathToken): ParsedEnvironmentName? {
+        skipIgnored()
+        val opening = peek()
+        if (opening.kind != MathTokenKind.OpenGroup) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingEnvironmentName,
+                "Command \\${command.text} requires a braced environment name",
+                command.range,
+            )
+            return null
+        }
+        advance()
+        val contentStart = opening.range.endExclusive
+        var closing: MathToken? = null
+        while (peek().kind != MathTokenKind.End) {
+            val token = advance()
+            if (token.kind == MathTokenKind.CloseGroup) {
+                closing = token
+                break
+            }
+            if (token.kind == MathTokenKind.OpenGroup) {
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.MissingEnvironmentName,
+                    "Environment names cannot contain nested groups",
+                    token.range,
+                )
+            }
+        }
+        val contentEnd = closing?.range?.start ?: peek().range.start
+        val contentRange = SourceRange(contentStart, contentEnd.coerceAtLeast(contentStart))
+        if (closing == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.UnclosedGroup,
+                "Environment name opened here is not closed",
+                opening.range,
+            )
+        }
+        val name = sourceSlice(contentRange).trim()
+        if (name.isEmpty()) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingEnvironmentName,
+                "Environment name must not be empty",
+                contentRange,
+            )
+        }
+        return ParsedEnvironmentName(
+            name = name,
+            contentRange = contentRange,
+            totalRange = closing?.let { opening.range.cover(it.range) } ?: opening.range.cover(contentRange),
+        )
+    }
+
+    private fun parseArrayColumnSpecification(command: MathToken): List<MathTableColumnAlignment> {
+        val parsed = parseEnvironmentName(command)
+        if (parsed == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingArrayColumnSpecification,
+                "Array environment requires a braced column specification",
+                command.range,
+            )
+            return emptyList()
+        }
+        val alignments = parsed.name.mapNotNull { character ->
+            when (character) {
+                'l' -> MathTableColumnAlignment.Left
+                'c' -> MathTableColumnAlignment.Center
+                'r' -> MathTableColumnAlignment.Right
+                else -> {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.InvalidArrayColumnSpecification,
+                        "Array column specifier $character is not supported",
+                        parsed.contentRange,
+                    )
+                    null
+                }
+            }
+        }
+        if (alignments.isEmpty()) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingArrayColumnSpecification,
+                "Array environment needs at least one l, c, or r column",
+                parsed.contentRange,
+            )
+        }
+        return alignments
+    }
+
     private fun parseDelimited(leftCommand: MathToken): MathDelimited {
         val left = parseDelimiterSpec(leftCommand, MathDelimiterSide.Left)
         val children = mutableListOf<MathNode>()
@@ -370,7 +615,7 @@ private class ParserState(
                     val command = advance()
                     children += MathMiddleDelimiter(parseDelimiterSpec(command, MathDelimiterSide.Middle))
                 }
-                else -> parseAtomWithScripts()?.let(children::add)
+                else -> parseAtomWithScripts()?.let { children.appendParsedNode(it) }
             }
         }
         val bodyRange = when {
@@ -470,9 +715,30 @@ private class ParserState(
         skipIgnored()
         val opening = peek()
         if (opening.kind != MathTokenKind.OpenGroup) {
+            if (opening.kind !in setOf(
+                    MathTokenKind.End,
+                    MathTokenKind.CloseGroup,
+                    MathTokenKind.Superscript,
+                    MathTokenKind.Subscript,
+                )
+            ) {
+                val token = advance()
+                val text = when (token.kind) {
+                    MathTokenKind.ControlSymbol -> textControlSymbols[token.text]
+                    MathTokenKind.Symbol, MathTokenKind.Space -> sourceSlice(token.range)
+                    else -> null
+                }
+                if (text != null) {
+                    return ParsedTextArgument(
+                        segments = listOf(MathTextSegment(text, token.range)),
+                        contentRange = token.range,
+                        totalRange = token.range,
+                    )
+                }
+            }
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MissingCommandArgument,
-                "Command \\${command.text} requires a braced $role",
+                "Command \\${command.text} requires a text token or braced $role",
                 command.range,
             )
             val insertion = SourceRange(command.range.endExclusive, command.range.endExclusive)
@@ -579,6 +845,20 @@ private class ParserState(
         return parsePrimary() ?: MathErrorNode("", next.range)
     }
 
+    private fun String.scalarValues(): List<Int> = buildList {
+        var offset = 0
+        while (offset < length) {
+            val first = this@scalarValues[offset]
+            val scalar = if (first.isHighSurrogate() && offset + 1 < length && this@scalarValues[offset + 1].isLowSurrogate()) {
+                ((first.code - 0xD800) shl 10) + (this@scalarValues[offset + 1].code - 0xDC00) + 0x10000
+            } else {
+                first.code
+            }
+            add(scalar)
+            offset += if (scalar > 0xFFFF) 2 else 1
+        }
+    }
+
     private fun parseOptionalRadicalDegree(): ParsedRadicalDegree? {
         skipIgnored()
         val opening = peek()
@@ -612,7 +892,7 @@ private class ParserState(
                     )
                     children += MathErrorNode(token.text, token.range)
                 }
-                else -> parseAtomWithScripts()?.let(children::add)
+                else -> parseAtomWithScripts()?.let { children.appendParsedNode(it) }
             }
         }
         val bodyRange = when {
@@ -675,6 +955,26 @@ private class ParserState(
     private fun sourceSlice(range: SourceRange): String =
         if (range.endExclusive <= source.length) source.substring(range.start, range.endExclusive) else ""
 
+    /**
+     * Tokenization stays scalar based, but one implicit upright text atom must reach the host shaper
+     * as one contiguous run. The provider, not the parser, owns grapheme and physical-face splits.
+     */
+    private fun MutableList<MathNode>.appendParsedNode(node: MathNode) {
+        val previous = lastOrNull() as? MathText
+        if (previous?.origin == MathTextOrigin.ImplicitCjk &&
+            node is MathText && node.origin == MathTextOrigin.ImplicitCjk &&
+            previous.range.endExclusive == node.range.start
+        ) {
+            this[lastIndex] = previous.copy(
+                segments = previous.segments + node.segments,
+                contentRange = previous.contentRange.cover(node.contentRange),
+                range = previous.range.cover(node.range),
+            )
+        } else {
+            add(node)
+        }
+    }
+
     private companion object {
         val styleCommands = mapOf(
             "displaystyle" to MathStyleLevel.Display,
@@ -718,6 +1018,9 @@ private class ParserState(
         val accentCommands = mapOf(
             "hat" to MathAccentIdentity.Hat,
             "bar" to MathAccentIdentity.Bar,
+            "tilde" to MathAccentIdentity.Tilde,
+            "dot" to MathAccentIdentity.Dot,
+            "ddot" to MathAccentIdentity.DoubleDot,
             "vec" to MathAccentIdentity.Vec,
             "widehat" to MathAccentIdentity.WideHat,
             "widetilde" to MathAccentIdentity.WideTilde,
@@ -742,8 +1045,25 @@ private class ParserState(
         )
 
         val explicitlyUnsupportedCommands = setOf(
-            "begin", "end", "limits", "nolimits",
+            "limits", "nolimits",
             "matrix", "cases", "newcommand", "def", "color",
+        )
+
+        // Display document environments (align/equation) are not math-list primaries. Markdown math
+        // receives their contents already in display mode; accepting them here as Inner noads would
+        // silently invent nesting and width semantics that TeX does not have.
+        val tableEnvironments = MathTableEnvironment.entries.associateBy { it.sourceName }
+
+        val explicitMathSpaces = mapOf(
+            "quad" to 18f,
+            "qquad" to 36f,
+        )
+        val explicitControlSpaces = mapOf(
+            "," to 3f,
+            ":" to 4f,
+            ">" to 4f,
+            ";" to 5f,
+            " " to 6f,
         )
 
         val limitsModifiers = setOf("limits", "nolimits")
@@ -774,6 +1094,10 @@ private class ParserState(
             "Vert" to MathDelimiterIdentity.DoubleVerticalBar,
             "lvert" to MathDelimiterIdentity.VerticalBar,
             "rvert" to MathDelimiterIdentity.VerticalBar,
+            "lVert" to MathDelimiterIdentity.DoubleVerticalBar,
+            "rVert" to MathDelimiterIdentity.DoubleVerticalBar,
+            "lbrack" to MathDelimiterIdentity.LeftBracket,
+            "rbrack" to MathDelimiterIdentity.RightBracket,
             "langle" to MathDelimiterIdentity.LeftAngleBracket,
             "rangle" to MathDelimiterIdentity.RightAngleBracket,
             "lfloor" to MathDelimiterIdentity.LeftFloor,
@@ -800,5 +1124,11 @@ private class ParserState(
     private data class ParsedRadicalDegree(
         val node: MathNode?,
         val range: SourceRange,
+    )
+
+    private data class ParsedEnvironmentName(
+        val name: String,
+        val contentRange: SourceRange,
+        val totalRange: SourceRange,
     )
 }
