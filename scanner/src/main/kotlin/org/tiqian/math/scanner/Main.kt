@@ -3,29 +3,43 @@ package org.tiqian.math.scanner
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.writeText
+import org.tiqian.math.core.MathFaceId
 import org.tiqian.math.core.MathMode
+import org.tiqian.math.core.MathFontWeight
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.skia.SkiaMathFontFace
+import org.tiqian.math.font.skia.SkiaMathTextRunProvider
 import org.tiqian.math.font.skia.formulaCapabilityEngine
 import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathLayoutOptions
 
 fun main(args: Array<String>) {
     val arguments = ScannerArguments.parse(args)
-    val sources = Files.readAllLines(arguments.input)
+    val sources = MathFormulaCorpusInput.read(arguments.input, arguments.inputFormat)
     val mathFont = when (arguments.font) {
         ScannerFont.Lete -> LeteSansMath.load()
         ScannerFont.Stix -> StixTwoMath.load()
     }
-    val report = SkiaMathFontFace(mathFont).use { face ->
-        MathFormulaCorpusScanner(
-            capabilityEngine = face.formulaCapabilityEngine(),
-            options = MathLayoutOptions(
-                mode = arguments.mode,
-                fontSizePx = arguments.fontSizePx,
-            ),
-            maxSamplesPerCategory = arguments.maxSamples,
-        ).scan(sources)
+    val textProvider = arguments.textFont?.let { path ->
+        SkiaMathTextRunProvider.fromBytes(
+            faceId = MathFaceId("scanner-explicit-host-text"),
+            fontBytes = Files.readAllBytes(path),
+            resolvedWeight = arguments.textFontWeight,
+        )
+    }
+    val report = try {
+        SkiaMathFontFace(mathFont).use { face ->
+            MathFormulaCorpusScanner(
+                capabilityEngine = face.formulaCapabilityEngine(textProvider),
+                options = MathLayoutOptions(
+                    mode = arguments.mode,
+                    fontSizePx = arguments.fontSizePx,
+                ),
+                maxSamplesPerCategory = arguments.maxSamples,
+            ).scan(sources)
+        }
+    } finally {
+        textProvider?.close()
     }
     val json = report.toJson() + "\n"
     arguments.output?.writeText(json) ?: print(json)
@@ -40,6 +54,9 @@ private data class ScannerArguments(
     val mode: MathMode,
     val fontSizePx: Float,
     val maxSamples: Int,
+    val inputFormat: MathFormulaCorpusInputFormat,
+    val textFont: Path?,
+    val textFontWeight: MathFontWeight,
 ) {
     companion object {
         fun parse(args: Array<String>): ScannerArguments {
@@ -49,6 +66,9 @@ private data class ScannerArguments(
             var mode = MathMode.Inline
             var fontSizePx = 24f
             var maxSamples = 3
+            var inputFormat = MathFormulaCorpusInputFormat.Auto
+            var textFont: Path? = null
+            var textFontWeight = MathFontWeight.Regular
             var index = 0
             while (index < args.size) {
                 val argument = args[index]
@@ -69,6 +89,16 @@ private data class ScannerArguments(
                         fontSizePx = argument.substringAfter('=').toFloat().also { require(it > 0f) }
                     argument.startsWith("--max-samples=") ->
                         maxSamples = argument.substringAfter('=').toInt().also { require(it >= 0) }
+                    argument.startsWith("--input-format=") -> inputFormat = when (argument.substringAfter('=').lowercase()) {
+                        "auto" -> MathFormulaCorpusInputFormat.Auto
+                        "lines" -> MathFormulaCorpusInputFormat.OneFormulaPerLine
+                        "zhihu-json" -> MathFormulaCorpusInputFormat.ZhihuFormulaIndexJson
+                        else -> error("--input-format must be auto, lines, or zhihu-json")
+                    }
+                    argument == "--text-font" -> textFont = Path.of(args.valueAfter(index++))
+                    argument.startsWith("--text-font=") -> textFont = Path.of(argument.substringAfter('='))
+                    argument.startsWith("--text-font-weight=") ->
+                        textFontWeight = argument.substringAfter('=').toInt().let(MathFontWeight::nearest)
                     argument.startsWith("--") -> error("Unknown option: $argument")
                     input == null -> input = Path.of(argument)
                     else -> error("Only one input file is accepted")
@@ -79,13 +109,18 @@ private data class ScannerArguments(
                 input = requireNotNull(input) {
                     "Usage: math-formula-scanner <one-formula-per-line file> " +
                         "[--output=report.json] [--font=lete|stix] [--mode=inline|display] " +
-                        "[--font-size=24] [--max-samples=3]"
+                        "[--font-size=24] [--max-samples=3] " +
+                        "[--input-format=auto|lines|zhihu-json] " +
+                        "[--text-font=/path/to/font.otf] [--text-font-weight=400]"
                 },
                 output = output,
                 font = font,
                 mode = mode,
                 fontSizePx = fontSizePx,
                 maxSamples = maxSamples,
+                inputFormat = inputFormat,
+                textFont = textFont,
+                textFontWeight = textFontWeight,
             )
         }
 

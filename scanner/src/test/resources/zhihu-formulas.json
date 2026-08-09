@@ -1,0 +1,14 @@
+[
+  {
+    "latex": "x_1^2+\\frac{a}{b}",
+    "sources": [{"content_type": "answer", "content_id": "fixture-a"}]
+  },
+  {
+    "latex": "\\widehat{x+y}\n+\\overline{z}",
+    "sources": [{"content_type": "article", "content_id": "fixture-b"}]
+  },
+  {
+    "latex": "\\unknowncommand{中文}",
+    "sources": [{"content_type": "answer", "content_id": "fixture-c"}]
+  }
+]

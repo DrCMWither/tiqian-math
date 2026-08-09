@@ -1,0 +1,16 @@
+{
+  "total": 3,
+  "ready": 2,
+  "fallbackRequired": 1,
+  "readyRate": 0.666667,
+  "byCategory": {"UnsupportedSyntax": 1},
+  "byFailureStage": {"TokenizerMacroParser": 1},
+  "byDiagnosticCode": {"UnknownCommand": 1},
+  "byCommand": {"\\frac": 1, "\\overline": 1, "\\unknowncommand": 1, "\\widehat": 1},
+  "byUnsupportedCommand": {"\\unknowncommand": 1},
+  "samplesByCategory": {
+    "UnsupportedSyntax": [
+      {"source": "\\unknowncommand{中文}", "diagnostics": [{"code": "UnknownCommand", "range": {"start": 0, "endExclusive": 15}}]}
+    ]
+  }
+}
