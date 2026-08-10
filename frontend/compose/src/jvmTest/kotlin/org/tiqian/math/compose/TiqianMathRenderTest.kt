@@ -465,6 +465,81 @@ class TiqianMathRenderTest {
     }
 
     @Test
+    fun explicitDisplayRowsReachComposeMeasureAndReplayWithoutSyntheticLineBreaking() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var measured: MeasureSnapshot? = null
+            var observed: MathLayoutResult? = null
+            val scene = ImageComposeScene(width = 360, height = 260, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    MeasureProbe(onMeasured = { measured = it }) {
+                        TiqianMath(
+                            source = "\\begin{align*}a&=b\\\\[.2cm]c&=\\frac{d}{e}\\end{align*}",
+                            modifier = Modifier.padding(12.dp),
+                            mode = MathMode.Display,
+                            fontFace = face,
+                            style = TextStyle(fontSize = 32.sp, lineHeight = 44.sp, color = Color.Black),
+                            softWrap = false,
+                            onMathLayout = { observed = it },
+                        )
+                    }
+                }
+            }
+            scene.use {
+                val pixels = it.render().toComposeImageBitmap().toPixelMap()
+                val snapshot = assertNotNull(measured)
+                val layout = assertNotNull(observed)
+                assertTrue(layout.diagnostics.isEmpty(), layout.diagnostics.toString())
+                assertTrue(layout.decisions.any { decision ->
+                    decision.name == "MarkdownMathDisplayEnvironment" &&
+                        decision.details["layoutRole"] == "DisplayAlignment"
+                })
+                assertTrue(layout.decisions.any { decision -> decision.name == "TeXExplicitRowSpacing" })
+                assertTrue(snapshot.height > 80, "explicit rows contribute their completed TeX box")
+                val ink = darkPixelBounds(pixels)
+                assertTrue(ink.left >= 12 && ink.top >= 12, "display wrapper respects Compose padding: $ink")
+                assertTrue(darkRowBands(pixels, 360, 260).size >= 2, "both explicit rows are replayed")
+            }
+        }
+    }
+
+    @Test
+    fun topLevelMarkdownDisplayRowsReachTheSameComposeReplayPath() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var measured: MeasureSnapshot? = null
+            var observed: MathLayoutResult? = null
+            val scene = ImageComposeScene(width = 360, height = 260, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    MeasureProbe(onMeasured = { measured = it }) {
+                        TiqianMath(
+                            source = "a=b\\\\[.2cm]c=\\frac{d}{e}",
+                            modifier = Modifier.padding(12.dp),
+                            mode = MathMode.Display,
+                            fontFace = face,
+                            style = TextStyle(fontSize = 32.sp, lineHeight = 44.sp, color = Color.Black),
+                            softWrap = false,
+                            onMathLayout = { observed = it },
+                        )
+                    }
+                }
+            }
+            scene.use {
+                val pixels = it.render().toComposeImageBitmap().toPixelMap()
+                val snapshot = assertNotNull(measured)
+                val layout = assertNotNull(observed)
+                assertTrue(layout.diagnostics.isEmpty(), layout.diagnostics.toString())
+                assertTrue(layout.decisions.any { decision ->
+                    decision.name == "MarkdownExplicitDisplayRows" &&
+                        decision.details["rowCount"] == "2"
+                })
+                assertTrue(snapshot.height > 80, "explicit top-level rows affect actual Compose measure")
+                val ink = darkPixelBounds(pixels)
+                assertTrue(ink.left >= 12 && ink.top >= 12, "raw display rows respect padding: $ink")
+                assertTrue(darkRowBands(pixels, 360, 260).size >= 2, "both raw display rows are replayed")
+            }
+        }
+    }
+
+    @Test
     fun displayOperatorLimitsReachActualComposeMeasureBaselineAndRaster() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             var measured: MeasureSnapshot? = null

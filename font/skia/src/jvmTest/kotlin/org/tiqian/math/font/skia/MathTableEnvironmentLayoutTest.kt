@@ -6,7 +6,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.math.abs
 import org.tiqian.math.core.MathConstructionPaintKind
+import org.tiqian.math.core.DiagnosticCode
 import org.tiqian.math.core.MathMode
+import org.tiqian.math.core.MathStyle
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathLayoutEngine
@@ -100,6 +102,162 @@ class MathTableEnvironmentLayoutTest {
         assertEquals("ZeroWithinPairAndTwoEmBetweenEquationPairs", decision.details["interColumnPolicy"])
     }
 
+    @Test
+    fun optionalRowSpacingMatchesTheSameFontTectonicBoxTrace() = withTableFaces { label, face ->
+        val engine = MathLayoutEngine(face)
+        val alignedBase = engine.layout(
+            "\\begin{aligned}a&=b\\\\c&=d\\end{aligned}",
+            tectonicTableOptions(),
+        )
+        val alignedExtra = engine.layout(
+            "\\begin{aligned}a&=b\\\\[.2cm]c&=d\\end{aligned}",
+            tectonicTableOptions(),
+        )
+        val arrayBase = engine.layout(
+            "\\begin{array}{cc}a&b\\\\c&d\\end{array}",
+            tectonicTableOptions(),
+        )
+        val arrayExtra = engine.layout(
+            "\\begin{array}{cc}a&b\\\\[.2cm]c&d\\end{array}",
+            tectonicTableOptions(),
+        )
+        listOf(alignedBase, alignedExtra, arrayBase, arrayExtra).forEach {
+            assertTrue(it.diagnostics.isEmpty(), "$label ${it.diagnostics}")
+        }
+        val oracle = if (label == "Lete") {
+            RowSpacingOracle(
+                alignedBase = floatArrayOf(76.72362f, 44.76974f, 26.84785f),
+                alignedExtra = floatArrayOf(76.72362f, 48.54921f, 30.62732f),
+                arrayBase = floatArrayOf(63.59107f, 42.11304f, 24.19115f),
+                arrayExtra = floatArrayOf(63.59107f, 45.89250f, 27.97062f),
+            )
+        } else {
+            RowSpacingOracle(
+                alignedBase = floatArrayOf(77.01161f, 43.07366f, 26.55991f),
+                alignedExtra = floatArrayOf(77.01161f, 46.85313f, 30.33937f),
+                arrayBase = floatArrayOf(62.75904f, 40.41696f, 23.90320f),
+                arrayExtra = floatArrayOf(62.75904f, 44.19642f, 27.68267f),
+            )
+        }
+        assertBox(oracle.alignedBase, alignedBase, "$label aligned base")
+        assertBox(oracle.alignedExtra, alignedExtra, "$label aligned extra")
+        assertBox(oracle.arrayBase, arrayBase, "$label array base")
+        assertBox(oracle.arrayExtra, arrayExtra, "$label array extra")
+        val resolved = alignedExtra.decisions.single { it.name == "TeXExplicitRowSpacing" }
+        assertEquals(".2cm", resolved.details["sourceText"])
+        assertNear(0.2f * 96f / 2.54f, resolved.details.getValue("resolvedPx").toFloat(), "$label cm", 0.001f)
+        assertEquals("AmsmathExtraInterRowGlue", alignedExtra.decisions.single {
+            it.name == "TeXMathTable"
+        }.details["rowSpacingPolicy"])
+        assertEquals("LaTeXArrayPreviousRowStrutDepthExtension", arrayExtra.decisions.single {
+            it.name == "TeXMathTable"
+        }.details["rowSpacingPolicy"])
+
+        val explicitPx = 0.2f * 96f / 2.54f
+        listOf(
+            Triple(
+                "aligned",
+                """\begin{aligned}a&=b\\\end{aligned}""",
+                """\begin{aligned}a&=b\\[.2cm]\end{aligned}""",
+            ),
+            Triple(
+                "array",
+                """\begin{array}{cc}a&b\\\end{array}""",
+                """\begin{array}{cc}a&b\\[.2cm]\end{array}""",
+            ),
+        ).forEach { (environment, plainSource, trailingSource) ->
+            val plain = engine.layout(plainSource, tectonicTableOptions())
+            val trailing = engine.layout(trailingSource, tectonicTableOptions())
+            assertNear(plain.box.width, trailing.box.width, "$label $environment trailing width", 0.001f)
+            assertNear(explicitPx / 2f, trailing.box.ascent - plain.box.ascent, "$label $environment trailing ascent", 0.06f)
+            assertNear(explicitPx / 2f, trailing.box.descent - plain.box.descent, "$label $environment trailing descent", 0.06f)
+        }
+    }
+
+    @Test
+    fun displayWrappersForceDisplayStyleWithoutBecomingInnerNoads() = withTableFaces { label, face ->
+        val engine = MathLayoutEngine(face)
+        val equation = engine.layout(
+            "\\begin{equation}a=\\frac{b}{c}\\end{equation}",
+            tectonicTableOptions().copy(mode = MathMode.Inline),
+        )
+        val direct = engine.layout("\\displaystyle a=\\frac{b}{c}", tectonicTableOptions())
+        assertTrue(equation.diagnostics.isEmpty(), "$label ${equation.diagnostics}")
+        assertNear(direct.box.width, equation.box.width, "$label equation width", 0.001f)
+        assertNear(direct.box.ascent, equation.box.ascent, "$label equation ascent", 0.001f)
+        assertNear(direct.box.descent, equation.box.descent, "$label equation descent", 0.001f)
+        val equationDecision = equation.decisions.single { it.name == "MarkdownMathDisplayEnvironment" }
+        assertEquals("SingleDisplayEquation", equationDecision.details["layoutRole"])
+        assertEquals("NoneAtDocumentLevel", equationDecision.details["atomClass"])
+
+        val align = engine.layout(
+            "\\begin{align*}a&=b\\\\c&=\\frac{d}{e}\\end{align*}",
+            tectonicTableOptions().copy(mode = MathMode.Inline),
+        )
+        val aligned = engine.layout(
+            "\\begin{aligned}a&=b\\\\c&=\\frac{d}{e}\\end{aligned}",
+            tectonicTableOptions(),
+        )
+        assertTrue(align.diagnostics.isEmpty(), "$label ${align.diagnostics}")
+        assertNear(aligned.box.width, align.box.width, "$label align width", 0.001f)
+        assertNear(aligned.box.ascent, align.box.ascent, "$label align ascent", 0.001f)
+        assertNear(aligned.box.descent, align.box.descent, "$label align descent", 0.001f)
+        assertEquals("DisplayAlignment", align.decisions.single {
+            it.name == "MarkdownMathDisplayEnvironment"
+        }.details["layoutRole"])
+    }
+
+    @Test
+    fun markdownDisplayRowsReuseTheAlignedRowKernelAndCenterEveryRow() = withTableFaces { label, face ->
+        val engine = MathLayoutEngine(face)
+        val base = engine.layout("1\\\\22", tectonicTableOptions())
+        val extra = engine.layout("1\\\\[.2cm]22", tectonicTableOptions())
+        val trailing = engine.layout("1\\\\22\\\\", tectonicTableOptions())
+        listOf(base, extra, trailing).forEach { result ->
+            assertTrue(result.diagnostics.isEmpty(), "$label ${result.diagnostics}")
+            val display = result.decisions.single { it.name == "MarkdownExplicitDisplayRows" }
+            assertEquals("2", display.details["rowCount"], label)
+            assertEquals("CenteredIndependentlyAtMaximumAdvance", display.details["rowAlignment"], label)
+            assertEquals("MarkdownDisplayKaTeXCompatibilityExtension", display.details["dialect"], label)
+            assertEquals("Center", result.decisions.single {
+                it.name == "TeXMathTable" && it.details["environmentName"] == "markdown-display-rows"
+            }.details["columnAlignments"], label)
+        }
+        val first = base.box.glyphs.single { it.sourceRange.start == 0 }
+        val secondRow = base.box.glyphs.filter { it.sourceRange.start >= 3 }
+        val firstLogicalCenter = first.x + first.advance / 2f
+        val secondLogicalLeft = secondRow.minOf { it.x }
+        val secondLogicalRight = secondRow.maxOf { it.x + it.advance }
+        assertNear(base.box.width / 2f, firstLogicalCenter, "$label first row center", 0.001f)
+        assertNear(base.box.width / 2f, (secondLogicalLeft + secondLogicalRight) / 2f, "$label second row center", 0.001f)
+        val baseBaselineDelta = secondRow.first().baselineY - first.baselineY
+        val extraBaselineDelta = extra.box.glyphs.single { it.sourceRange.start >= 10 }.baselineY -
+            extra.box.glyphs.single { it.sourceRange.start == 0 }.baselineY
+        assertNear(0.2f * 96f / 2.54f, extraBaselineDelta - baseBaselineDelta, "$label explicit row gap", 0.001f)
+        assertNear(base.box.width, trailing.box.width, "$label trailing width", 0.001f)
+        assertNear(base.box.ascent, trailing.box.ascent, "$label trailing ascent", 0.001f)
+        assertNear(base.box.descent, trailing.box.descent, "$label trailing descent", 0.001f)
+    }
+
+    @Test
+    fun topLevelDeclarationsCarryAcrossRowsButInlineModeFailsCapability() = withTableFaces { label, face ->
+        val engine = MathLayoutEngine(face)
+        val source = "\\scriptstyle a\\\\b"
+        val display = engine.layout(source, tectonicTableOptions())
+        assertTrue(display.diagnostics.isEmpty(), "$label ${display.diagnostics}")
+        assertEquals(listOf(MathStyle.Script, MathStyle.Script), display.box.glyphs.map { it.style }, label)
+        assertEquals(
+            "ContainingListDeclarationsCarryAcrossRows",
+            display.decisions.single { it.name == "MarkdownExplicitDisplayRows" }
+                .details["styleDeclarationPolicy"],
+            label,
+        )
+
+        val inline = engine.layout("a\\\\b", tectonicTableOptions().copy(mode = MathMode.Inline))
+        assertTrue(inline.diagnostics.any { it.code == DiagnosticCode.ExplicitMultilineRequiresDisplay }, label)
+        assertTrue(inline.box.glyphs.isNotEmpty(), "$label low-level debug layout remains inspectable")
+    }
+
     private inline fun withTableFaces(block: (String, SkiaMathFontFace) -> Unit) {
         listOf(
             "Lete" to { SkiaMathFontFace(LeteSansMath.load()) },
@@ -123,6 +281,19 @@ class MathTableEnvironmentLayoutTest {
         val matrixAscent: Float,
         val matrixDescent: Float,
     )
+
+    private data class RowSpacingOracle(
+        val alignedBase: FloatArray,
+        val alignedExtra: FloatArray,
+        val arrayBase: FloatArray,
+        val arrayExtra: FloatArray,
+    )
+
+    private fun assertBox(expected: FloatArray, actual: org.tiqian.math.core.MathLayoutResult, message: String) {
+        assertNear(expected[0], actual.box.width, "$message width", 0.06f)
+        assertNear(expected[1], actual.box.ascent, "$message ascent", 0.06f)
+        assertNear(expected[2], actual.box.descent, "$message descent", 0.06f)
+    }
 
     private fun assertNear(expected: Float, actual: Float, message: String, tolerance: Float) {
         assertTrue(abs(expected - actual) <= tolerance, "$message expected=$expected actual=$actual")

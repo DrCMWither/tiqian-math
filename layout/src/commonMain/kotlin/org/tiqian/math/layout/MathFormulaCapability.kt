@@ -188,10 +188,13 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.MissingEnvironmentName,
         DiagnosticCode.MissingEnvironmentEnd,
         DiagnosticCode.MismatchedEnvironmentEnd,
+        DiagnosticCode.MisplacedDisplayEnvironment,
         DiagnosticCode.MissingArrayColumnSpecification,
         DiagnosticCode.InvalidArrayColumnSpecification,
+        DiagnosticCode.InvalidRowSpacing,
         DiagnosticCode.UnexpectedAlignmentTab,
         DiagnosticCode.UnexpectedRowSeparator,
+        DiagnosticCode.ExplicitMultilineRequiresDisplay,
         -> MathFormulaCapabilityCategory.MalformedSource
 
         DiagnosticCode.MissingGlyph -> MathFormulaCapabilityCategory.MissingGlyph

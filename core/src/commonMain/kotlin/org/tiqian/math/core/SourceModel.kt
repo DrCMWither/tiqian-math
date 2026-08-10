@@ -75,10 +75,13 @@ enum class DiagnosticCode {
     UnsupportedEnvironment,
     MissingEnvironmentEnd,
     MismatchedEnvironmentEnd,
+    MisplacedDisplayEnvironment,
     MissingArrayColumnSpecification,
     InvalidArrayColumnSpecification,
+    InvalidRowSpacing,
     UnexpectedAlignmentTab,
     UnexpectedRowSeparator,
+    ExplicitMultilineRequiresDisplay,
 }
 
 data class MathDiagnostic(

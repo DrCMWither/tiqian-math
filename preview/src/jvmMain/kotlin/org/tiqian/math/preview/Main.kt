@@ -604,7 +604,7 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("delimiter-noad-oracle=${output.absolutePath} bytes=${output.length()}")
     }
-    ImageComposeScene(width = 1400, height = 1050) { TableEnvironmentOracleScreen() }.use { scene ->
+    ImageComposeScene(width = 1400, height = 1900) { TableEnvironmentOracleScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/tiqian-table-environments.png")
         output.parentFile.mkdirs()
@@ -627,7 +627,7 @@ private fun TableEnvironmentOracleScreen() {
     MaterialTheme {
         Surface(color = Color.White) {
             Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Structured TeX tables · source-aware cells · real MATH delimiters", fontSize = 18.sp)
+                Text("Structured TeX tables and display wrappers · source-aware rows", fontSize = 18.sp)
                 Text(
                     "32 px display style · identical sources · Lete Sans Math / STIX Two Math",
                     fontSize = 11.sp,
@@ -663,7 +663,13 @@ private fun TableEnvironmentFontColumn(label: String, face: SkiaMathFontFace) {
 }
 
 private val TABLE_ENVIRONMENT_PREVIEW_CASES = listOf(
+    "Markdown display rows" to """a=b\\c=\frac{d}{e}""",
+    "Markdown rows + explicit .2 cm gap" to """1\\[.2cm]22""",
+    "display align wrapper" to """\begin{align*}a&=b\\c&=\frac{d}{e}\end{align*}""",
+    "display equation wrapper" to """\begin{equation}a=\frac{b}{c}\end{equation}""",
     "aligned equations" to """\begin{aligned}a&=b\\c&=\frac{d}{e}\end{aligned}""",
+    "aligned + explicit .2 cm row spacing" to """\begin{aligned}a&=b\\[.2cm]c&=d\end{aligned}""",
+    "array + explicit .2 cm row strut" to """\begin{array}{cc}a&b\\[.2cm]c&d\end{array}""",
     "parenthesized matrix + scripts" to """\begin{pmatrix}a&b\\\frac{c}{d}&\sqrt{x}\end{pmatrix}_0^1""",
     "cases" to """\begin{cases}x&x>0\\\frac{a}{b}&x\le0\end{cases}""",
     "nested table structures" to

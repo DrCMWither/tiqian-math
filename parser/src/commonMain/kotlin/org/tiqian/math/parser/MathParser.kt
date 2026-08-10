@@ -27,10 +27,74 @@ private class ParserState(
     private val diagnostics: MutableList<MathDiagnostic>,
 ) {
     private var index = 0
+    private var structureDepth = 0
 
     fun parse(): MathParseResult {
-        val root = parseList(stopAtClosingGroup = false, opening = null)
+        val parsedRoot = parseList(stopAtClosingGroup = false, opening = null)
+        val root = foldTopLevelDisplayRows(parsedRoot)
+        val completeDisplay = root.children.singleOrNull().let { only ->
+            when (only) {
+                is MathDisplayEnvironment -> only
+                is MathDisplayRows -> only.rows.singleOrNull()
+                    ?.body
+                    ?.children
+                    ?.singleOrNull() as? MathDisplayEnvironment
+                else -> null
+            }
+        }
+        root.children.flatMap { child ->
+            when (child) {
+                is MathDisplayEnvironment -> listOf(child)
+                is MathDisplayRows -> child.rows.flatMap { row -> row.body.children.filterIsInstance<MathDisplayEnvironment>() }
+                else -> emptyList()
+            }
+        }.filter { it !== completeDisplay }.forEach { display ->
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.MisplacedDisplayEnvironment,
+                    "Display environment ${display.kind.sourceName} must be the complete formula source",
+                    display.range,
+                )
+        }
         return MathParseResult(source, root, diagnostics.toList())
+    }
+
+    private fun foldTopLevelDisplayRows(root: MathList): MathList {
+        if (root.children.none { it is MathExplicitRowBreak }) return root
+        val rows = mutableListOf<MathDisplayRow>()
+        var pending = mutableListOf<MathNode>()
+        var rowStart = root.range.start
+
+        fun finishRow(separator: MathExplicitRowBreak?, allowEmpty: Boolean) {
+            if (pending.isEmpty() && !allowEmpty) return
+            val bodyRange = if (pending.isEmpty()) {
+                SourceRange(rowStart, rowStart)
+            } else {
+                pending.first().range.cover(pending.last().range)
+            }
+            rows += MathDisplayRow(
+                body = MathList(pending.toList(), bodyRange),
+                rowSeparatorRange = separator?.separatorRange,
+                additionalSpacing = separator?.additionalSpacing,
+                range = bodyRange,
+            )
+            pending = mutableListOf()
+            rowStart = separator?.additionalSpacing?.range?.endExclusive
+                ?: separator?.separatorRange?.endExclusive
+                ?: bodyRange.endExclusive
+        }
+
+        root.children.forEach { child ->
+            if (child is MathExplicitRowBreak) {
+                finishRow(child, allowEmpty = true)
+            } else {
+                pending += child
+            }
+        }
+        finishRow(separator = null, allowEmpty = rows.isEmpty())
+        return MathList(
+            children = listOf(MathDisplayRows(rows, root.range)),
+            range = root.range,
+        )
     }
 
     private fun parseList(
@@ -90,7 +154,9 @@ private class ParserState(
         }
 
         var base = parsePrimary() ?: return null
-        if (base is MathStyleDeclaration || base is MathAlphabetDeclaration) return base
+        if (base is MathStyleDeclaration || base is MathAlphabetDeclaration || base is MathExplicitRowBreak) {
+            return base
+        }
         var superscript: MathNode? = null
         var subscript: MathNode? = null
         var totalRange = base.range
@@ -125,6 +191,13 @@ private class ParserState(
             }
             if (marker.kind != MathTokenKind.Superscript && marker.kind != MathTokenKind.Subscript) break
             advance()
+            if (base is MathDisplayEnvironment) {
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.MisplacedDisplayEnvironment,
+                    "Display environment ${base.kind.sourceName} cannot be used as a scripted math atom",
+                    marker.range,
+                )
+            }
             val argument = parseScriptArgument(marker)
             totalRange = totalRange.cover(marker.range).cover(argument.range)
             if (marker.kind == MathTokenKind.Superscript) {
@@ -213,12 +286,17 @@ private class ParserState(
         unclosedCode: DiagnosticCode = DiagnosticCode.UnclosedGroup,
         unclosedMessage: String = "Group opened here is not closed",
     ): MathGroup {
-        val body = parseList(
-            stopAtClosingGroup = true,
-            opening = opening,
-            unclosedCode = unclosedCode,
-            unclosedMessage = unclosedMessage,
-        )
+        structureDepth += 1
+        val body = try {
+            parseList(
+                stopAtClosingGroup = true,
+                opening = opening,
+                unclosedCode = unclosedCode,
+                unclosedMessage = unclosedMessage,
+            )
+        } finally {
+            structureDepth -= 1
+        }
         val closing = if (peek().kind == MathTokenKind.CloseGroup) advance() else null
         val range = if (closing != null) opening.range.cover(closing.range) else opening.range.cover(body.range)
         return MathGroup(body, range)
@@ -229,9 +307,17 @@ private class ParserState(
             return MathExplicitSpace(sourceSlice(token.range), mu, token.range)
         }
         if (token.text == "\\") {
+            if (structureDepth == 0) {
+                val spacing = parseOptionalRowSpacing(token)
+                return MathExplicitRowBreak(
+                    separatorRange = token.range,
+                    additionalSpacing = spacing,
+                    range = spacing?.range?.let(token.range::cover) ?: token.range,
+                )
+            }
             diagnostics += MathDiagnostic(
                 DiagnosticCode.UnexpectedRowSeparator,
-                "Row separator \\\\ is only valid inside a supported table environment",
+                "Row separator \\\\ is only valid at formula top level or inside a supported table environment",
                 token.range,
             )
             return MathErrorNode(sourceSlice(token.range), token.range)
@@ -395,8 +481,20 @@ private class ParserState(
         if (parsedName == null) {
             return MathErrorNode(sourceSlice(beginCommand.range), beginCommand.range)
         }
+        val displayEnvironment = displayEnvironments[parsedName.name]
+        if (displayEnvironment != null && structureDepth > 0) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MisplacedDisplayEnvironment,
+                "Display environment ${parsedName.name} cannot be nested inside a math atom or another environment",
+                beginCommand.range.cover(parsedName.totalRange),
+            )
+        }
+        if (displayEnvironment != null && !displayEnvironment.alignment) {
+            return parseSingleEquationEnvironment(beginCommand, parsedName, displayEnvironment)
+        }
         val environment = tableEnvironments[parsedName.name]
-        if (environment == null) {
+            ?: if (displayEnvironment?.alignment == true) MathTableEnvironment.Aligned else null
+        if (environment == null && displayEnvironment == null) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.UnsupportedEnvironment,
                 "Environment ${parsedName.name} is not supported",
@@ -433,64 +531,81 @@ private class ParserState(
             currentCellStart = separatorRange?.endExclusive ?: range.endExclusive
         }
 
-        fun finishRow(separatorRange: SourceRange?, allowEmpty: Boolean) {
+        fun finishRow(
+            separatorRange: SourceRange?,
+            additionalSpacing: MathTeXDimension?,
+            allowEmpty: Boolean,
+        ) {
             finishCell(null)
             val hasContent = currentCells.any { it.body.children.isNotEmpty() }
             if (hasContent || allowEmpty) {
                 val range = currentCells.firstOrNull()?.range?.cover(currentCells.last().range)
                     ?: SourceRange(currentRowStart, currentRowStart)
-                rows += MathTableRow(currentCells.toList(), separatorRange, range)
+                rows += MathTableRow(
+                    cells = currentCells.toList(),
+                    rowSeparatorRange = separatorRange,
+                    additionalSpacing = additionalSpacing,
+                    range = range,
+                )
             }
             currentCells = mutableListOf()
-            currentRowStart = separatorRange?.endExclusive ?: currentCellStart
+            currentRowStart = additionalSpacing?.range?.endExclusive
+                ?: separatorRange?.endExclusive
+                ?: currentCellStart
             currentCellStart = currentRowStart
         }
 
-        while (true) {
-            skipIgnored()
-            val token = peek()
-            when {
-                token.kind == MathTokenKind.End -> {
-                    diagnostics += MathDiagnostic(
-                        DiagnosticCode.MissingEnvironmentEnd,
-                        "Environment ${parsedName.name} is missing \\end{${parsedName.name}}",
-                        beginCommand.range.cover(parsedName.totalRange),
-                    )
-                    finishRow(null, rows.isEmpty())
-                    break
-                }
-                token.kind == MathTokenKind.ControlWord && token.text == "end" -> {
-                    val closingCommand = advance()
-                    val closingName = parseEnvironmentName(closingCommand)
-                    endCommand = closingCommand
-                    endName = closingName
-                    if (closingName == null || closingName.name != parsedName.name) {
-                        val range = closingName?.totalRange?.let(closingCommand.range::cover) ?: closingCommand.range
+        structureDepth += 1
+        try {
+            while (true) {
+                skipIgnored()
+                val token = peek()
+                when {
+                    token.kind == MathTokenKind.End -> {
                         diagnostics += MathDiagnostic(
-                            DiagnosticCode.MismatchedEnvironmentEnd,
-                            "Expected \\end{${parsedName.name}} but found \\end{${closingName?.name.orEmpty()}}",
-                            range,
+                            DiagnosticCode.MissingEnvironmentEnd,
+                            "Environment ${parsedName.name} is missing \\end{${parsedName.name}}",
+                            beginCommand.range.cover(parsedName.totalRange),
                         )
+                        finishRow(null, null, rows.isEmpty())
+                        break
                     }
-                    finishRow(null, rows.isEmpty())
-                    break
+                    token.kind == MathTokenKind.ControlWord && token.text == "end" -> {
+                        val closingCommand = advance()
+                        val closingName = parseEnvironmentName(closingCommand)
+                        endCommand = closingCommand
+                        endName = closingName
+                        if (closingName == null || closingName.name != parsedName.name) {
+                            val range = closingName?.totalRange?.let(closingCommand.range::cover) ?: closingCommand.range
+                            diagnostics += MathDiagnostic(
+                                DiagnosticCode.MismatchedEnvironmentEnd,
+                                "Expected \\end{${parsedName.name}} but found \\end{${closingName?.name.orEmpty()}}",
+                                range,
+                            )
+                        }
+                        finishRow(null, null, rows.isEmpty())
+                        break
+                    }
+                    token.kind == MathTokenKind.Symbol && token.text == "&" -> {
+                        val separator = advance()
+                        finishCell(separator.range)
+                    }
+                    token.kind == MathTokenKind.ControlSymbol && token.text == "\\" -> {
+                        val separator = advance()
+                        val additionalSpacing = parseOptionalRowSpacing(separator)
+                        finishRow(separator.range, additionalSpacing, true)
+                    }
+                    else -> parseAtomWithScripts()?.let { currentNodes.appendParsedNode(it) }
                 }
-                token.kind == MathTokenKind.Symbol && token.text == "&" -> {
-                    val separator = advance()
-                    finishCell(separator.range)
-                }
-                token.kind == MathTokenKind.ControlSymbol && token.text == "\\" -> {
-                    val separator = advance()
-                    finishRow(separator.range, true)
-                }
-                else -> parseAtomWithScripts()?.let { currentNodes.appendParsedNode(it) }
             }
+        } finally {
+            structureDepth -= 1
         }
 
         val finalRange = endName?.totalRange?.let(beginCommand.range::cover)
             ?: rows.lastOrNull()?.range?.let(beginCommand.range::cover)
             ?: beginCommand.range.cover(parsedName.totalRange)
-        return MathTable(
+        val table = MathTable(
             environmentName = parsedName.name,
             environment = environment,
             rows = rows,
@@ -500,6 +615,143 @@ private class ParserState(
             endCommandRange = endCommand?.range,
             endNameRange = endName?.contentRange,
             range = finalRange,
+        )
+        return if (displayEnvironment != null) {
+            MathDisplayEnvironment(
+                kind = displayEnvironment,
+                body = table,
+                beginCommandRange = beginCommand.range,
+                beginNameRange = parsedName.contentRange,
+                endCommandRange = endCommand?.range,
+                endNameRange = endName?.contentRange,
+                range = finalRange,
+            )
+        } else {
+            table
+        }
+    }
+
+    private fun parseSingleEquationEnvironment(
+        beginCommand: MathToken,
+        parsedName: ParsedEnvironmentName,
+        kind: MathDisplayEnvironmentKind,
+    ): MathDisplayEnvironment {
+        val children = mutableListOf<MathNode>()
+        var endCommand: MathToken? = null
+        var endName: ParsedEnvironmentName? = null
+        structureDepth += 1
+        try {
+            while (true) {
+                skipIgnored()
+                val token = peek()
+                when {
+                    token.kind == MathTokenKind.End -> {
+                        diagnostics += MathDiagnostic(
+                            DiagnosticCode.MissingEnvironmentEnd,
+                            "Environment ${parsedName.name} is missing \\end{${parsedName.name}}",
+                            beginCommand.range.cover(parsedName.totalRange),
+                        )
+                        break
+                    }
+                    token.kind == MathTokenKind.ControlWord && token.text == "end" -> {
+                        val closingCommand = advance()
+                        val closingName = parseEnvironmentName(closingCommand)
+                        endCommand = closingCommand
+                        endName = closingName
+                        if (closingName == null || closingName.name != parsedName.name) {
+                            val range = closingName?.totalRange?.let(closingCommand.range::cover) ?: closingCommand.range
+                            diagnostics += MathDiagnostic(
+                                DiagnosticCode.MismatchedEnvironmentEnd,
+                                "Expected \\end{${parsedName.name}} but found \\end{${closingName?.name.orEmpty()}}",
+                                range,
+                            )
+                        }
+                        break
+                    }
+                    else -> parseAtomWithScripts()?.let { children.appendParsedNode(it) }
+                }
+            }
+        } finally {
+            structureDepth -= 1
+        }
+        val bodyRange = if (children.isEmpty()) {
+            SourceRange(parsedName.totalRange.endExclusive, parsedName.totalRange.endExclusive)
+        } else {
+            children.first().range.cover(children.last().range)
+        }
+        val finalRange = endName?.totalRange?.let(beginCommand.range::cover)
+            ?: children.lastOrNull()?.range?.let(beginCommand.range::cover)
+            ?: beginCommand.range.cover(parsedName.totalRange)
+        return MathDisplayEnvironment(
+            kind = kind,
+            body = MathList(children, bodyRange),
+            beginCommandRange = beginCommand.range,
+            beginNameRange = parsedName.contentRange,
+            endCommandRange = endCommand?.range,
+            endNameRange = endName?.contentRange,
+            range = finalRange,
+        )
+    }
+
+    private fun parseOptionalRowSpacing(separator: MathToken): MathTeXDimension? {
+        skipIgnored()
+        val opening = peek()
+        if (opening.kind != MathTokenKind.Symbol || opening.text != "[") return null
+        advance()
+        val contentStart = opening.range.endExclusive
+        var closing: MathToken? = null
+        while (peek().kind != MathTokenKind.End) {
+            val token = peek()
+            if (token.kind == MathTokenKind.Symbol && token.text == "]") {
+                closing = advance()
+                break
+            }
+            if (
+                token.kind == MathTokenKind.ControlSymbol && token.text == "\\" ||
+                token.kind == MathTokenKind.ControlWord && token.text == "end"
+            ) {
+                break
+            }
+            advance()
+        }
+        val contentEnd = closing?.range?.start ?: peek().range.start
+        val contentRange = SourceRange(contentStart, contentEnd.coerceAtLeast(contentStart))
+        val totalRange = closing?.range?.let(opening.range::cover) ?: opening.range.cover(contentRange)
+        if (closing == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.InvalidRowSpacing,
+                "Optional row spacing after \\\\ is not closed",
+                separator.range.cover(totalRange),
+            )
+            return null
+        }
+        val sourceText = sourceSlice(contentRange)
+        val match = rowSpacingPattern.matchEntire(sourceText.trim())
+        if (match == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.InvalidRowSpacing,
+                "Optional row spacing must be a supported TeX dimension",
+                contentRange,
+            )
+            return null
+        }
+        val value = match.groupValues[1].toFloatOrNull()
+        val unitName = match.groupValues[2].lowercase()
+        val unit = rowSpacingUnits[unitName]
+        if (value == null || !value.isFinite() || unit == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.InvalidRowSpacing,
+                "Optional row spacing ${sourceText.trim()} is not a finite supported TeX dimension",
+                contentRange,
+            )
+            return null
+        }
+        return MathTeXDimension(
+            value = value,
+            unit = unit,
+            sourceText = sourceText,
+            contentRange = contentRange,
+            range = totalRange,
         )
     }
 
@@ -1049,10 +1301,11 @@ private class ParserState(
             "matrix", "cases", "newcommand", "def", "color",
         )
 
-        // Display document environments (align/equation) are not math-list primaries. Markdown math
-        // receives their contents already in display mode; accepting them here as Inner noads would
-        // silently invent nesting and width semantics that TeX does not have.
         val tableEnvironments = MathTableEnvironment.entries.associateBy { it.sourceName }
+        val displayEnvironments = MathDisplayEnvironmentKind.entries.associateBy { it.sourceName }
+
+        val rowSpacingPattern = Regex("([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))\\s*([A-Za-z]+)")
+        val rowSpacingUnits = MathTeXDimensionUnit.entries.associateBy { it.sourceName }
 
         val explicitMathSpaces = mapOf(
             "quad" to 18f,

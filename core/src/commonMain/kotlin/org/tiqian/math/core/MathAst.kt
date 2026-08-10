@@ -413,6 +413,25 @@ data class MathTableCell(
 data class MathTableRow(
     val cells: List<MathTableCell>,
     val rowSeparatorRange: SourceRange? = null,
+    val additionalSpacing: MathTeXDimension? = null,
+    val range: SourceRange,
+)
+
+enum class MathTeXDimensionUnit(val sourceName: String) {
+    Point("pt"),
+    BigPoint("bp"),
+    Em("em"),
+    Centimeter("cm"),
+    Millimeter("mm"),
+    Inch("in"),
+}
+
+/** A source-retaining TeX dimension accepted after a table row separator. */
+data class MathTeXDimension(
+    val value: Float,
+    val unit: MathTeXDimensionUnit,
+    val sourceText: String,
+    val contentRange: SourceRange,
     val range: SourceRange,
 )
 
@@ -430,6 +449,61 @@ data class MathTable(
 ) : MathNode {
     val atomClass: MathAtomClass get() = MathAtomClass.Inner
 }
+
+enum class MathDisplayEnvironmentKind(
+    val sourceName: String,
+    val alignment: Boolean,
+    val sourceRequestsNumbering: Boolean,
+) {
+    Equation("equation", false, true),
+    EquationStar("equation*", false, false),
+    Align("align", true, true),
+    AlignStar("align*", true, false),
+}
+
+/**
+ * A document-level display wrapper retained by the Markdown-math frontend.
+ *
+ * It is deliberately distinct from [MathTable]: `align`/`equation` are display structures,
+ * not Inner noads. Markdown hosts suppress document equation counters while preserving the
+ * source request in decisions.
+ */
+data class MathDisplayEnvironment(
+    val kind: MathDisplayEnvironmentKind,
+    val body: MathNode,
+    val beginCommandRange: SourceRange,
+    val beginNameRange: SourceRange,
+    val endCommandRange: SourceRange?,
+    val endNameRange: SourceRange?,
+    override val range: SourceRange,
+) : MathNode
+
+/**
+ * One top-level Markdown display row. The separator belongs to the row before it, matching
+ * TeX/amsmath's source model; a trailing separator therefore does not invent a visible empty row.
+ */
+data class MathDisplayRow(
+    val body: MathList,
+    val rowSeparatorRange: SourceRange?,
+    val additionalSpacing: MathTeXDimension? = null,
+    val range: SourceRange,
+)
+
+/**
+ * Host-display extension for top-level `\\` rows outside a TeX alignment environment.
+ * It is a display structure, not an Inner noad and not an automatic line-breaking request.
+ */
+data class MathDisplayRows(
+    val rows: List<MathDisplayRow>,
+    override val range: SourceRange,
+) : MathNode
+
+/** Parser-only source marker folded into [MathDisplayRows] before a parse result is returned. */
+data class MathExplicitRowBreak(
+    val separatorRange: SourceRange,
+    val additionalSpacing: MathTeXDimension?,
+    override val range: SourceRange,
+) : MathNode
 
 data class MathScripts(
     val base: MathNode,

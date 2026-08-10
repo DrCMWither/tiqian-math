@@ -7,6 +7,7 @@ import org.tiqian.math.core.MathConstructionPaintGroup
 import org.tiqian.math.core.MathConstructionPaintKind
 import org.tiqian.math.core.MathConstructionShapeKind
 import org.tiqian.math.core.MathDiagnostic
+import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
@@ -89,6 +90,25 @@ class MathFormulaCapabilityTest {
             assertEquals(missingGlyphSource, missingGlyph.source)
             assertTrue(missingGlyph.diagnostics.any { it.code == DiagnosticCode.MissingGlyph })
             assertTrue(missingGlyph.reasons.any { it.category == MathFormulaCapabilityCategory.MissingGlyph })
+        }
+    }
+
+    @Test
+    fun explicitTopLevelRowsAreReadyOnlyForDisplayMode() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            val engine = face.formulaCapabilityEngine()
+            val source = "a=b\\\\c=d"
+            val ready = assertIs<MathFormulaCapabilityResult.Ready>(
+                engine.evaluate(source, MathLayoutOptions(mode = MathMode.Display, fontSizePx = 32f)),
+            )
+            assertTrue(ready.layoutResult.decisions.any { it.name == "MarkdownExplicitDisplayRows" })
+
+            val fallback = assertIs<MathFormulaCapabilityResult.FallbackRequired>(
+                engine.evaluate(source, MathLayoutOptions(mode = MathMode.Inline, fontSizePx = 32f)),
+            )
+            assertEquals(MathFormulaCapabilityCategory.MalformedSource, fallback.reasons.single().category)
+            assertEquals(DiagnosticCode.ExplicitMultilineRequiresDisplay, fallback.diagnostics.single().code)
+            assertEquals(SourceRange(0, source.length), fallback.diagnostics.single().range)
         }
     }
 

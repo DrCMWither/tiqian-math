@@ -1,0 +1,29 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=300
+\showboxdepth=300
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-MULTILINE-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-MULTILINE-ORACLE-#1-END}%
+}
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/]{STIXTwoMath-Regular.otf}
+\traceformula{ALIGNED-BASE}{\begin{aligned}a&=b\\c&=d\end{aligned}}
+\traceformula{ALIGNED-EXTRA}{\begin{aligned}a&=b\\[.2cm]c&=d\end{aligned}}
+\traceformula{ARRAY-BASE}{\begin{array}{cc}a&b\\c&d\end{array}}
+\traceformula{ARRAY-EXTRA}{\begin{array}{cc}a&b\\[.2cm]c&d\end{array}}
+\traceformula{ALIGNED-TRAILING}{\begin{aligned}a&=b\\\end{aligned}}
+\traceformula{ARRAY-TRAILING}{\begin{array}{cc}a&b\\\end{array}}
+\traceformula{ALIGNED-TRAILING-EXTRA}{\begin{aligned}a&=b\\[.2cm]\end{aligned}}
+\traceformula{ARRAY-TRAILING-EXTRA}{\begin{array}{cc}a&b\\[.2cm]\end{array}}
+\traceformula{EQUATION-BODY}{\displaystyle a=\frac{b}{c}}
+\traceformula{ALIGN-BODY}{\begin{aligned}a&=b\\c&=\frac{d}{e}\end{aligned}}
+\end{document}

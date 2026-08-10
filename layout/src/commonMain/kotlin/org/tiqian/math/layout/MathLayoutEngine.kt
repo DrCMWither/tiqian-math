@@ -114,6 +114,7 @@ private class MathLayoutPass(
     private var delimiterShortfallPx: Float = 12f
     private var textLocale: String? = null
     private var explicitArrayColumnSeparationPx: Float? = null
+    private var formulaMode: MathMode = MathMode.Inline
     private var nextConstructionPaintGroupId: Int = 1
 
     /**
@@ -179,6 +180,7 @@ private class MathLayoutPass(
     fun layout(parsed: MathParseResult, options: MathLayoutOptions): MathLayoutResult {
         val source = parsed.source
         baseFontSizePx = options.fontSizePx
+        formulaMode = options.mode
         nextConstructionPaintGroupId = 1
         nullDelimiterSpacePx = options.nullDelimiterSpacePx
             ?: options.fontSizePx * DEFAULT_NULL_DELIMITER_SPACE_EM
@@ -279,6 +281,16 @@ private class MathLayoutPass(
         is MathRuleDecoration -> layoutRuleDecoration(node, style, alphabetOverride)
         is MathExplicitSpace -> layoutExplicitSpace(node, style)
         is MathTable -> layoutTable(node, style, alphabetOverride)
+        is MathDisplayEnvironment -> layoutDisplayEnvironment(node, alphabetOverride)
+        is MathDisplayRows -> layoutDisplayRows(node, alphabetOverride)
+        is MathExplicitRowBreak -> LaidNode(
+            node,
+            emptyBox(node.range),
+            MathAtomClass.Ordinary,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
         is MathScripts -> when (val base = node.base) {
             is MathOperator -> layoutOperatorScripts(node, base, style, alphabetOverride)
             is MathOperatorName -> layoutOperatorNameScripts(node, base, style, alphabetOverride)
@@ -428,11 +440,18 @@ private class MathLayoutPass(
         val strutDescentEm = if (cases) TEX_CASES_STRUT_DESCENT_EM else TEX_ARRAY_STRUT_DESCENT_EM
         val minimumRowAscent = strutAscentEm * size
         val minimumRowDescent = strutDescentEm * size
+        val rowAdditionalSpacingPx = node.rows.map { row ->
+            row.additionalSpacing?.let { resolveTeXDimension(it, size) } ?: 0f
+        }
         val rowAscents = rowLayouts.map { row ->
             maxOf(minimumRowAscent, row.maxOfOrNull { it.texCleanBoxMetrics.ascent } ?: 0f)
         }
-        val rowDescents = rowLayouts.map { row ->
-            maxOf(minimumRowDescent, row.maxOfOrNull { it.texCleanBoxMetrics.descent } ?: 0f)
+        val rowDescents = rowLayouts.mapIndexed { rowIndex, row ->
+            val optionalStrutExtension = if (preservesEntryStyle) 0f else rowAdditionalSpacingPx[rowIndex]
+            maxOf(
+                minimumRowDescent + optionalStrutExtension,
+                row.maxOfOrNull { it.texCleanBoxMetrics.descent } ?: 0f,
+            )
         }
         val arrayColumnSeparation = explicitArrayColumnSeparationPx ?: TEX_ARRAY_COLUMN_SEPARATION_EM * size
         val columnGaps = List((columnCount - 1).coerceAtLeast(0)) { boundary ->
@@ -452,7 +471,15 @@ private class MathLayoutPass(
             }
         }
         val rowGapEm = if (preservesEntryStyle && node.rows.size > 1) TEX_ALIGNED_ROW_GAP_EM else 0f
-        val rowGap = rowGapEm * size
+        val baseRowGap = rowGapEm * size
+        val rowGaps = List((node.rows.size - 1).coerceAtLeast(0)) { rowIndex ->
+            baseRowGap + if (preservesEntryStyle) rowAdditionalSpacingPx[rowIndex] else 0f
+        }
+        val trailingExplicitRowSpacing = if (preservesEntryStyle) {
+            rowAdditionalSpacingPx.lastOrNull() ?: 0f
+        } else {
+            0f
+        }
         val outerPadding = if (node.environment == MathTableEnvironment.Array) {
             arrayColumnSeparation
         } else {
@@ -461,7 +488,7 @@ private class MathLayoutPass(
         val bodyWidth = outerPadding * 2f + columnWidths.sum() + columnGaps.sum()
         val bodyHeight = rowAscents.zip(rowDescents).sumOf { (ascent, descent) ->
             (ascent + descent).toDouble()
-        }.toFloat() + rowGap * (node.rows.size - 1).coerceAtLeast(0)
+        }.toFloat() + rowGaps.sum() + trailingExplicitRowSpacing
         val axisHeight = scale(constants.axisHeight, style)
         val bodyTop = -axisHeight - bodyHeight / 2f
         var rowTop = bodyTop
@@ -486,7 +513,7 @@ private class MathLayoutPass(
                 columnLeft += columnWidths[column] + columnGaps.getOrElse(column) { 0f }
             }
             rowTop += rowAscents[rowIndex] + rowDescents[rowIndex] +
-                if (rowIndex < rowLayouts.lastIndex) rowGap else 0f
+                rowGaps.getOrElse(rowIndex) { 0f }
         }
         val bodyBottom = bodyTop + bodyHeight
         val paintedBody = geometryExtents(
@@ -532,6 +559,15 @@ private class MathLayoutPass(
             "arrayColumnSeparationPx" to arrayColumnSeparation,
             "columnGapsPx" to columnGaps.joinToString(","),
             "rowGapEm" to rowGapEm,
+            "baseRowGapPx" to baseRowGap,
+            "rowAdditionalSpacingPx" to rowAdditionalSpacingPx.joinToString(","),
+            "rowGapsPx" to rowGaps.joinToString(","),
+            "trailingExplicitRowSpacingPx" to trailingExplicitRowSpacing,
+            "rowSpacingPolicy" to if (preservesEntryStyle) {
+                "AmsmathExtraInterRowGlue"
+            } else {
+                "LaTeXArrayPreviousRowStrutDepthExtension"
+            },
             "bodyWidthPx" to bodyWidth,
             "bodyAscentPx" to bodyBox.ascent,
             "bodyDescentPx" to bodyBox.descent,
@@ -547,6 +583,124 @@ private class MathLayoutPass(
             style,
             ScriptBaseKind.CompoundBox,
         )
+    }
+
+    private fun layoutDisplayEnvironment(
+        node: MathDisplayEnvironment,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val displayStyle = MathStyle.Display
+        val body = layoutNode(node.body, displayStyle, alphabetOverride)
+        val box = body.box.copy(range = node.range)
+        decision(
+            "MarkdownMathDisplayEnvironment",
+            node.range,
+            "environment" to node.kind.sourceName,
+            "layoutRole" to if (node.kind.alignment) "DisplayAlignment" else "SingleDisplayEquation",
+            "entryStyle" to displayStyle,
+            "sourceRequestsNumbering" to node.kind.sourceRequestsNumbering,
+            "numberingPolicy" to "SuppressedByMarkdownFormulaHost",
+            "atomClass" to "NoneAtDocumentLevel",
+            "groupBreakPolicy" to "ExplicitRowsOnly",
+            "policy" to "AmsmathDisplayWrapperWithIntrinsicFormulaBox",
+        )
+        return LaidNode(
+            node = node,
+            box = box,
+            atomClass = MathAtomClass.Ordinary,
+            italicCorrectionPx = 0f,
+            style = displayStyle,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutDisplayRows(
+        node: MathDisplayRows,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        if (formulaMode != MathMode.Display) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.ExplicitMultilineRequiresDisplay,
+                "Top-level \\\\ rows require display math mode",
+                node.range,
+            )
+        }
+        var carriedStyle: MathStyleDeclaration? = null
+        var carriedAlphabet: MathAlphabetDeclaration? = null
+        val tableRows = node.rows.map { row ->
+            val inherited = listOfNotNull(carriedStyle, carriedAlphabet)
+            val syntheticBody = MathList(
+                children = inherited + row.body.children,
+                range = row.body.range,
+            )
+            row.body.children.forEach { child ->
+                when (child) {
+                    is MathStyleDeclaration -> carriedStyle = child
+                    is MathAlphabetDeclaration -> carriedAlphabet = child
+                    else -> Unit
+                }
+            }
+            MathTableRow(
+                cells = listOf(MathTableCell(syntheticBody, range = row.body.range)),
+                rowSeparatorRange = row.rowSeparatorRange,
+                additionalSpacing = row.additionalSpacing,
+                range = row.range,
+            )
+        }
+        val syntheticTable = MathTable(
+            environmentName = "markdown-display-rows",
+            environment = MathTableEnvironment.Aligned,
+            rows = tableRows,
+            columnAlignments = listOf(MathTableColumnAlignment.Center),
+            beginCommandRange = SourceRange(node.range.start, node.range.start),
+            beginNameRange = SourceRange(node.range.start, node.range.start),
+            endCommandRange = null,
+            endNameRange = null,
+            range = node.range,
+        )
+        val table = layoutTable(syntheticTable, MathStyle.Display, alphabetOverride)
+        decision(
+            "MarkdownExplicitDisplayRows",
+            node.range,
+            "rowCount" to node.rows.size,
+            "entryMode" to formulaMode,
+            "entryStyle" to MathStyle.Display,
+            "rowAlignment" to "CenteredIndependentlyAtMaximumAdvance",
+            "rowKernel" to "AmsmathAlignedStrutAndBaselineGap",
+            "styleDeclarationPolicy" to "ContainingListDeclarationsCarryAcrossRows",
+            "trailingSeparatorCreatesVisibleRow" to false,
+            "groupBreakPolicy" to "ExplicitRowsOnlyNoAutomaticInternalBreak",
+            "dialect" to "MarkdownDisplayKaTeXCompatibilityExtension",
+        )
+        return table.copy(
+            node = node,
+            box = table.box.copy(range = node.range),
+            atomClass = MathAtomClass.Ordinary,
+            style = MathStyle.Display,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun resolveTeXDimension(dimension: MathTeXDimension, emSizePx: Float): Float {
+        val pixels = when (dimension.unit) {
+            MathTeXDimensionUnit.Point -> dimension.value * TEX_POINT_TO_PX
+            MathTeXDimensionUnit.BigPoint -> dimension.value * BIG_POINT_TO_PX
+            MathTeXDimensionUnit.Em -> dimension.value * emSizePx
+            MathTeXDimensionUnit.Centimeter -> dimension.value * CSS_PIXELS_PER_INCH / CENTIMETERS_PER_INCH
+            MathTeXDimensionUnit.Millimeter -> dimension.value * CSS_PIXELS_PER_INCH / MILLIMETERS_PER_INCH
+            MathTeXDimensionUnit.Inch -> dimension.value * CSS_PIXELS_PER_INCH
+        }
+        decision(
+            "TeXExplicitRowSpacing",
+            dimension.range,
+            "sourceText" to dimension.sourceText,
+            "value" to dimension.value,
+            "unit" to dimension.unit.sourceName,
+            "emSizePx" to emSizePx,
+            "resolvedPx" to pixels,
+            "policy" to "TeXDimensionAt96CssPixelsPerInch",
+        )
+        return pixels
     }
 
     private fun wrapTableDelimiters(
@@ -4514,6 +4668,14 @@ private class MathLayoutPass(
         const val TEX_ALIGNED_PAIR_GAP_EM = 2f
         const val TEX_ARRAY_INTERCOLUMN_EM = 1f
         const val TEX_ARRAY_COLUMN_SEPARATION_EM = 0.5f
+        const val CSS_PIXELS_PER_INCH = 96f
+        const val TEX_POINTS_PER_INCH = 72.27f
+        const val BIG_POINTS_PER_INCH = 72f
+        const val CENTIMETERS_PER_INCH = 2.54f
+        const val MILLIMETERS_PER_INCH = 25.4f
+        const val TEX_POINT_TO_PX = CSS_PIXELS_PER_INCH / TEX_POINTS_PER_INCH
+        const val DEFAULT_SCRIPT_SPACE_PT = 0.5f
+        const val BIG_POINT_TO_PX = CSS_PIXELS_PER_INCH / BIG_POINTS_PER_INCH
 
         val binaryLeftCanceller = setOf(
             MathAtomClass.Binary,
