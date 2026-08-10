@@ -1,0 +1,31 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\usepackage{cancel}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=500
+\showboxdepth=500
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-REMAINING-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-REMAINING-#1-END}%
+}
+\newcommand{\runoracles}[1]{%
+  \traceformula{#1-ATOP}{{a\atop b}}%
+  \traceformula{#1-BF}{\bf{0}}%
+  \traceformula{#1-BF-MIXED}{\bf{0+x+\alpha+\sum}}%
+  \traceformula{#1-NOT}{\mu\not\equiv\mu}%
+  \traceformula{#1-CANCEL}{\cancel{x+1}}%
+  \traceformula{#1-TEXTBF}{\textbf{1}}%
+  \traceformula{#1-HLINE}{\begin{array}{c}a\\\hline b\end{array}}%
+}
+\begin{document}
+\setmathfont[Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/]{LeteSansMath-Regular.otf}
+\runoracles{LETE}
+\setmathfont[Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/]{STIXTwoMath-Regular.otf}
+\runoracles{STIX}
+\end{document}

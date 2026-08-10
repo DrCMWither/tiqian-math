@@ -652,7 +652,7 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("table-environment-oracle=${output.absolutePath} bytes=${output.length()}")
     }
-    ImageComposeScene(width = 1400, height = 1700) { CommonExtensionsOracleScreen() }.use { scene ->
+    ImageComposeScene(width = 1400, height = 2200) { CommonExtensionsOracleScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/tiqian-common-extensions.png")
         output.parentFile.mkdirs()
@@ -877,6 +877,7 @@ private val TABLE_ENVIRONMENT_PREVIEW_CASES = listOf(
     "aligned equations" to """\begin{aligned}a&=b\\c&=\frac{d}{e}\end{aligned}""",
     "aligned + explicit .2 cm row spacing" to """\begin{aligned}a&=b\\[.2cm]c&=d\end{aligned}""",
     "array + explicit .2 cm row strut" to """\begin{array}{cc}a&b\\[.2cm]c&d\end{array}""",
+    "array horizontal rules" to """\begin{array}{c}a\\\hline b\\\hline c\end{array}""",
     "parenthesized matrix + scripts" to """\begin{pmatrix}a&b\\\frac{c}{d}&\sqrt{x}\end{pmatrix}_0^1""",
     "cases" to """\begin{cases}x&x>0\\\frac{a}{b}&x\le0\end{cases}""",
     "nested table structures" to
@@ -932,6 +933,7 @@ private fun FontFamilyColumn(
         )
         listOf(
             "math + official missing-glyph fallback" to "x+y+\\alpha+\\aleph_0+\\int_0^1",
+            "grouped legacy math bold + host bold text" to "{\\bf 0}+\\textbf{1}",
             "embedded and raw CJK" to "\\text{速率 rate 2}+原始中文+x",
             "mixed scripts at MATH script size" to "x^{中文2}+y_{片仮名3}+z^{한글4}",
         ).forEach { (caseLabel, source) ->
@@ -1527,6 +1529,9 @@ private data class CommonExtensionPreviewCase(
 )
 
 private val commonExtensionPreviewCases = listOf(
+    CommonExtensionPreviewCase("plain TeX generalized fraction", "E_{a\\atop b}+{a\\atop b}", lineHeightSp = 145),
+    CommonExtensionPreviewCase("precomposed negated relation", "\\mu\\not\\equiv\\mu"),
+    CommonExtensionPreviewCase("cancel.sty stroked overlay", "\\cancel{x+1}+\\frac{\\cancel{a}}{b}"),
     CommonExtensionPreviewCase("display fraction / centered continued fraction", "\\dfrac{a}{b}+\\cfrac{a}{b}"),
     CommonExtensionPreviewCase("continued fraction numerator alignment", "\\cfrac[l]{a}{bbbb}+\\cfrac[r]{a}{bbbb}"),
     CommonExtensionPreviewCase("nested continued fraction", "1+\\cfrac{a}{b+\\cfrac{c}{d}}", lineHeightSp = 170),

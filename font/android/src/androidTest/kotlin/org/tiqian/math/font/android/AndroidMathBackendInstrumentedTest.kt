@@ -39,6 +39,39 @@ import org.tiqian.math.layout.MeasuredMathRun
 @RunWith(AndroidJUnit4::class)
 class AndroidMathBackendInstrumentedTest {
     @Test
+    fun remainingCorpusCommandsReplayGlyphsAndCancellationStrokeOnAndroid() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AndroidMathFontFamily.loadBundledLete(context).use { math ->
+            AndroidMathTextRunProvider.fromBytes(
+                faceId = MathFaceId("android-remaining-host-text"),
+                fontBytes = context.assets.open(AndroidMathFontFace.LeteAssetPath).use { it.readBytes() },
+                resolvedWeight = MathFontWeight.Regular,
+            ).use { text ->
+                val ready = assertIs<MathFormulaCapabilityResult.Ready>(
+                    math.androidFormulaCapabilityEngine(text).evaluate(
+                        "\\cancel{x+1}+\\not\\equiv+\\textbf{1}",
+                        MathLayoutOptions(fontSizePx = 32f),
+                    ),
+                )
+                val result = ready.layoutResult
+                val cancellation = result.box.rules.single {
+                    it.paintRole == org.tiqian.math.core.MathRulePaintRole.Cancellation
+                }
+                assertNotNull(cancellation.lineSegment)
+                assertTrue(result.box.glyphs.any { it.glyphId == 629u.toUShort() })
+                assertTrue(result.box.glyphs.filter { it.faceId == text.faceId }.all {
+                    it.requestedWeight == MathFontWeight.Bold
+                })
+                assertRasterHasInk(
+                    combineAndroidReplayCatalogs(math, text),
+                    result,
+                    "remaining corpus commands",
+                )
+            }
+        }
+    }
+
+    @Test
     fun collidingMathAndHostFaceIdsFailPreflightInsteadOfDrawingTheMathFace() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         AndroidMathFontFamily.loadBundledLete(context).use { math ->

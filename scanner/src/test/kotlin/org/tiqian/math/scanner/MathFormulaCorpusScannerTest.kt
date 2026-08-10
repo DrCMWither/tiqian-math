@@ -131,6 +131,42 @@ class MathFormulaCorpusScannerTest {
         }
     }
 
+    @Test
+    fun remainingRealCorpusCommandsAreClassifiedAsReadyWithExplicitTextOwnership() {
+        val input = Files.createTempFile("math-compose-remaining-corpus", ".txt")
+        val output = Files.createTempFile("math-compose-remaining-report", ".json")
+        val textFont = Files.createTempFile("math-compose-remaining-text", ".otf")
+        try {
+            input.toFile().writeText(
+                listOf(
+                    "{a\\atop b}",
+                    "\\bf{0}",
+                    "\\textbf{1}",
+                    "\\mu\\not\\equiv\\mu",
+                    "\\cancel{x+1}",
+                    "\\begin{array}{c}a\\\\\\hline b\\end{array}",
+                ).joinToString("\n", postfix = "\n"),
+            )
+            Files.write(textFont, LeteSansMath.loadBoldBytes())
+            main(arrayOf(
+                input.toString(),
+                "--output=$output",
+                "--font=lete",
+                "--font-size=32",
+                "--text-font=$textFont",
+                "--text-font-weight=700",
+            ))
+            val report = Json.parseToJsonElement(output.readText()).jsonObject
+            assertEquals("6", report.getValue("ready").jsonPrimitive.content)
+            assertEquals("0", report.getValue("fallbackRequired").jsonPrimitive.content)
+            assertEquals(emptyMap(), report.getValue("byUnsupportedCommand").jsonObject)
+        } finally {
+            Files.deleteIfExists(input)
+            Files.deleteIfExists(output)
+            Files.deleteIfExists(textFont)
+        }
+    }
+
     private fun runScanner(input: Path, output: Path, font: String) {
         main(arrayOf(
             input.toString(),

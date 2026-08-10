@@ -57,6 +57,48 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalComposeUiApi::class)
 class TiqianMathRenderTest {
     @Test
+    fun cancellationNegationAndBoldTextReplayFromTheSharedLayoutPlan() {
+        var observed: MathLayoutResult? = null
+        SkiaMathFontFamily.loadBundledLete().use { family ->
+            SkiaMathTextRunProvider.fromBytes(
+                MathFaceId("remaining-compose-text-bold"),
+                LeteSansMath.loadBoldBytes(),
+                MathFontWeight.Bold,
+            ).use { text ->
+                ImageComposeScene(width = 320, height = 120, density = Density(1f)) {
+                    Box(Modifier.fillMaxSize().background(Color.White)) {
+                        TiqianMath(
+                            source = "\\cancel{x+1}+\\not\\equiv+\\textbf{1}",
+                            fontSizePx = 32f,
+                            fontFace = family,
+                            textRunProvider = text,
+                            softWrap = false,
+                            onMathLayout = { observed = it },
+                        )
+                    }
+                }.use { scene ->
+                    val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                    val result = assertNotNull(observed)
+                    assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+                    val cancellation = result.box.rules.single {
+                        it.paintRole == org.tiqian.math.core.MathRulePaintRole.Cancellation
+                    }
+                    assertNotNull(cancellation.lineSegment)
+                    assertTrue(result.decisions.any { it.name == "TeXNotRelation" })
+                    assertTrue(result.box.glyphs.any { it.faceId == MathFaceId("remaining-compose-text-bold") })
+                    val darkPixels = (0 until pixels.height).sumOf { y ->
+                        (0 until pixels.width).count { x ->
+                            val pixel = pixels[x, y]
+                            pixel.red < 0.3f && pixel.green < 0.3f && pixel.blue < 0.3f
+                        }
+                    }
+                    assertTrue(darkPixels > 150, "shared glyph and stroked-rule replay must be visible: $darkPixels")
+                }
+            }
+        }
+    }
+
+    @Test
     fun mathJaxBboxBackgroundIsReplayedBeforeGlyphsAndForegroundBorder() {
         var observed: MathLayoutResult? = null
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
