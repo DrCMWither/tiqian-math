@@ -326,6 +326,15 @@ data class MathLayoutDecision(
     val details: Map<String, String>,
 )
 
+/**
+ * Builds the human-readable layout dump on first access. Structured [MathLayoutDecision] data
+ * remains eager and authoritative; production callers that never inspect [MathLayoutResult.debugDump]
+ * avoid the large diagnostic string and its transient formatting allocations.
+ */
+fun interface MathLayoutDebugDumpRenderer {
+    fun render(result: MathLayoutResult): String
+}
+
 data class MathLayoutResult(
     val source: String,
     val mode: MathMode,
@@ -336,5 +345,33 @@ data class MathLayoutResult(
     val diagnostics: List<MathDiagnostic>,
     val lineMetrics: MathFormulaLineMetrics,
     val decisions: List<MathLayoutDecision>,
-    val debugDump: String,
-)
+    val debugDumpRenderer: MathLayoutDebugDumpRenderer,
+) {
+    /** Human-readable diagnostic projection, memoized only when a caller requests it. */
+    val debugDump: String by lazy { debugDumpRenderer.render(this) }
+
+    /** Source-compatible constructor for external fixtures that already own an eager dump. */
+    constructor(
+        source: String,
+        mode: MathMode,
+        initialStyle: MathStyle,
+        box: MathBox,
+        fragments: List<MathInlineFragment>,
+        breakOpportunities: List<MathBreakOpportunity>,
+        diagnostics: List<MathDiagnostic>,
+        lineMetrics: MathFormulaLineMetrics,
+        decisions: List<MathLayoutDecision>,
+        debugDump: String,
+    ) : this(
+        source = source,
+        mode = mode,
+        initialStyle = initialStyle,
+        box = box,
+        fragments = fragments,
+        breakOpportunities = breakOpportunities,
+        diagnostics = diagnostics,
+        lineMetrics = lineMetrics,
+        decisions = decisions,
+        debugDumpRenderer = MathLayoutDebugDumpRenderer { debugDump },
+    )
+}

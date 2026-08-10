@@ -284,16 +284,12 @@ private class MathLayoutPass(
         )
         val resultDiagnostics = diagnostics.toList()
         val resultDecisions = decisions.toList()
-        val dump = buildDump(
-            source,
-            options.mode,
-            initialStyle,
-            horizontal.laid.box,
-            fragments,
-            breaks,
-            lineMetrics,
-            resultDiagnostics,
-            resultDecisions,
+        val dumpMetadata = MathLayoutDebugDumpMetadata(
+            unitsPerEm = glyphSource.mathFont.unitsPerEm,
+            axisHeight = constants.axisHeight,
+            fractionRuleThickness = constants.fractionRuleThickness,
+            scriptPercentScaleDown = constants.scriptPercentScaleDown,
+            scriptScriptPercentScaleDown = constants.scriptScriptPercentScaleDown,
         )
         return MathLayoutResult(
             source = source,
@@ -305,7 +301,7 @@ private class MathLayoutPass(
             diagnostics = resultDiagnostics,
             lineMetrics = lineMetrics,
             decisions = resultDecisions,
-            debugDump = dump,
+            debugDumpRenderer = DefaultMathLayoutDebugDumpRenderer(dumpMetadata),
         )
     }
 
@@ -5494,8 +5490,24 @@ private class MathLayoutPass(
             }
         }
 
+        // TeX spacing and italic-correction ownership need the nearest real noad on either side.
+        // Resolve both directions once: repeated lastOrNull/firstOrNull scans make a flat n-noad
+        // formula quadratic even though the neighboring noads are a purely linear relation.
+        val previousNoadIndex = IntArray(raw.size) { -1 }
+        var previousNoad = -1
+        raw.indices.forEach { index ->
+            previousNoadIndex[index] = previousNoad
+            if (raw[index].participatesInNoadSpacing) previousNoad = index
+        }
+        val nextNoadIndex = IntArray(raw.size) { -1 }
+        var nextNoad = -1
+        for (index in raw.indices.reversed()) {
+            nextNoadIndex[index] = nextNoad
+            if (raw[index].participatesInNoadSpacing) nextNoad = index
+        }
+
         val spacedItems = raw.mapIndexed { index, item ->
-            val leftClass = noadIndices.lastOrNull { it < index }?.let(classes::get)
+            val leftClass = previousNoadIndex[index].takeIf { it >= 0 }?.let(classes::get)
             val rightClass = classes[index]
             val glue = if (!item.participatesInNoadSpacing || leftClass == null) {
                 MathGlueAdjustment.Zero
@@ -5505,7 +5517,7 @@ private class MathLayoutPass(
             item.copy(glueBefore = glue, atomClass = rightClass)
         }
         val items = spacedItems.mapIndexed { index, item ->
-            val rightClass = noadIndices.firstOrNull { it > index }?.let(classes::get)
+            val rightClass = nextNoadIndex[index].takeIf { it >= 0 }?.let(classes::get)
             val correction = item.laid.italicCorrectionPx.coerceAtLeast(0f)
             if (correction > 0f) {
                 decision(
@@ -5949,91 +5961,6 @@ private class MathLayoutPass(
         decisions += MathLayoutDecision(name, range, details.associate { it.first to it.second.toString() })
     }
 
-    private fun buildDump(
-        source: String,
-        mode: MathMode,
-        style: MathStyle,
-        box: MathBox,
-        fragments: List<MathInlineFragment>,
-        breaks: List<MathBreakOpportunity>,
-        lineMetrics: MathFormulaLineMetrics,
-        diagnostics: List<MathDiagnostic>,
-        decisions: List<MathLayoutDecision>,
-    ): String = buildString {
-        appendLine("source=$source")
-        appendLine("mode=$mode style=$style upm=${glyphSource.mathFont.unitsPerEm}")
-        appendLine(
-            "math axis=${constants.axisHeight} rule=${constants.fractionRuleThickness} " +
-                "script=${constants.scriptPercentScaleDown}/${constants.scriptScriptPercentScaleDown}",
-        )
-        appendLine(
-            "box advance=${box.width} ink=${box.inkBounds.left},${box.inkBounds.top}," +
-                "${box.inkBounds.right},${box.inkBounds.bottom} visual=${box.visualLeft}..${box.visualRight}",
-        )
-        appendLine(
-            "line font=${lineMetrics.fontAscentPx}/${lineMetrics.fontDescentPx}/${lineMetrics.fontLineGapPx} " +
-                "mathLeading=${lineMetrics.mathLeadingPx} ink=${lineMetrics.inkAscentPx}/${lineMetrics.inkDescentPx} " +
-                "logical=${lineMetrics.logicalAscentPx}/${lineMetrics.logicalDescentPx}",
-        )
-        decisions.forEach { decision ->
-            appendLine(
-                "decision ${decision.name} range=${decision.range.start}..${decision.range.endExclusive} " +
-                    decision.details.entries.joinToString(" ") { "${it.key}=${it.value}" },
-            )
-        }
-        box.glyphs.forEachIndexed { index, glyph ->
-            appendLine(
-                "glyph[$index] id=${glyph.glyphId} range=${glyph.sourceRange.start}..${glyph.sourceRange.endExclusive} " +
-                    "style=${glyph.style} size=${glyph.fontSizePx} x=${glyph.x} baseline=${glyph.baselineY} " +
-                    "face=${glyph.faceId} class=${glyph.fontClass} weight=${glyph.requestedWeight}->${glyph.resolvedWeight} " +
-                    "mathFallback=${glyph.fallbackReason} " +
-                    "hostDecision=${glyph.hostTextDecision} " +
-                    "ink=${glyph.inkBounds.left},${glyph.inkBounds.top},${glyph.inkBounds.right},${glyph.inkBounds.bottom} " +
-                    "constructionGroup=${glyph.constructionGroupId}",
-            )
-        }
-        box.rules.forEachIndexed { index, rule ->
-            val line = rule.lineSegment?.let { " line=$it" }.orEmpty()
-            appendLine(
-                "rule[$index] ${rule.left},${rule.top},${rule.right},${rule.bottom} " +
-                    "layer=${rule.paintLayer} role=${rule.paintRole} color=${rule.paintColor} " +
-                    "constructionGroup=${rule.constructionGroupId}$line",
-            )
-        }
-        box.constructionPaintGroups.forEach { group ->
-            appendLine(
-                "constructionPaintGroup[${group.id}] kind=${group.kind} shape=${group.shapeKind} " +
-                    "face=${group.faceId} " +
-                    "range=${group.sourceRange.start}..${group.sourceRange.endExclusive} " +
-                    "outlinePolicy=${group.outlinePolicy}",
-            )
-        }
-        fragments.forEach { fragment ->
-            appendLine(
-                "fragment[${fragment.index}] range=${fragment.sourceRange.start}..${fragment.sourceRange.endExclusive} " +
-                    "advance=${fragment.box.width} ink=${fragment.box.inkBounds.left}..${fragment.box.inkBounds.right} " +
-                    "leadingKern=${fragment.leadingKernPx} " +
-                    "italicCorrection=${fragment.trailingItalicCorrectionPx} " +
-                    "glue=${fragment.trailingGlue.kind}/${fragment.trailingGlue.naturalPx}/" +
-                    "${fragment.trailingGlue.minimumPx}/${fragment.trailingGlue.maximumPx}/" +
-                    "${fragment.trailingGlue.priority}",
-            )
-        }
-        breaks.forEach { opportunity ->
-            appendLine(
-                "break after=${opportunity.afterFragmentIndex} offset=${opportunity.sourceOffset} " +
-                    "kind=${opportunity.kind} priority=${opportunity.priority} " +
-                    "discard=${opportunity.discardedTrailingGlue.naturalPx}",
-            )
-        }
-        diagnostics.forEach { diagnostic ->
-            appendLine(
-                "diagnostic ${diagnostic.severity}/${diagnostic.code} " +
-                    "range=${diagnostic.range.start}..${diagnostic.range.endExclusive}",
-            )
-        }
-    }
-
     private data class LaidNode(
         val node: MathNode,
         val box: MathBox,
@@ -6250,6 +6177,105 @@ private class MathLayoutPass(
             MathAtomClass.Punctuation,
         )
 
+    }
+}
+
+private data class MathLayoutDebugDumpMetadata(
+    val unitsPerEm: Int,
+    val axisHeight: Int,
+    val fractionRuleThickness: Int,
+    val scriptPercentScaleDown: Int,
+    val scriptScriptPercentScaleDown: Int,
+)
+
+/**
+ * Value-based so two independently produced, otherwise identical layout results retain the
+ * equality semantics they had when [MathLayoutResult.debugDump] was an eager String.
+ */
+private data class DefaultMathLayoutDebugDumpRenderer(
+    val metadata: MathLayoutDebugDumpMetadata,
+) : MathLayoutDebugDumpRenderer {
+    override fun render(result: MathLayoutResult): String =
+        buildMathLayoutDebugDump(result, metadata)
+}
+
+private fun buildMathLayoutDebugDump(
+    result: MathLayoutResult,
+    metadata: MathLayoutDebugDumpMetadata,
+): String = buildString {
+    appendLine("source=${result.source}")
+    appendLine("mode=${result.mode} style=${result.initialStyle} upm=${metadata.unitsPerEm}")
+    appendLine(
+        "math axis=${metadata.axisHeight} rule=${metadata.fractionRuleThickness} " +
+            "script=${metadata.scriptPercentScaleDown}/${metadata.scriptScriptPercentScaleDown}",
+    )
+    val box = result.box
+    appendLine(
+        "box advance=${box.width} ink=${box.inkBounds.left},${box.inkBounds.top}," +
+            "${box.inkBounds.right},${box.inkBounds.bottom} visual=${box.visualLeft}..${box.visualRight}",
+    )
+    val lineMetrics = result.lineMetrics
+    appendLine(
+        "line font=${lineMetrics.fontAscentPx}/${lineMetrics.fontDescentPx}/${lineMetrics.fontLineGapPx} " +
+            "mathLeading=${lineMetrics.mathLeadingPx} ink=${lineMetrics.inkAscentPx}/${lineMetrics.inkDescentPx} " +
+            "logical=${lineMetrics.logicalAscentPx}/${lineMetrics.logicalDescentPx}",
+    )
+    result.decisions.forEach { decision ->
+        appendLine(
+            "decision ${decision.name} range=${decision.range.start}..${decision.range.endExclusive} " +
+                decision.details.entries.joinToString(" ") { "${it.key}=${it.value}" },
+        )
+    }
+    box.glyphs.forEachIndexed { index, glyph ->
+        appendLine(
+            "glyph[$index] id=${glyph.glyphId} range=${glyph.sourceRange.start}..${glyph.sourceRange.endExclusive} " +
+                "style=${glyph.style} size=${glyph.fontSizePx} x=${glyph.x} baseline=${glyph.baselineY} " +
+                "face=${glyph.faceId} class=${glyph.fontClass} weight=${glyph.requestedWeight}->${glyph.resolvedWeight} " +
+                "mathFallback=${glyph.fallbackReason} " +
+                "hostDecision=${glyph.hostTextDecision} " +
+                "ink=${glyph.inkBounds.left},${glyph.inkBounds.top},${glyph.inkBounds.right},${glyph.inkBounds.bottom} " +
+                "constructionGroup=${glyph.constructionGroupId}",
+        )
+    }
+    box.rules.forEachIndexed { index, rule ->
+        val line = rule.lineSegment?.let { " line=$it" }.orEmpty()
+        appendLine(
+            "rule[$index] ${rule.left},${rule.top},${rule.right},${rule.bottom} " +
+                "layer=${rule.paintLayer} role=${rule.paintRole} color=${rule.paintColor} " +
+                "constructionGroup=${rule.constructionGroupId}$line",
+        )
+    }
+    box.constructionPaintGroups.forEach { group ->
+        appendLine(
+            "constructionPaintGroup[${group.id}] kind=${group.kind} shape=${group.shapeKind} " +
+                "face=${group.faceId} " +
+                "range=${group.sourceRange.start}..${group.sourceRange.endExclusive} " +
+                "outlinePolicy=${group.outlinePolicy}",
+        )
+    }
+    result.fragments.forEach { fragment ->
+        appendLine(
+            "fragment[${fragment.index}] range=${fragment.sourceRange.start}..${fragment.sourceRange.endExclusive} " +
+                "advance=${fragment.box.width} ink=${fragment.box.inkBounds.left}..${fragment.box.inkBounds.right} " +
+                "leadingKern=${fragment.leadingKernPx} " +
+                "italicCorrection=${fragment.trailingItalicCorrectionPx} " +
+                "glue=${fragment.trailingGlue.kind}/${fragment.trailingGlue.naturalPx}/" +
+                "${fragment.trailingGlue.minimumPx}/${fragment.trailingGlue.maximumPx}/" +
+                "${fragment.trailingGlue.priority}",
+        )
+    }
+    result.breakOpportunities.forEach { opportunity ->
+        appendLine(
+            "break after=${opportunity.afterFragmentIndex} offset=${opportunity.sourceOffset} " +
+                "kind=${opportunity.kind} priority=${opportunity.priority} " +
+                "discard=${opportunity.discardedTrailingGlue.naturalPx}",
+        )
+    }
+    result.diagnostics.forEach { diagnostic ->
+        appendLine(
+            "diagnostic ${diagnostic.severity}/${diagnostic.code} " +
+                "range=${diagnostic.range.start}..${diagnostic.range.endExclusive}",
+        )
     }
 }
 
