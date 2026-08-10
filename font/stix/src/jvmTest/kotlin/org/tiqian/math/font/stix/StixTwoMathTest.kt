@@ -5,9 +5,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.tiqian.math.font.opentype.OpenTypeLineMetrics
-import org.tiqian.math.font.opentype.OpenTypeMathException
-import org.tiqian.math.core.DiagnosticCode
-import kotlin.test.assertFailsWith
 
 class StixTwoMathTest {
     @Test
@@ -60,14 +57,18 @@ class StixTwoMathTest {
         )
         assertTrue(font.verticalVariants.values.any { it.size > 1 })
         assertEquals(889, font.italicCorrections.size)
-        assertEquals(setOf(4010.toUShort()), font.unsupportedItalicCorrectionAdjustments)
-        val unsupported = assertFailsWith<OpenTypeMathException> {
-            font.italicCorrection(4010.toUShort(), 40f)
-        }
-        assertEquals(DiagnosticCode.UnsupportedMathDeviceAdjustment, unsupported.diagnosticCode)
+        assertTrue(font.unsupportedItalicCorrectionVariationAdjustments.isEmpty())
+        assertEquals(setOf(4010.toUShort()), font.italicCorrectionDeviceAdjustments.keys)
+        assertEquals(19..19, font.italicCorrectionDeviceAdjustments.getValue(4010.toUShort()).ppemRange)
+        assertEquals(listOf(1), font.italicCorrectionDeviceAdjustments.getValue(4010.toUShort()).deltasPx)
         assertEquals(118, font.verticalVariants.size)
         assertEquals(47, font.horizontalConstructions.size)
         assertEquals(2652, font.topAccentAttachments.size)
+        assertEquals(
+            setOf(3309, 3316, 3326).map(Int::toUShort).toSet(),
+            font.topAccentAttachmentDeviceAdjustments.keys,
+        )
+        assertTrue(font.unsupportedTopAccentAttachmentVariationAdjustments.isEmpty())
         assertTrue(font.extendedShapeGlyphs.isNotEmpty())
         assertTrue(font.mathKernInfo.isNotEmpty())
         assertEquals(
@@ -76,6 +77,9 @@ class StixTwoMathTest {
         )
     }
 }
+
+private val org.tiqian.math.font.opentype.MathDeviceAdjustment.ppemRange: IntRange
+    get() = startPpem..endPpem
 
 private fun ByteArray.toHex(): String = joinToString("") { byte ->
     (byte.toInt() and 0xFF).toString(16).padStart(2, '0')

@@ -110,7 +110,7 @@ class MathOperatorNoadTest {
                 forcedContour,
             ).forEach { result ->
                 assertTrue(
-                    result.diagnostics.all { it.code == DiagnosticCode.MathVariantTooShort },
+                    result.diagnostics.isEmpty(),
                     "$label/${result.source}: ${result.diagnostics}\n${result.debugDump}",
                 )
                 val op = result.operatorDecision()
@@ -147,14 +147,12 @@ class MathOperatorNoadTest {
             assertEquals(
                 reachesDisplayTarget,
                 displayOperator.float("achievedAdvancePx") + EPSILON >=
-                    displayOperator.float("displayOperatorMinHeightPx"),
+                    displayOperator.float("variantSelectionTargetPx"),
                 "$label target result is derived from the font's variant data",
             )
-            assertEquals(
-                !reachesDisplayTarget,
-                displaySum.diagnostics.any { it.code == DiagnosticCode.MathVariantTooShort },
-                "$label an exhausted variant ladder is explicit",
-            )
+            assertEquals("true", displayOperator.details["selectionComplete"], label)
+            assertEquals((!reachesDisplayTarget).toString(), displayOperator.details["exhaustedVariantLadder"], label)
+            assertTrue(displaySum.diagnostics.none { it.code == DiagnosticCode.MathVariantTooShort }, label)
             assertEquals(SourceRange(0, 4), displayOperator.range, "$label operator source range")
             assertEquals(SourceRange(0, 11), forcedInline.operatorDecision().range, "$label modifier range is retained")
             assertEquals(
@@ -298,10 +296,6 @@ class MathOperatorNoadTest {
                     lowerCenter - operatorCenter,
                     "$label lower limit keeps -IC/2 skew",
                 )
-                assertTrue(
-                    result.box.inkBounds.left < -EPSILON || result.box.inkBounds.right > result.box.width + EPSILON,
-                    "$label skew remains visible as ink overhang: ${result.debugDump}",
-                )
                 if (label == "wide") {
                     assertTrue(result.box.inkBounds.left < -EPSILON, result.debugDump)
                     assertTrue(result.box.inkBounds.right > result.box.width + EPSILON, result.debugDump)
@@ -311,7 +305,7 @@ class MathOperatorNoadTest {
     }
 
     @Test
-    fun displayOperatorUsesNormalGlyphBeforeAReadyLargerVariant() {
+    fun displayOperatorTargetIncludesFiveQuartersOfNormalGlyphLikeXeTeX() {
         SkiaMathFontFace(LeteSansMath.load()).use { delegate ->
             val size = 40f
             val range = SourceRange(0, 4)
@@ -336,10 +330,15 @@ class MathOperatorNoadTest {
                 MathLayoutOptions(MathMode.Display, size),
             )
             val decision = result.operatorDecision()
-            assertEquals("BaseGlyph", decision.details["construction"])
-            assertEquals("MathMLCore5.3.2NormalGlyph", decision.details["constructionPolicy"])
-            assertTrue(result.box.glyphs.any { it.glyphId == operatorGlyph })
-            assertTrue(result.box.glyphs.none { it.glyphId == unrelatedVariant })
+            assertEquals("Variant", decision.details["construction"])
+            assertEquals("MathMLCore5.3.2Variant", decision.details["constructionPolicy"])
+            assertTrue(result.box.glyphs.none { it.glyphId == operatorGlyph })
+            assertTrue(result.box.glyphs.any { it.glyphId == unrelatedVariant })
+            assertNear(
+                decision.float("normalGlyphExtentPx") * 1.25f,
+                decision.float("variantSelectionTargetPx"),
+                "XeTeX make_op 5/4 normal glyph target",
+            )
         }
     }
 
@@ -355,8 +354,12 @@ class MathOperatorNoadTest {
                 ).constructionBaseGlyphId,
             )
             val parenthesisGlyph = delegate.shapeConstructionBase("(", size, range).glyphs.single().glyphId
-            val operatorMetrics = delegate.measureGlyph(operatorGlyph, size, MathStyle.Display, range).glyphs.single()
-            val parenthesisMetrics = delegate.measureGlyph(parenthesisGlyph, size, MathStyle.Display, range).glyphs.single()
+            val operatorMetrics = delegate.measureGlyphOutlineBounds(
+                operatorGlyph, size, MathStyle.Display, range,
+            ).glyphs.single()
+            val parenthesisMetrics = delegate.measureGlyphOutlineBounds(
+                parenthesisGlyph, size, MathStyle.Display, range,
+            ).glyphs.single()
             assertTrue(operatorGlyph != parenthesisGlyph)
             assertTrue(
                 abs(operatorMetrics.inkBounds.bottom - parenthesisMetrics.inkBounds.bottom) > EPSILON,
@@ -381,19 +384,20 @@ class MathOperatorNoadTest {
                     operatorGlyph to MathGlyphConstruction(emptyList(), assembly)
                 ),
             )
-            val construction = assertNotNull(
-                overriddenFont.verticalConstructionForTest(
-                    delegate,
-                    operatorGlyph,
-                    overriddenFont.scaleDesignUnits(1_800, size),
-                    size,
-                ),
-            )
             val result = MathLayoutEngine(OperatorOverrideFace(delegate, overriddenFont)).layout(
                 "\\sum\\limits_a^b",
                 MathLayoutOptions(MathMode.Display, size),
             )
             assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+            val construction = assertNotNull(
+                overriddenFont.verticalConstructionForTest(
+                    delegate,
+                    operatorGlyph,
+                    result.operatorDecision().float("variantSelectionTargetPx"),
+                    size,
+                    assemblyPolicy = org.tiqian.math.font.opentype.MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
+                ),
+            )
 
             val componentPlacements = result.box.glyphs.filter { it.sourceRange == range }
             val lowerPlacement = componentPlacements.single { it.glyphId == operatorGlyph }
@@ -425,7 +429,10 @@ class MathOperatorNoadTest {
                 "MathMLCore5.3.1SharedFontOriginBottom",
                 constructionDecision.details["placementPolicy"],
             )
-            assertEquals("MathMLCore5.3.1UniformOverlap", constructionDecision.details["constructionPolicy"])
+            assertEquals(
+                "Tectonic0.17.0XeTeXBuildOpenTypeAssemblyStretchGlue",
+                constructionDecision.details["constructionPolicy"],
+            )
             assertEquals("true", constructionDecision.details["assemblyValid"])
             assertEquals("0.0,0.0", constructionDecision.details["componentHorizontalOriginsPx"])
             assertTrue(constructionDecision.details["componentBottomOriginsPx"].orEmpty().contains(','))
@@ -510,6 +517,13 @@ private class OperatorOverrideFace(
         style: MathStyle,
         sourceRange: SourceRange,
     ): MeasuredMathRun = delegate.measureGlyph(glyphId, fontSizePx, style, sourceRange)
+
+    override fun measureGlyphOutlineBounds(
+        glyphId: UShort,
+        fontSizePx: Float,
+        style: MathStyle,
+        sourceRange: SourceRange,
+    ): MeasuredMathRun = delegate.measureGlyphOutlineBounds(glyphId, fontSizePx, style, sourceRange)
 }
 
 private fun org.tiqian.math.core.MathLayoutResult.operatorDecision(): MathLayoutDecision =

@@ -17,8 +17,6 @@ import org.jetbrains.skia.shaper.TrivialScriptRunIterator
 import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.OpenTypeMathReader
 import org.tiqian.math.font.opentype.LeteSansMath
-import org.tiqian.math.font.opentype.MathVerticalAssemblyPolicy
-import org.tiqian.math.font.opentype.MathVerticalConstructionRequest
 import org.tiqian.math.layout.*
 import kotlin.math.max
 
@@ -259,23 +257,8 @@ private fun SkiaMathFontFace.operatorConstructionAvailable(
     fontSizePx: Float,
 ): Boolean {
     val resolved = resolveOperator(request, fontSizePx)
-    if (resolved.run.missingGlyph) return false
-    if (request.style.level != MathStyleLevel.Display) return true
-    val glyphId = resolved.constructionBaseGlyphId ?: return false
-    val target = mathFont.scaleDesignUnits(mathFont.constants.displayOperatorMinHeight, fontSizePx)
-    val normal = measureGlyphOutlineBounds(glyphId, fontSizePx, request.style, request.sourceRange)
-    return mathFont.verticalConstruction(
-        MathVerticalConstructionRequest(
-            glyphId,
-            target,
-            fontSizePx,
-            normal.glyphs.maxOfOrNull { it.inkBounds.height } ?: normal.ascent + normal.descent,
-            normal.width,
-            MathVerticalAssemblyPolicy.MathMLCoreUniformOverlap,
-        ),
-        glyphVerticalExtentPx = { id ->
-            measureGlyphOutlineBounds(id, fontSizePx, request.style, request.sourceRange)
-                .glyphs.singleOrNull()?.inkBounds?.height ?: 0f
-        },
-    ) { id -> measureGlyph(id, fontSizePx, request.style, request.sourceRange).width }?.reachesTarget == true
+    // XeTeX make_op always completes with the normal or largest available operator glyph when
+    // a display target exhausts the font's variant ladder. Coverage of the suggested minimum is
+    // therefore not a reason to cross to another formula-wide MATH face.
+    return !resolved.run.missingGlyph
 }

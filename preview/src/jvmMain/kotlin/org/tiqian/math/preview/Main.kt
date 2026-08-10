@@ -96,6 +96,8 @@ private fun PreviewScreen() {
                 VariantControlSample("STIX Two Math", stix)
                 FontSample("Lete Sans Math · display", lete, MathMode.Display)
                 FontSample("STIX Two Math · display", stix, MathMode.Display)
+                Text("STIX Two Math · XeTeX 0.17 operator ladder and zero-ppem accent evidence", fontSize = 13.sp)
+                XeTeXStixAlignmentSample(stix)
                 Text("Embedded text, declared operators, accents and rule decorations", fontSize = 13.sp)
                 ExtendedStructureSample("Lete Sans Math", lete, textProvider)
                 ExtendedStructureSample("STIX Two Math", stix, textProvider)
@@ -126,6 +128,14 @@ private fun PreviewScreen() {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun XeTeXStixAlignmentSample(face: SkiaMathFontFace) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        OperatorSideScriptTier("display · glyph 1647 / 1641", "\\sum_0^1+\\prod_0^1", MathMode.Display, face)
+        OperatorSideScriptTier("inline · glyph 732 / 744", "\\hat{a}+\\bar{a}", MathMode.Inline, face)
     }
 }
 

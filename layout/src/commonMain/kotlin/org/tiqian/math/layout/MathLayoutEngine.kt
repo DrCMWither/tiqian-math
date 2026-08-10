@@ -2,6 +2,7 @@ package org.tiqian.math.layout
 
 import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.MathConstructionKind
+import org.tiqian.math.font.opentype.MathDeviceAdjustment
 import org.tiqian.math.font.opentype.MathGlyphComponent
 import org.tiqian.math.font.opentype.MathHorizontalConstructionRequest
 import org.tiqian.math.font.opentype.MathKernCorner
@@ -1632,13 +1633,17 @@ private class MathLayoutPass(
     ): AccentAttachmentEvidence = try {
         val font = mathFontForFaceOrNull(faceId)
             ?: return AccentAttachmentEvidence(fallbackAdvancePx / 2f, "TextFaceAdvanceCenter")
+        val ignoredDevice = font.topAccentAttachmentDeviceAdjustments[glyphId]
         AccentAttachmentEvidence(
             font.topAccentAttachment(glyphId, fontSizePx, fallbackAdvancePx),
-            if (glyphId in font.topAccentAttachments) {
+            if (ignoredDevice != null) {
+                "XeTeXHarfBuzzZeroPpemMathTopAccentAttachment"
+            } else if (glyphId in font.topAccentAttachments) {
                 "MathTopAccentAttachment"
             } else {
                 "OpenTypeAdvanceCenterFallback"
             },
+            ignoredDevice,
         )
     } catch (failure: OpenTypeMathException) {
         diagnostics += MathDiagnostic(
@@ -1655,7 +1660,11 @@ private class MathLayoutPass(
         alphabetOverride: MathAlphabetOverride?,
     ): LaidNode {
         val nucleusStyle = style.cramped()
+        // XeTeX clean_box uses the exact native glyph bbox for a character nucleus and the
+        // already-completed TeX box for a compound nucleus. Reuse the same placement kernel as
+        // ordinary side scripts so accent clearance and replayed glyph bounds cannot diverge.
         val base = layoutNode(node.base, nucleusStyle, alphabetOverride)
+            .withNativeOutlineBoxForSideScriptPlacement()
         val size = fontSize(style)
         val accentText = scalarString(node.identity.scalar)
         val normal = glyphSource.shapeConstructionBase(accentText, size, node.commandRange)
@@ -1690,6 +1699,11 @@ private class MathLayoutPass(
                     normalGlyphWidthPx = normalWidth,
                     normalGlyphOrthogonalExtentPx = normalMeasuredGlyph.inkBounds.height,
                 ),
+                glyphGrowthExtentPx = { glyphId ->
+                    measureGlyphOutlineForFace(
+                        constructionFaceId, glyphId, size, style, node.commandRange,
+                    ).glyphs.single().inkBounds.width
+                },
             ) { glyphId ->
                 measureGlyphOutlineForFace(
                     constructionFaceId, glyphId, size, style, node.commandRange,
@@ -1771,7 +1785,8 @@ private class MathLayoutPass(
         val accentX = baseAttachment - accentAttachment
         val accentBaseHeight = scale(constants.accentBaseHeight, style)
         val baseInkAscent = (-base.box.inkBounds.top).coerceAtLeast(0f)
-        val accentBaselineY = -(baseInkAscent - accentBaseHeight).coerceAtLeast(0f)
+        val baseCleanAscent = base.box.texCleanBoxMetrics.ascent
+        val accentBaselineY = -(baseCleanAscent - accentBaseHeight).coerceAtLeast(0f)
         val positionedAccent = accentGlyphs.map { glyph ->
             glyph.copy(
                 x = glyph.x + accentX,
@@ -1822,14 +1837,19 @@ private class MathLayoutPass(
             "wide" to node.identity.wide,
             "style" to style,
             "nucleusStyle" to nucleusStyle,
+            "nucleusBoxPolicy" to "XeTeXNativeGlyphOutlineOrCompletedChildBox",
             "baseWidthPx" to base.box.width,
             "baseInkAscentPx" to baseInkAscent,
+            "baseCleanAscentPx" to baseCleanAscent,
             "accentBaseHeightPx" to accentBaseHeight,
+            "verticalPlacementPolicy" to "XeTeXMakeMathAccentMinCleanBoxHeightAndAccentBaseHeight",
             "flattenedAccentBaseHeightPx" to scale(constants.flattenedAccentBaseHeight, style),
             "baseAttachmentPx" to baseAttachment,
             "baseAttachmentPolicy" to baseAttachmentEvidence.policy,
+            "baseAttachmentIgnoredDeviceAdjustment" to baseAttachmentEvidence.ignoredDeviceAdjustment,
             "accentAttachmentPx" to accentAttachment,
             "accentAttachmentPolicy" to accentAttachmentEvidence.policy,
+            "accentAttachmentIgnoredDeviceAdjustment" to accentAttachmentEvidence.ignoredDeviceAdjustment,
             "accentX" to accentX,
             "accentBaselineY" to accentBaselineY,
             "construction" to selected.kind,
@@ -2028,7 +2048,16 @@ private class MathLayoutPass(
         }
 
         val display = style.level == MathStyleLevel.Display
-        val targetHeight = if (display) scale(constants.displayOperatorMinHeight, style) else 0f
+        val normalGlyphExtent = resolved.run.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f
+        // XeTeX make_op uses the larger of DisplayOperatorMinHeight and 5/4 of the
+        // normal native glyph's exact height+depth as the variant-selection target.
+        val displayOperatorMinHeight = if (display) {
+            operatorMathFont.scaleDesignUnits(operatorMathFont.constants.displayOperatorMinHeight, size)
+        } else {
+            0f
+        }
+        val normalGlyphFiveQuarters = if (display) normalGlyphExtent * 5f / 4f else 0f
+        val targetHeight = max(displayOperatorMinHeight, normalGlyphFiveQuarters)
         val construction = if (display) {
             resolved.constructionBaseGlyphId?.let {
                 selectVerticalConstruction(
@@ -2038,6 +2067,7 @@ private class MathLayoutPass(
                     size = size,
                     style = style,
                     range = node.commandRange,
+                    assemblyPolicy = MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
                 )
             }
         } else {
@@ -2050,7 +2080,7 @@ private class MathLayoutPass(
         } else {
             measuredRunBox(resolved.run, node.commandRange, style, size)
         }
-        val axisY = -scale(constants.axisHeight, style)
+        val axisY = -operatorMathFont.scaleDesignUnits(operatorMathFont.constants.axisHeight, size)
         val inkCenterBefore = (rawBox.inkBounds.top + rawBox.inkBounds.bottom) / 2f
         val centerShift = axisY - inkCenterBefore
         val centeredPlacements = rawBox.glyphs.map { placement ->
@@ -2063,20 +2093,11 @@ private class MathLayoutPass(
         val achievedAdvance = construction?.let {
             operatorMathFont.scaleDesignUnits(it.advanceMeasurement, size)
         } ?: rawBox.inkBounds.height
-        if (display && construction == null && achievedAdvance + GEOMETRY_EPSILON_PX < targetHeight) {
-            diagnostics += MathDiagnostic(
-                DiagnosticCode.MissingMathConstruction,
-                "${node.identity.debugName} has no MATH construction covering ${targetHeight}px",
-                node.commandRange,
-            )
-        } else if (display && construction != null && !construction.reachesTarget) {
-            diagnostics += MathDiagnostic(
-                DiagnosticCode.MathVariantTooShort,
-                "${node.identity.debugName} MATH construction does not reach DisplayOperatorMinHeight",
-                node.commandRange,
-                DiagnosticSeverity.Warning,
-            )
-        }
+        // XeTeX exhausts the variant ladder and keeps the last available glyph when the
+        // suggested target is not reached. Unlike radicals and delimiters, this is a complete
+        // operator selection, not a missing rendering capability.
+        val suggestedTargetReached = !display || achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight
+        val exhaustedVariantLadder = display && !suggestedTargetReached
 
         val finalGlyphId = when (construction?.kind) {
             MathConstructionKind.BaseGlyph,
@@ -2089,6 +2110,8 @@ private class MathLayoutPass(
             construction?.kind == MathConstructionKind.Assembly
         ) {
             "GlyphAssembly"
+        } else if (finalGlyphId in operatorMathFont.italicCorrectionDeviceAdjustments) {
+            "XeTeXHarfBuzzZeroPpemMathItalicsCorrection"
         } else {
             "MathItalicsCorrectionInfo"
         }
@@ -2112,23 +2135,35 @@ private class MathLayoutPass(
             "constructionBaseGlyphId" to resolved.constructionBaseGlyphId,
             "glyphIds" to box.glyphs.joinToString(",") { it.glyphId.toString() },
             "construction" to (construction?.kind ?: "BaseGlyph"),
-            "constructionPolicy" to (construction?.constructionPolicy ?: if (assemblyValidation?.valid == false) {
-                "MathMLCore5.3.2FailureAfterInvalidAssembly"
-            } else null),
+            "constructionPolicy" to when {
+                exhaustedVariantLadder && construction != null ->
+                    "XeTeXMakeOpLargestAvailableBelowSuggestedTarget"
+                exhaustedVariantLadder -> "XeTeXMakeOpNormalGlyphAfterExhaustedVariantLadder"
+                else -> construction?.constructionPolicy
+            },
             "assemblyValid" to assemblyValidation?.valid,
             "assemblyInvalidReasons" to assemblyValidation?.invalidReasons,
             "assemblyValidationPolicy" to assemblyValidation?.validationPolicy,
             "assemblySpecificationDivergence" to assemblyValidation?.specificationDivergence,
             "assemblyCheckedConnectionCount" to assemblyValidation?.checkedConnectionCount,
-            "displayOperatorMinHeightPx" to targetHeight,
+            "displayOperatorMinHeightPx" to displayOperatorMinHeight,
+            "normalGlyphExtentPx" to normalGlyphExtent,
+            "normalGlyphFiveQuartersPx" to normalGlyphFiveQuarters,
+            "variantSelectionTargetPx" to targetHeight,
+            "variantSelectionTargetPolicy" to "XeTeXMakeOpMaxDisplayOperatorMinHeightAndFiveQuartersNormalGlyph",
             "achievedAdvancePx" to achievedAdvance,
-            "reachesTarget" to if (display) achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight else true,
+            "reachesTarget" to suggestedTargetReached,
+            "suggestedTargetReached" to suggestedTargetReached,
+            "selectionComplete" to true,
+            "exhaustedVariantLadder" to exhaustedVariantLadder,
             "axisY" to axisY,
             "inkCenterBefore" to inkCenterBefore,
             "centerShiftPx" to centerShift,
             "inkCenterAfter" to (box.inkBounds.top + box.inkBounds.bottom) / 2f,
             "italicCorrectionPx" to italicCorrection,
             "italicCorrectionSource" to italicCorrectionSource,
+            "italicCorrectionIgnoredDeviceAdjustment" to
+                finalGlyphId?.let(operatorMathFont.italicCorrectionDeviceAdjustments::get),
             "limitsPolicy" to node.limitsPolicy,
             "limitsPolicyExplicit" to node.hasExplicitLimitsPolicy,
             "limitsModifierRange" to node.limitsModifierRange,
@@ -2216,7 +2251,7 @@ private class MathLayoutPass(
         faceId: MathFaceId,
     ): MathBox {
         val componentRuns = construction.components.map { component ->
-            component to measureGlyphForFace(faceId, component.glyphId, size, style, node.commandRange)
+            component to measureGlyphOutlineForFace(faceId, component.glyphId, size, style, node.commandRange)
         }
         val placed = placeVerticalConstruction(
             construction = construction,
@@ -4903,6 +4938,7 @@ private class MathLayoutPass(
     private data class AccentAttachmentEvidence(
         val valuePx: Float,
         val policy: String,
+        val ignoredDeviceAdjustment: MathDeviceAdjustment? = null,
     )
 
     private data class MeasurementLayoutNode(

@@ -123,6 +123,14 @@ data class MathGlyphKernInfo(
     }
 }
 
+/** Parsed non-variable OpenType Device table retained as auditable XeTeX evidence. */
+data class MathDeviceAdjustment(
+    val startPpem: Int,
+    val endPpem: Int,
+    val deltaFormat: Int,
+    val deltasPx: List<Int>,
+)
+
 enum class MathConstructionKind {
     BaseGlyph,
     Variant,
@@ -207,14 +215,24 @@ data class OpenTypeMathFont(
     val lineMetrics: OpenTypeLineMetrics,
     val constants: OpenTypeMathConstants,
     val italicCorrections: Map<UShort, Int>,
-    val unsupportedItalicCorrectionAdjustments: Set<UShort>,
+    val italicCorrectionDeviceAdjustments: Map<UShort, MathDeviceAdjustment> = emptyMap(),
+    val unsupportedItalicCorrectionVariationAdjustments: Set<UShort> = emptySet(),
     val extendedShapeGlyphs: Set<UShort>,
     val mathKernInfo: Map<UShort, MathGlyphKernInfo>,
     val verticalConstructions: Map<UShort, MathGlyphConstruction>,
     val topAccentAttachments: Map<UShort, Int> = emptyMap(),
-    val unsupportedTopAccentAttachmentAdjustments: Set<UShort> = emptySet(),
+    val topAccentAttachmentDeviceAdjustments: Map<UShort, MathDeviceAdjustment> = emptyMap(),
+    val unsupportedTopAccentAttachmentVariationAdjustments: Set<UShort> = emptySet(),
     val horizontalConstructions: Map<UShort, MathGlyphConstruction> = emptyMap(),
 ) {
+    /** Compatibility view: only truly unsupported VariationIndex records remain here. */
+    val unsupportedItalicCorrectionAdjustments: Set<UShort>
+        get() = unsupportedItalicCorrectionVariationAdjustments
+
+    /** Compatibility view: only truly unsupported VariationIndex records remain here. */
+    val unsupportedTopAccentAttachmentAdjustments: Set<UShort>
+        get() = unsupportedTopAccentAttachmentVariationAdjustments
+
     val verticalVariants: Map<UShort, List<MathGlyphVariant>>
         get() = verticalConstructions.mapValues { it.value.variants }
 
@@ -226,10 +244,10 @@ data class OpenTypeMathFont(
     fun scaleDesignUnits(value: Float, fontSizePx: Float): Float = value * fontSizePx / unitsPerEm
 
     fun italicCorrection(glyphId: UShort, fontSizePx: Float): Float {
-        if (glyphId in unsupportedItalicCorrectionAdjustments) {
+        if (glyphId in unsupportedItalicCorrectionVariationAdjustments) {
             throw OpenTypeMathException(
                 DiagnosticCode.UnsupportedMathDeviceAdjustment,
-                "MathItalicsCorrectionInfo[$glyphId] requires a device or variation adjustment",
+                "MathItalicsCorrectionInfo[$glyphId] requires an unsupported VariationIndex adjustment",
             )
         }
         return scaleDesignUnits(italicCorrections[glyphId] ?: 0, fontSizePx)
@@ -251,10 +269,10 @@ data class OpenTypeMathFont(
         fontSizePx: Float,
         fallbackAdvancePx: Float,
     ): Float {
-        if (glyphId in unsupportedTopAccentAttachmentAdjustments) {
+        if (glyphId in unsupportedTopAccentAttachmentVariationAdjustments) {
             throw OpenTypeMathException(
                 DiagnosticCode.UnsupportedMathDeviceAdjustment,
-                "MathTopAccentAttachment[$glyphId] requires a device or variation adjustment",
+                "MathTopAccentAttachment[$glyphId] requires an unsupported VariationIndex adjustment",
             )
         }
         return topAccentAttachments[glyphId]?.let { scaleDesignUnits(it, fontSizePx) }
@@ -263,35 +281,49 @@ data class OpenTypeMathFont(
 
     fun horizontalConstruction(
         request: MathHorizontalConstructionRequest,
+        glyphGrowthExtentPx: (UShort) -> Float,
         glyphOrthogonalExtentPx: (UShort) -> Float,
     ): MathVerticalConstruction? {
-        if (request.normalGlyphWidthPx >= request.targetSizePx) {
-            return MathVerticalConstruction(
-                kind = MathConstructionKind.BaseGlyph,
-                components = listOf(MathGlyphComponent(request.baseGlyphId, 0f)),
-                advanceMeasurement = request.normalGlyphWidthPx * unitsPerEm / request.fontSizePx,
-                reachesTarget = true,
-                constructionPolicy = "OpenTypeMathHorizontalNormalGlyphFirst",
-                orthogonalAdvancePx = request.normalGlyphOrthogonalExtentPx,
-            )
-        }
         val construction = horizontalConstructions[request.baseGlyphId] ?: return null
         val target = request.targetSizePx * unitsPerEm / request.fontSizePx
-        construction.variants.firstOrNull { it.advanceMeasurement >= target }?.let { variant ->
+        val firstAtOrAbove = construction.variants.indexOfFirst { it.advanceMeasurement >= target }
+        if (firstAtOrAbove >= 0) {
+            // XeTeX make_math_accent keeps the largest variant whose advance does not exceed
+            // the clean nucleus width. The first wider variant terminates the search without
+            // being selected.
+            val variant = construction.variants.take(firstAtOrAbove + 1)
+                .lastOrNull { it.advanceMeasurement <= target }
+            if (variant == null || variant.glyphId == request.baseGlyphId) {
+                return MathVerticalConstruction(
+                    kind = MathConstructionKind.BaseGlyph,
+                    components = listOf(MathGlyphComponent(request.baseGlyphId, 0f)),
+                    advanceMeasurement = request.normalGlyphWidthPx * unitsPerEm / request.fontSizePx,
+                    reachesTarget = request.normalGlyphWidthPx >= request.targetSizePx,
+                    constructionPolicy = "XeTeXMathAccentNormalGlyphBeforeFirstWiderVariant",
+                    orthogonalAdvancePx = request.normalGlyphOrthogonalExtentPx,
+                )
+            }
             return MathVerticalConstruction(
                 kind = MathConstructionKind.Variant,
                 components = listOf(MathGlyphComponent(variant.glyphId, 0f)),
                 advanceMeasurement = variant.advanceMeasurement.toFloat(),
-                reachesTarget = true,
-                constructionPolicy = "OpenTypeMathHorizontalVariant",
+                reachesTarget = variant.advanceMeasurement >= target,
+                constructionPolicy = "XeTeXMathAccentLargestVariantNotWiderThanNucleus",
                 orthogonalAdvancePx = glyphOrthogonalExtentPx(variant.glyphId),
             )
         }
         val assembly = construction.assembly
         val validation = assembly?.let(::validateAssembly)
         if (assembly != null && validation?.valid == true) {
-            return assemble(assembly, validation, target, glyphOrthogonalExtentPx).copy(
-                constructionPolicy = "MathMLCore5.3.1HorizontalUniformOverlap",
+            return assembleXeTeX(
+                assembly = assembly,
+                validation = validation,
+                target = target,
+                fontSizePx = request.fontSizePx,
+                glyphVerticalExtentPx = glyphGrowthExtentPx,
+                glyphAdvanceWidthPx = glyphOrthogonalExtentPx,
+            ).copy(
+                constructionPolicy = "Tectonic0.17.0XeTeXHorizontalAccentAssemblyStretchGlue",
             )
         }
         val last = construction.variants.lastOrNull() ?: return null
@@ -302,9 +334,9 @@ data class OpenTypeMathFont(
             reachesTarget = last.advanceMeasurement >= target,
             assemblyValidation = validation,
             constructionPolicy = if (validation?.valid == false) {
-                "OpenTypeMathHorizontalLastVariantAfterInvalidAssembly"
+                "XeTeXMathAccentLastVariantAfterInvalidAssembly"
             } else {
-                "OpenTypeMathHorizontalLastVariant"
+                "XeTeXMathAccentLastVariantWithoutAssembly"
             },
             orthogonalAdvancePx = glyphOrthogonalExtentPx(last.glyphId),
         )
@@ -652,12 +684,15 @@ class OpenTypeMathReader {
             lineMetrics = lineMetrics,
             constants = constants,
             italicCorrections = italicCorrections.values,
-            unsupportedItalicCorrectionAdjustments = italicCorrections.unsupportedAdjustments,
+            italicCorrectionDeviceAdjustments = italicCorrections.deviceAdjustments,
+            unsupportedItalicCorrectionVariationAdjustments = italicCorrections.unsupportedVariationAdjustments,
             extendedShapeGlyphs = extendedShapeGlyphs,
             mathKernInfo = mathKernInfo,
             verticalConstructions = verticalConstructions,
             topAccentAttachments = topAccentAttachments.values,
-            unsupportedTopAccentAttachmentAdjustments = topAccentAttachments.unsupportedAdjustments,
+            topAccentAttachmentDeviceAdjustments = topAccentAttachments.deviceAdjustments,
+            unsupportedTopAccentAttachmentVariationAdjustments =
+                topAccentAttachments.unsupportedVariationAdjustments,
             horizontalConstructions = horizontalConstructions,
         )
     }
@@ -743,7 +778,7 @@ class OpenTypeMathReader {
     private fun readItalicCorrections(reader: BigEndianReader, glyphInfoBase: Int): ItalicCorrectionData {
         reader.requireRange(glyphInfoBase, 8)
         val italicOffset = reader.u16(glyphInfoBase)
-        if (italicOffset == 0) return ItalicCorrectionData(emptyMap(), emptySet())
+        if (italicOffset == 0) return ItalicCorrectionData(emptyMap(), emptyMap(), emptySet())
         val italicBase = glyphInfoBase + italicOffset
         reader.requireRange(italicBase, 4)
         val coverageOffset = reader.u16(italicBase)
@@ -751,14 +786,19 @@ class OpenTypeMathReader {
         reader.requireRange(italicBase + 4, count * 4)
         val coverage = readCoverage(reader, italicBase + coverageOffset)
         if (coverage.size != count) malformed("MATH italic coverage count does not match value count")
-        val unsupported = mutableSetOf<UShort>()
+        val devices = mutableMapOf<UShort, MathDeviceAdjustment>()
+        val unsupportedVariations = mutableSetOf<UShort>()
         val values = coverage.mapIndexed { index, glyphId ->
             val record = italicBase + 4 + index * 4
             reader.requireRange(record, 4)
-            if (reader.u16(record + 2) != 0) unsupported += glyphId
+            when (val adjustment = readMathValueAdjustment(reader, italicBase, record, "MathItalicsCorrectionInfo[$glyphId]")) {
+                is ParsedMathValueAdjustment.Device -> devices[glyphId] = adjustment.value
+                ParsedMathValueAdjustment.VariationIndex -> unsupportedVariations += glyphId
+                null -> Unit
+            }
             glyphId to reader.s16(record)
         }.toMap()
-        return ItalicCorrectionData(values, unsupported)
+        return ItalicCorrectionData(values, devices, unsupportedVariations)
     }
 
     private fun readTopAccentAttachments(
@@ -767,7 +807,7 @@ class OpenTypeMathReader {
     ): TopAccentAttachmentData {
         reader.requireRange(glyphInfoBase, 8)
         val offset = reader.u16(glyphInfoBase + 2)
-        if (offset == 0) return TopAccentAttachmentData(emptyMap(), emptySet())
+        if (offset == 0) return TopAccentAttachmentData(emptyMap(), emptyMap(), emptySet())
         val base = glyphInfoBase + offset
         reader.requireRange(base, 4)
         val coverageOffset = reader.u16(base)
@@ -775,13 +815,18 @@ class OpenTypeMathReader {
         reader.requireRange(base + 4, count * 4)
         val coverage = readCoverage(reader, base + coverageOffset)
         if (coverage.size != count) malformed("MATH top accent coverage count does not match value count")
-        val unsupported = mutableSetOf<UShort>()
+        val devices = mutableMapOf<UShort, MathDeviceAdjustment>()
+        val unsupportedVariations = mutableSetOf<UShort>()
         val values = coverage.mapIndexed { index, glyphId ->
             val record = base + 4 + index * 4
-            if (reader.u16(record + 2) != 0) unsupported += glyphId
+            when (val adjustment = readMathValueAdjustment(reader, base, record, "MathTopAccentAttachment[$glyphId]")) {
+                is ParsedMathValueAdjustment.Device -> devices[glyphId] = adjustment.value
+                ParsedMathValueAdjustment.VariationIndex -> unsupportedVariations += glyphId
+                null -> Unit
+            }
             glyphId to reader.s16(record)
         }.toMap()
-        return TopAccentAttachmentData(values, unsupported)
+        return TopAccentAttachmentData(values, devices, unsupportedVariations)
     }
 
     private fun readMathKernInfo(reader: BigEndianReader, glyphInfoBase: Int): Map<UShort, MathGlyphKernInfo> {
@@ -942,17 +987,66 @@ class OpenTypeMathReader {
         return reader.s16(record)
     }
 
+    private fun readMathValueAdjustment(
+        reader: BigEndianReader,
+        parentTableBase: Int,
+        record: Int,
+        context: String,
+    ): ParsedMathValueAdjustment? {
+        reader.requireRange(record, 4)
+        val offset = reader.u16(record + 2)
+        if (offset == 0) return null
+        val adjustmentBase = parentTableBase + offset
+        reader.requireRange(adjustmentBase, 6)
+        val startOrOuter = reader.u16(adjustmentBase)
+        val endOrInner = reader.u16(adjustmentBase + 2)
+        return when (val format = reader.u16(adjustmentBase + 4)) {
+            1, 2, 3 -> {
+                if (endOrInner < startOrOuter) malformed("$context Device table has a reversed ppem range")
+                val bits = when (format) {
+                    1 -> 2
+                    2 -> 4
+                    else -> 8
+                }
+                val count = endOrInner - startOrOuter + 1
+                val wordCount = (count * bits + 15) / 16
+                reader.requireRange(adjustmentBase + 6, wordCount * 2)
+                val mask = (1 shl bits) - 1
+                val signBit = 1 shl (bits - 1)
+                val deltas = List(count) { index ->
+                    val bitOffset = index * bits
+                    val word = reader.u16(adjustmentBase + 6 + (bitOffset / 16) * 2)
+                    val shift = 16 - bits - bitOffset % 16
+                    val raw = (word ushr shift) and mask
+                    if (raw and signBit != 0) raw - (1 shl bits) else raw
+                }
+                ParsedMathValueAdjustment.Device(
+                    MathDeviceAdjustment(startOrOuter, endOrInner, format, deltas),
+                )
+            }
+            0x8000 -> ParsedMathValueAdjustment.VariationIndex
+            else -> malformed("$context uses reserved Device/VariationIndex format $format")
+        }
+    }
+
     private data class TableRecord(val offset: Int, val length: Int)
 
     private data class TopAccentAttachmentData(
         val values: Map<UShort, Int>,
-        val unsupportedAdjustments: Set<UShort>,
+        val deviceAdjustments: Map<UShort, MathDeviceAdjustment>,
+        val unsupportedVariationAdjustments: Set<UShort>,
     )
 
     private data class ItalicCorrectionData(
         val values: Map<UShort, Int>,
-        val unsupportedAdjustments: Set<UShort>,
+        val deviceAdjustments: Map<UShort, MathDeviceAdjustment>,
+        val unsupportedVariationAdjustments: Set<UShort>,
     )
+
+    private sealed interface ParsedMathValueAdjustment {
+        data class Device(val value: MathDeviceAdjustment) : ParsedMathValueAdjustment
+        data object VariationIndex : ParsedMathValueAdjustment
+    }
 
     private companion object {
         const val MATH_VALUE_COUNT = 51

@@ -1,0 +1,22 @@
+\documentclass{article}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=200
+\showboxdepth=200
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-STIX-XETEX-CAPABILITY-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-STIX-XETEX-CAPABILITY-ORACLE-#1-END}%
+}
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/]{STIXTwoMath-Regular.otf}
+\traceformula{DISPLAY-SUM}{\displaystyle\sum_0^1}
+\traceformula{DISPLAY-PROD}{\displaystyle\prod_0^1}
+\traceformula{HAT-A}{\hat{a}}
+\traceformula{BAR-A}{\bar{a}}
+\end{document}
