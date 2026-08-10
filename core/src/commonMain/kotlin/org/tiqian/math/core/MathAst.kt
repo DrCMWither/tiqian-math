@@ -25,6 +25,22 @@ data class MathGroup(
     override val range: SourceRange,
 ) : MathNode
 
+/** TeX/xcolor declaration: affects subsequent atoms in the current math list only. */
+data class MathColorDeclaration(
+    val sourceName: String,
+    val color: MathPaintColor,
+    val commandRange: SourceRange,
+    val nameRange: SourceRange,
+    override val range: SourceRange,
+) : MathNode
+
+/** amsmath `\\boxed`: a display-style math field inside a TeX `\\fbox` frame. */
+data class MathBoxed(
+    val body: MathNode,
+    val commandRange: SourceRange,
+    override val range: SourceRange,
+) : MathNode
+
 /** TeX math symbol families. These are semantic families, not fallback font names. */
 enum class MathFamily {
     Operators,

@@ -393,6 +393,35 @@ private class ParserState(
                 range = token.range.cover(argument.totalRange),
             )
         }
+        if (token.text == "color") {
+            val argument = parseTextArgument(token, "color name")
+            val sourceName = argument.segments.joinToString("") { it.text }.trim()
+            val color = namedPaintColors[sourceName.lowercase()]
+            val range = token.range.cover(argument.totalRange)
+            if (color == null) {
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.UnknownColorName,
+                    "Unknown xcolor name '$sourceName'",
+                    argument.contentRange,
+                )
+                return MathErrorNode(sourceSlice(range), range)
+            }
+            return MathColorDeclaration(
+                sourceName = sourceName,
+                color = color,
+                commandRange = token.range,
+                nameRange = argument.contentRange,
+                range = range,
+            )
+        }
+        if (token.text == "boxed") {
+            val body = parseRequiredArgument(token, "boxed math field")
+            return MathBoxed(
+                body = body,
+                commandRange = token.range,
+                range = token.range.cover(body.range),
+            )
+        }
         if (token.text == "operatorname") {
             skipIgnored()
             val starred = if (peek().kind == MathTokenKind.Symbol && peek().text == "*") advance() else null
@@ -1554,7 +1583,31 @@ private class ParserState(
 
         val explicitlyUnsupportedCommands = setOf(
             "limits", "nolimits",
-            "matrix", "cases", "newcommand", "def", "color",
+            "matrix", "cases", "newcommand", "def",
+        )
+
+        /** xcolor's always-available names plus the corpus-used dvips `RoyalBlue` alias. */
+        val namedPaintColors = mapOf(
+            "black" to MathPaintColor(0, 0, 0),
+            "darkgray" to MathPaintColor(64, 64, 64),
+            "gray" to MathPaintColor(128, 128, 128),
+            "lightgray" to MathPaintColor(191, 191, 191),
+            "white" to MathPaintColor(255, 255, 255),
+            "red" to MathPaintColor(255, 0, 0),
+            "green" to MathPaintColor(0, 255, 0),
+            "blue" to MathPaintColor(0, 0, 255),
+            "cyan" to MathPaintColor(0, 255, 255),
+            "magenta" to MathPaintColor(255, 0, 255),
+            "yellow" to MathPaintColor(255, 255, 0),
+            "brown" to MathPaintColor(191, 128, 64),
+            "lime" to MathPaintColor(191, 255, 0),
+            "olive" to MathPaintColor(128, 128, 0),
+            "orange" to MathPaintColor(255, 128, 0),
+            "pink" to MathPaintColor(255, 191, 191),
+            "purple" to MathPaintColor(191, 0, 64),
+            "teal" to MathPaintColor(0, 128, 128),
+            "violet" to MathPaintColor(128, 0, 128),
+            "royalblue" to MathPaintColor(0, 128, 255),
         )
 
         val tableEnvironments = MathTableEnvironment.entries.associateBy { it.sourceName }

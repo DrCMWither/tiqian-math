@@ -182,6 +182,7 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.UnclosedExtensibleArrowBelow,
         DiagnosticCode.InvalidContinuedFractionAlignment,
         DiagnosticCode.UnclosedContinuedFractionAlignment,
+        DiagnosticCode.UnknownColorName,
         DiagnosticCode.MisplacedLimitsModifier,
         DiagnosticCode.MissingDelimiterAfterLeft,
         DiagnosticCode.MissingDelimiterAfterMiddle,

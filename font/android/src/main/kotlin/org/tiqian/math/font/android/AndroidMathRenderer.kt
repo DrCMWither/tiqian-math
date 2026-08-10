@@ -3,6 +3,7 @@ package org.tiqian.math.font.android
 import android.graphics.Canvas
 import android.graphics.Paint
 import org.tiqian.math.core.MathBox
+import org.tiqian.math.core.MathPaintColor
 import org.tiqian.math.core.MathReplayFaceOwnership
 
 /** Replays one immutable layout box without remeasuring or resolving any glyph. */
@@ -31,9 +32,11 @@ class AndroidMathRenderer(
             val path = replayFace.glyphPath(glyph.glyphId, glyph.fontSizePx)
                 ?: error("Glyph ${glyph.glyphId} passed Android preflight without a replayable path")
             path.offset(originX + glyph.x, baselineFromTop + glyph.baselineY)
+            paint.color = resolvedMathPaintArgb(glyph.paintColor, color)
             canvas.drawPath(path, paint)
         }
         box.rules.filter { it.constructionGroupId == null }.forEach { rule ->
+            paint.color = resolvedMathPaintArgb(rule.paintColor, color)
             canvas.drawRect(
                 originX + rule.left,
                 baselineFromTop + rule.top,
@@ -60,6 +63,7 @@ class AndroidMathRenderer(
                     val saveCount = canvas.save()
                     try {
                         canvas.translate(originX, baselineFromTop)
+                        paint.color = resolvedMathPaintArgb(group.paintColor, color)
                         canvas.drawPath(construction.path, paint)
                     } finally {
                         canvas.restoreToCount(saveCount)
@@ -71,3 +75,6 @@ class AndroidMathRenderer(
         }
     }
 }
+
+private fun resolvedMathPaintArgb(explicit: MathPaintColor?, formulaArgb: Int): Int =
+    explicit?.modulatedArgb(formulaArgb) ?: formulaArgb

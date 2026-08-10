@@ -18,6 +18,7 @@ import org.tiqian.math.core.MathFontClass
 import org.tiqian.math.core.MathFontFaceSpec
 import org.tiqian.math.core.MathFontFamilySpec
 import org.tiqian.math.core.MathFontWeight
+import org.tiqian.math.core.MathPaintColor
 import org.tiqian.math.core.MathReplayFaceOwnership
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.skia.MathConstructionOutlineResult
@@ -90,10 +91,9 @@ private fun drawSkiaMathPlan(
     color: Int,
 ) {
     val paint = Paint().apply { this.color = color }
-    val builder = TextBlobBuilder()
     val fonts = mutableMapOf<Pair<MathFaceId, Float>, Font>()
     try {
-        plan.boxes.flatMap { positioned ->
+        val replayGlyphs = plan.boxes.flatMap { positioned ->
             positioned.box.glyphs.filter { it.constructionGroupId == null }.map { glyph ->
                 Triple(
                     glyph,
@@ -101,23 +101,51 @@ private fun drawSkiaMathPlan(
                     positioned.baselineFromTop + glyph.baselineY,
                 )
             }
-        }.groupBy { it.first.faceId to it.first.fontSizePx }.forEach { (key, glyphs) ->
-            val (faceId, size) = key
+        }
+        var glyphIndex = 0
+        while (glyphIndex < replayGlyphs.size) {
+            val first = replayGlyphs[glyphIndex]
+            val groupKey = Triple(
+                first.first.faceId,
+                first.first.fontSizePx,
+                resolvedMathPaintArgb(first.first.paintColor, color),
+            )
+            var groupEnd = glyphIndex + 1
+            while (groupEnd < replayGlyphs.size) {
+                val candidate = replayGlyphs[groupEnd].first
+                val candidateKey = Triple(
+                    candidate.faceId,
+                    candidate.fontSizePx,
+                    resolvedMathPaintArgb(candidate.paintColor, color),
+                )
+                if (candidateKey != groupKey) break
+                groupEnd += 1
+            }
+            val glyphs = replayGlyphs.subList(glyphIndex, groupEnd)
+            val (faceId, size, groupColor) = groupKey
+            val fontKey = faceId to size
             check(face.replayFaceOwnership(faceId) != MathReplayFaceOwnership.Conflict) {
                 "Replay face ownership conflict for $faceId"
             }
             val replayFace = checkNotNull(face.replayFace(faceId)) { "No Skia replay face $faceId" }
-            val font = fonts.getOrPut(key) { replayFace.font(size) }
-            builder.appendRunPos(
-                font,
-                glyphs.map { it.first.glyphId.toShort() }.toShortArray(),
-                glyphs.map { Point(it.second, it.third) }.toTypedArray(),
-            )
+            val font = fonts.getOrPut(fontKey) { replayFace.font(size) }
+            TextBlobBuilder().use { builder ->
+                builder.appendRunPos(
+                    font,
+                    glyphs.map { it.first.glyphId.toShort() }.toShortArray(),
+                    glyphs.map { Point(it.second, it.third) }.toTypedArray(),
+                )
+                builder.build()?.use { blob ->
+                    paint.color = groupColor
+                    canvas.drawTextBlob(blob, 0f, 0f, paint)
+                }
+            }
+            glyphIndex = groupEnd
         }
-        builder.build()?.use { blob -> canvas.drawTextBlob(blob, 0f, 0f, paint) }
 
         plan.boxes.forEach { positioned ->
             positioned.box.rules.filter { it.constructionGroupId == null }.forEach { rule ->
+                paint.color = resolvedMathPaintArgb(rule.paintColor, color)
                 canvas.drawRect(
                     Rect.makeLTRB(
                         positioned.x + rule.left,
@@ -145,6 +173,7 @@ private fun drawSkiaMathPlan(
                         val saveCount = canvas.save()
                         try {
                             canvas.translate(positioned.x, positioned.baselineFromTop)
+                            paint.color = resolvedMathPaintArgb(group.paintColor, color)
                             canvas.drawPath(outline.path, paint)
                         } finally {
                             canvas.restoreToCount(saveCount)
@@ -157,7 +186,9 @@ private fun drawSkiaMathPlan(
         }
     } finally {
         fonts.values.forEach(Font::close)
-        builder.close()
         paint.close()
     }
 }
+
+private fun resolvedMathPaintArgb(explicit: MathPaintColor?, formulaArgb: Int): Int =
+    explicit?.modulatedArgb(formulaArgb) ?: formulaArgb

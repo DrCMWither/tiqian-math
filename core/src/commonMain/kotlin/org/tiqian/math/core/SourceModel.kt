@@ -50,6 +50,7 @@ enum class DiagnosticCode {
     UnclosedExtensibleArrowBelow,
     InvalidContinuedFractionAlignment,
     UnclosedContinuedFractionAlignment,
+    UnknownColorName,
     InvalidExtensibleArrowFill,
     MisplacedLimitsModifier,
     UnknownCommand,

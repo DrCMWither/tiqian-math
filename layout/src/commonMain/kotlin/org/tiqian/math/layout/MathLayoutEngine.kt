@@ -43,6 +43,10 @@ data class MathLayoutOptions(
     val textLocale: String? = null,
     /** TeX `\arraycolsep` for each side of a matrix/array cell; null is 0.5em. */
     val arrayColumnSeparationPx: Float? = null,
+    /** LaTeX `\fboxsep`; null is the standard 3pt converted to CSS pixels. */
+    val fboxSeparationPx: Float? = null,
+    /** LaTeX `\fboxrule`; null is the standard 0.4pt converted to CSS pixels. */
+    val fboxRuleThicknessPx: Float? = null,
 ) {
     init {
         require(fontSizePx > 0f) { "math font size must be positive" }
@@ -58,6 +62,12 @@ data class MathLayoutOptions(
         }
         require(arrayColumnSeparationPx == null || arrayColumnSeparationPx >= 0f) {
             "array column separation must not be negative"
+        }
+        require(fboxSeparationPx == null || fboxSeparationPx >= 0f) {
+            "fbox separation must not be negative"
+        }
+        require(fboxRuleThicknessPx == null || fboxRuleThicknessPx >= 0f) {
+            "fbox rule thickness must not be negative"
         }
     }
 }
@@ -118,6 +128,8 @@ private class MathLayoutPass(
     private var delimiterShortfallPx: Float = 12f
     private var textLocale: String? = null
     private var explicitArrayColumnSeparationPx: Float? = null
+    private var fboxSeparationPx: Float = DEFAULT_FBOX_SEPARATION_PT * TEX_POINT_TO_PX
+    private var fboxRuleThicknessPx: Float = DEFAULT_FBOX_RULE_THICKNESS_PT * TEX_POINT_TO_PX
     private var formulaMode: MathMode = MathMode.Inline
     private var nextConstructionPaintGroupId: Int = 1
 
@@ -199,6 +211,8 @@ private class MathLayoutPass(
             ?: options.fontSizePx * DEFAULT_DELIMITER_SHORTFALL_EM
         textLocale = options.textLocale
         explicitArrayColumnSeparationPx = options.arrayColumnSeparationPx
+        fboxSeparationPx = options.fboxSeparationPx ?: DEFAULT_FBOX_SEPARATION_PT * TEX_POINT_TO_PX
+        fboxRuleThicknessPx = options.fboxRuleThicknessPx ?: DEFAULT_FBOX_RULE_THICKNESS_PT * TEX_POINT_TO_PX
         diagnostics += parsed.diagnostics
         val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
         val horizontal = layoutList(parsed.root, initialStyle)
@@ -282,6 +296,7 @@ private class MathLayoutPass(
     ): LaidNode = when (node) {
         is MathList -> layoutList(node, style, alphabetOverride).laid
         is MathGroup -> layoutGroup(node, style, alphabetOverride)
+        is MathBoxed -> layoutBoxed(node, style, alphabetOverride)
         is MathSymbol -> layoutSymbol(node, style, alphabetOverride)
         is MathOperator -> layoutOperator(node, style, alphabetOverride)
         is MathOperatorName -> layoutOperatorName(node, style, alphabetOverride)
@@ -324,6 +339,14 @@ private class MathLayoutPass(
             ScriptBaseKind.CompoundBox,
         )
         is MathStyleDeclaration -> LaidNode(
+            node,
+            emptyBox(node.range),
+            MathAtomClass.Ordinary,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
+        is MathColorDeclaration -> LaidNode(
             node,
             emptyBox(node.range),
             MathAtomClass.Ordinary,
@@ -818,6 +841,70 @@ private class MathLayoutPass(
         )
     }
 
+    private fun layoutBoxed(
+        node: MathBoxed,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val contentStyle = styleForLevel(MathStyleLevel.Display)
+        val content = layoutNode(node.body, contentStyle, alphabetOverride).completedTeXMathField().box
+        val inset = fboxSeparationPx + fboxRuleThicknessPx
+        val width = content.width + 2f * inset
+        val ascent = content.ascent + inset
+        val descent = content.descent + inset
+        val shiftedContent = content.translated(inset, 0f)
+        val rules = listOf(
+            MathRulePlacement(0f, -ascent, width, -ascent + fboxRuleThicknessPx, node.commandRange),
+            MathRulePlacement(0f, descent - fboxRuleThicknessPx, width, descent, node.commandRange),
+            MathRulePlacement(0f, -ascent, fboxRuleThicknessPx, descent, node.commandRange),
+            MathRulePlacement(width - fboxRuleThicknessPx, -ascent, width, descent, node.commandRange),
+        )
+        val painted = geometryExtents(
+            width = width,
+            glyphs = shiftedContent.glyphs,
+            rules = shiftedContent.rules + rules,
+            range = node.range,
+            constructionPaintGroups = shiftedContent.constructionPaintGroups,
+        )
+        val box = painted.copy(
+            ascent = ascent,
+            descent = descent,
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = content.texCleanBoxMetrics.ascent + inset,
+                descent = content.texCleanBoxMetrics.descent + inset,
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = content.texCleanBoxMetrics.evidence +
+                    MathTeXCleanBoxEvidence.CompletedChildBox + MathTeXCleanBoxEvidence.RuleGeometry,
+            ),
+        )
+        decision(
+            "AmsmathBoxedNoad",
+            node.range,
+            "commandRange" to node.commandRange,
+            "outerStyle" to style,
+            "contentStyle" to contentStyle,
+            "fboxSeparationPx" to fboxSeparationPx,
+            "fboxRuleThicknessPx" to fboxRuleThicknessPx,
+            "contentWidthPx" to content.width,
+            "contentAscentPx" to content.ascent,
+            "contentDescentPx" to content.descent,
+            "logicalWidthPx" to width,
+            "logicalAscentPx" to ascent,
+            "logicalDescentPx" to descent,
+            "atomClass" to MathAtomClass.Ordinary,
+            "scriptBaseKind" to ScriptBaseKind.CompoundBox,
+            "policy" to "AmsmathFboxDisplayStyleWithTeXFboxsepAndFboxrule",
+        )
+        return LaidNode(
+            node = node,
+            box = box,
+            atomClass = MathAtomClass.Ordinary,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
     private fun layoutDelimited(
         node: MathDelimited,
         style: MathStyle,
@@ -851,6 +938,9 @@ private class MathLayoutPass(
         val segmentLayouts = segments.map { segment ->
             layoutList(segment, style, alphabetOverride)
         }
+        val segmentTrailingPaintColors = segments.map { segment ->
+            segment.children.filterIsInstance<MathColorDeclaration>().lastOrNull()?.color
+        }
         val innerCleanAscent = segmentLayouts.maxOfOrNull { it.laid.box.texCleanBoxMetrics.ascent } ?: 0f
         val innerCleanDescent = segmentLayouts.maxOfOrNull { it.laid.box.texCleanBoxMetrics.descent } ?: 0f
         val delimiterSize = fontSize(style)
@@ -874,8 +964,14 @@ private class MathLayoutPass(
         )
 
         val left = layoutDelimiter(node.left, style, targetEvidence)
-        val middleLayouts = middles.map { layoutDelimiter(it.delimiter, style, targetEvidence) }
-        val right = layoutDelimiter(node.right, style, targetEvidence)
+        val middleLayouts = middles.mapIndexed { index, middle ->
+            layoutDelimiter(middle.delimiter, style, targetEvidence).let { box ->
+                segmentTrailingPaintColors[index]?.let(box::withInheritedPaintColor) ?: box
+            }
+        }
+        val right = layoutDelimiter(node.right, style, targetEvidence).let { box ->
+            segmentTrailingPaintColors.lastOrNull()?.let(box::withInheritedPaintColor) ?: box
+        }
         val delimiterBoxes = listOf(left) + middleLayouts + right
         val completedAscent = maxOf(
             innerCleanAscent,
@@ -940,6 +1036,7 @@ private class MathLayoutPass(
             "groupBreakPolicy" to "UnbreakableContentDrivenFencedInnerNoad",
             "internalBreaksExported" to false,
             "packingPolicy" to "TeXLeftMiddleRightNoInternalMathGlue",
+            "delimiterPaintStatePolicy" to "XeTeXColorStateCoversFollowingMiddleOrRightDelimiterOnly",
             "completedBoxPolicy" to "XeTeXCompletedDelimiterNoadMaxOfInnerCleanAndDelimiterLogicalExtents",
             "completedLogicalAscentPx" to completedAscent,
             "completedLogicalDescentPx" to completedDescent,
@@ -4839,6 +4936,7 @@ private class MathLayoutPass(
     ): List<PendingHorizontalItem> {
         var currentStyle = initialStyle
         var currentAlphabetOverride = alphabetOverride
+        var currentPaintColor: MathPaintColor? = null
         return buildList {
             list.children.forEach { child ->
                 if (child is MathStyleDeclaration) {
@@ -4861,8 +4959,21 @@ private class MathLayoutPass(
                         "listRange" to "${list.range.start}..${list.range.endExclusive}",
                         "policy" to "LegacyTeXListDeclaration",
                     )
+                } else if (child is MathColorDeclaration) {
+                    currentPaintColor = child.color
+                    decision(
+                        "XColorMathDeclaration",
+                        child.range,
+                        "sourceName" to child.sourceName,
+                        "commandRange" to child.commandRange,
+                        "nameRange" to child.nameRange,
+                        "resolvedArgb" to child.color.argb.toUInt().toString(16).padStart(8, '0'),
+                        "listRange" to "${list.range.start}..${list.range.endExclusive}",
+                        "scopePolicy" to "TeXDeclarationUntilCurrentMathListGroupEnd",
+                        "resolutionPolicy" to "XColorBaseNamesPlusCaseInsensitiveDvipsRoyalBlueCompatibility",
+                    )
                 } else {
-                    addAll(flattenPendingHorizontal(child, currentStyle, currentAlphabetOverride))
+                    addAll(flattenPendingHorizontal(child, currentStyle, currentAlphabetOverride, currentPaintColor))
                 }
             }
         }
@@ -4872,6 +4983,7 @@ private class MathLayoutPass(
         node: MathNode,
         style: MathStyle,
         alphabetOverride: MathAlphabetOverride?,
+        paintColor: MathPaintColor?,
     ): List<PendingHorizontalItem> = when (node) {
         is MathAlphabetScope -> {
             val override = MathAlphabetOverride(node.family, node.alphabet)
@@ -4883,12 +4995,16 @@ private class MathLayoutPass(
                 "appliesTo" to MathFamilyBinding.Variable,
             )
             when (val body = node.body) {
-                is MathGroup -> flattenPendingListChildren(body.body, style, override)
-                is MathList -> flattenPendingListChildren(body, style, override)
-                else -> listOf(PendingHorizontalItem(body, style, override))
+                is MathGroup -> flattenPendingListChildren(body.body, style, override).map {
+                    it.copy(paintColor = it.paintColor ?: paintColor)
+                }
+                is MathList -> flattenPendingListChildren(body, style, override).map {
+                    it.copy(paintColor = it.paintColor ?: paintColor)
+                }
+                else -> listOf(PendingHorizontalItem(body, style, override, paintColor))
             }
         }
-        else -> listOf(PendingHorizontalItem(node, style, alphabetOverride))
+        else -> listOf(PendingHorizontalItem(node, style, alphabetOverride, paintColor))
     }
 
     private fun layoutPendingItems(pending: List<PendingHorizontalItem>): List<HorizontalItem> {
@@ -4905,7 +5021,11 @@ private class MathLayoutPass(
             while (endExclusive < pending.size) {
                 val candidate = pending[endExclusive]
                 val symbol = candidate.node as? MathSymbol ?: break
-                if (symbol.atomClass != MathAtomClass.Ordinary || candidate.style != first.style) break
+                if (
+                    symbol.atomClass != MathAtomClass.Ordinary ||
+                    candidate.style != first.style ||
+                    candidate.paintColor != first.paintColor
+                ) break
                 val candidateRequest = symbolRequest(symbol, candidate.style, candidate.alphabetOverride)
                 if (candidateRequest.family != request.family || candidateRequest.alphabet != request.alphabet) break
                 endExclusive += 1
@@ -4929,7 +5049,9 @@ private class MathLayoutPass(
 
     private fun PendingHorizontalItem.layoutIndividually(): HorizontalItem = HorizontalItem(
         node = node,
-        laid = layoutNode(node, style, alphabetOverride),
+        laid = layoutNode(node, style, alphabetOverride).let { laid ->
+            if (paintColor == null) laid else laid.copy(box = laid.box.withInheritedPaintColor(paintColor))
+        },
         glueBefore = MathGlueAdjustment.Zero,
         atomClass = MathAtomClass.Ordinary,
         participatesInNoadSpacing = node !is MathExplicitSpace,
@@ -5365,6 +5487,7 @@ private class MathLayoutPass(
         val node: MathNode,
         val style: MathStyle,
         val alphabetOverride: MathAlphabetOverride?,
+        val paintColor: MathPaintColor?,
     )
 
     private data class HorizontalLayout(
@@ -5412,6 +5535,8 @@ private class MathLayoutPass(
         const val TEX_POINT_TO_PX = CSS_PIXELS_PER_INCH / TEX_POINTS_PER_INCH
         const val AMSMATH_BIG_SIZE_SCALE = 1.2f
         const val DEFAULT_SCRIPT_SPACE_PT = 0.5f
+        const val DEFAULT_FBOX_SEPARATION_PT = 3f
+        const val DEFAULT_FBOX_RULE_THICKNESS_PT = 0.4f
         const val BIG_POINT_TO_PX = CSS_PIXELS_PER_INCH / BIG_POINTS_PER_INCH
 
         val binaryLeftCanceller = setOf(
@@ -5493,6 +5618,19 @@ private fun MathBox.translated(dx: Float, dy: Float): MathBox = copy(
             top = rule.top + dy,
             bottom = rule.bottom + dy,
         )
+    },
+)
+
+/** Applies a surrounding color declaration without overwriting a nested declaration. */
+private fun MathBox.withInheritedPaintColor(color: MathPaintColor): MathBox = copy(
+    glyphs = glyphs.map { glyph ->
+        if (glyph.paintColor == null) glyph.copy(paintColor = color) else glyph
+    },
+    rules = rules.map { rule ->
+        if (rule.paintColor == null) rule.copy(paintColor = color) else rule
+    },
+    constructionPaintGroups = constructionPaintGroups.map { group ->
+        if (group.paintColor == null) group.copy(paintColor = color) else group
     },
 )
 

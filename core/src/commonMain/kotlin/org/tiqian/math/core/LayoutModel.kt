@@ -17,6 +17,28 @@ data class MathRect(
     )
 }
 
+/** Renderer-independent sRGB paint evidence retained by the immutable layout result. */
+data class MathPaintColor(
+    val red: Int,
+    val green: Int,
+    val blue: Int,
+    val alpha: Int = 255,
+) {
+    init {
+        require(red in 0..255 && green in 0..255 && blue in 0..255 && alpha in 0..255)
+    }
+
+    val argb: Int get() =
+        (alpha shl 24) or (red shl 16) or (green shl 8) or blue
+
+    /** Applies the host formula alpha without replacing this explicit TeX color's RGB. */
+    fun modulatedArgb(formulaArgb: Int): Int {
+        val formulaAlpha = formulaArgb ushr 24 and 0xff
+        val resolvedAlpha = (alpha * formulaAlpha + 127) / 255
+        return (resolvedAlpha shl 24) or (red shl 16) or (green shl 8) or blue
+    }
+}
+
 data class MathGlyphPlacement(
     val glyphId: UShort,
     val x: Float,
@@ -37,6 +59,8 @@ data class MathGlyphPlacement(
     val fallbackReason: MathFontFallbackReason? = MathFontFallbackReason.RequestedFace,
     /** Present only for glyphs measured by a host text provider. */
     val hostTextDecision: MathHostTextFaceDecision? = null,
+    /** Null inherits the host formula color; non-null is an explicit TeX color declaration. */
+    val paintColor: MathPaintColor? = null,
 )
 
 data class MathRulePlacement(
@@ -47,6 +71,7 @@ data class MathRulePlacement(
     val sourceRange: SourceRange,
     /** Non-null when this rule must be painted with its attached construction outline. */
     val constructionGroupId: Int? = null,
+    val paintColor: MathPaintColor? = null,
 )
 
 enum class MathConstructionPaintKind {
@@ -75,6 +100,7 @@ data class MathConstructionPaintGroup(
     val sourceRange: SourceRange,
     val outlinePolicy: MathConstructionOutlinePolicy,
     val faceId: MathFaceId = MathFaceId.LegacySingleFace,
+    val paintColor: MathPaintColor? = null,
 )
 
 enum class MathTeXCleanBoxPolicy {
