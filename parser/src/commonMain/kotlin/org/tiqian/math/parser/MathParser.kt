@@ -178,6 +178,16 @@ private class ParserState(
                         limitsModifierRange = marker.range,
                         range = base.range.cover(marker.range),
                     )
+                    is MathOperatorNoad -> base.copy(
+                        limitsPolicy = policy,
+                        limitsModifierRange = marker.range,
+                        range = base.range.cover(marker.range),
+                    )
+                    is MathBraceNoad -> base.copy(
+                        limitsPolicy = policy,
+                        limitsModifierRange = marker.range,
+                        range = base.range.cover(marker.range),
+                    )
                     else -> null
                 }
             } else {
@@ -397,9 +407,27 @@ private class ParserState(
                 range = token.range.cover(starred?.range ?: token.range).cover(argument.totalRange),
             )
         }
+        if (token.text == "mathop") {
+            val nucleus = parseRequiredArgument(token, "operator nucleus")
+            return MathOperatorNoad(
+                nucleus = nucleus,
+                limitsPolicy = MathLimitsPolicy.Auto,
+                commandRange = token.range,
+                range = token.range.cover(nucleus.range),
+            )
+        }
         accentCommands[token.text]?.let { identity ->
             val argument = parseRequiredArgument(token, "accent base")
             return MathAccent(identity, token.range, argument, token.range.cover(argument.range))
+        }
+        if (token.text == "overbrace" || token.text == "underbrace") {
+            val base = parseRequiredArgument(token, "brace base")
+            return MathBraceNoad(
+                kind = if (token.text == "overbrace") MathBraceKind.Over else MathBraceKind.Under,
+                base = base,
+                commandRange = token.range,
+                range = token.range.cover(base.range),
+            )
         }
         ruleDecorationCommands[token.text]?.let { kind ->
             val argument = parseRequiredArgument(token, "rule decoration base")
@@ -467,15 +495,33 @@ private class ParserState(
                 range = token.range,
             )
         }
-        if (token.text == "frac" || token.text == "binom") {
+        if (token.text == "frac" || token.text == "binom" || token.text == "dfrac" || token.text == "cfrac") {
+            val continuedAlignment = if (token.text == "cfrac") parseContinuedFractionAlignment() else null
             val numerator = parseRequiredArgument(token, "numerator")
             val denominator = parseRequiredArgument(token, "denominator")
+            val origin = when (token.text) {
+                "binom" -> MathFractionOrigin.Binomial
+                "dfrac" -> MathFractionOrigin.DisplayFraction
+                "cfrac" -> MathFractionOrigin.ContinuedFraction
+                else -> MathFractionOrigin.Fraction
+            }
             return MathFraction(
                 numerator = numerator,
                 denominator = denominator,
-                kind = if (token.text == "frac") FractionKind.Barred else FractionKind.Ruleless,
-                hasParentheses = token.text == "binom",
+                kind = if (origin == MathFractionOrigin.Binomial) FractionKind.Ruleless else FractionKind.Barred,
+                hasParentheses = origin == MathFractionOrigin.Binomial,
                 range = token.range.cover(numerator.range).cover(denominator.range),
+                origin = origin,
+                styleOverride = if (origin == MathFractionOrigin.DisplayFraction || origin == MathFractionOrigin.ContinuedFraction) {
+                    MathStyleLevel.Display
+                } else {
+                    null
+                },
+                numeratorAlignment = continuedAlignment?.alignment ?: MathFractionAlignment.Center,
+                numeratorStrut = origin == MathFractionOrigin.ContinuedFraction,
+                retainRightNullDelimiterSpace = origin != MathFractionOrigin.ContinuedFraction,
+                commandRange = token.range,
+                alignmentRange = continuedAlignment?.range,
             )
         }
         if (token.text == "sqrt") {
@@ -1265,6 +1311,46 @@ private class ParserState(
         )
     }
 
+    private fun parseContinuedFractionAlignment(): ParsedFractionAlignment? {
+        skipIgnored()
+        val opening = peek()
+        if (opening.kind != MathTokenKind.Symbol || opening.text != "[") return null
+        advance()
+
+        skipIgnored()
+        val valueToken = peek()
+        val alignment = if (valueToken.kind == MathTokenKind.Symbol && valueToken.text in setOf("l", "c", "r")) {
+            advance()
+            when (valueToken.text) {
+                "l" -> MathFractionAlignment.Left
+                "r" -> MathFractionAlignment.Right
+                else -> MathFractionAlignment.Center
+            }
+        } else {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.InvalidContinuedFractionAlignment,
+                "Continued-fraction alignment must be l, c, or r",
+                valueToken.range,
+            )
+            if (valueToken.kind != MathTokenKind.End) advance()
+            MathFractionAlignment.Center
+        }
+
+        skipIgnored()
+        val closing = peek()
+        val range = if (closing.kind == MathTokenKind.Symbol && closing.text == "]") {
+            opening.range.cover(advance().range)
+        } else {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.UnclosedContinuedFractionAlignment,
+                "Continued-fraction alignment is not closed with ]",
+                opening.range.cover(valueToken.range),
+            )
+            opening.range.cover(valueToken.range)
+        }
+        return ParsedFractionAlignment(alignment, range)
+    }
+
     private fun parseOptionalExtensibleArrowBelow(): ParsedOptionalMathList? {
         skipIgnored()
         val opening = peek()
@@ -1559,6 +1645,11 @@ private class ParserState(
 
     private data class ParsedOptionalMathList(
         val node: MathNode,
+        val range: SourceRange,
+    )
+
+    private data class ParsedFractionAlignment(
+        val alignment: MathFractionAlignment,
         val range: SourceRange,
     )
 

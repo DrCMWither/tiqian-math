@@ -48,6 +48,8 @@ enum class DiagnosticCode {
     UnclosedRadicalRadicand,
     MissingExtensibleArrowLabel,
     UnclosedExtensibleArrowBelow,
+    InvalidContinuedFractionAlignment,
+    UnclosedContinuedFractionAlignment,
     InvalidExtensibleArrowFill,
     MisplacedLimitsModifier,
     UnknownCommand,

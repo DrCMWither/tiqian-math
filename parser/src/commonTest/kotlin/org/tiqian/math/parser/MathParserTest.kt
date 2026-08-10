@@ -167,6 +167,78 @@ class MathParserTest {
     }
 
     @Test
+    fun mathopKeepsArbitraryNucleusAndSharesPostfixLimitsSemantics() {
+        val source = "\\mathop{abc}_0^1+\\mathop{x+y}\\nolimits_z"
+        val result = MathParser().parse(source)
+
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val scripted = result.root.children.filterIsInstance<MathScripts>()
+        val automatic = assertIs<MathOperatorNoad>(scripted[0].base)
+        assertEquals(MathLimitsPolicy.Auto, automatic.limitsPolicy)
+        assertEquals(SourceRange(0, 7), automatic.commandRange)
+        assertIs<MathGroup>(automatic.nucleus)
+        assertEquals(MathAtomClass.Operator, automatic.atomClass)
+
+        val explicit = assertIs<MathOperatorNoad>(scripted[1].base)
+        assertEquals(MathLimitsPolicy.NoLimits, explicit.limitsPolicy)
+        assertEquals(SourceRange(source.indexOf("\\nolimits"), source.indexOf("\\nolimits") + 9), explicit.limitsModifierRange)
+        assertEquals(source.indexOf("+\\mathop") + 1, explicit.commandRange.start)
+    }
+
+    @Test
+    fun displayAndContinuedFractionsRetainStyleAlignmentAndSourceSemantics() {
+        val source = "\\dfrac{a}{b}+\\cfrac[l]{a}{bbbb}+\\cfrac[r]{x}{y}"
+        val result = MathParser().parse(source)
+
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val fractions = result.root.children.filterIsInstance<MathFraction>()
+        assertEquals(3, fractions.size)
+        assertEquals(MathFractionOrigin.DisplayFraction, fractions[0].origin)
+        assertEquals(MathStyleLevel.Display, fractions[0].styleOverride)
+        assertTrue(fractions[0].retainRightNullDelimiterSpace)
+
+        assertEquals(MathFractionOrigin.ContinuedFraction, fractions[1].origin)
+        assertEquals(MathFractionAlignment.Left, fractions[1].numeratorAlignment)
+        assertTrue(fractions[1].numeratorStrut)
+        assertTrue(!fractions[1].retainRightNullDelimiterSpace)
+        assertEquals("[l]", source.substring(fractions[1].alignmentRange!!.start, fractions[1].alignmentRange!!.endExclusive))
+        assertEquals(MathFractionAlignment.Right, fractions[2].numeratorAlignment)
+        assertEquals("[r]", source.substring(fractions[2].alignmentRange!!.start, fractions[2].alignmentRange!!.endExclusive))
+    }
+
+    @Test
+    fun malformedContinuedFractionAlignmentRecoversWithoutDroppingFollowingAtoms() {
+        val invalid = MathParser().parse("\\cfrac[x]{a}{b}+y")
+        assertTrue(invalid.diagnostics.any { it.code == DiagnosticCode.InvalidContinuedFractionAlignment })
+        assertIs<MathFraction>(invalid.root.children.first())
+        assertIs<MathSymbol>(invalid.root.children.last())
+
+        val unclosed = MathParser().parse("\\cfrac[l{a}{b}+y")
+        assertTrue(unclosed.diagnostics.any { it.code == DiagnosticCode.UnclosedContinuedFractionAlignment })
+        assertTrue(unclosed.root.children.isNotEmpty())
+    }
+
+    @Test
+    fun growingBraceCommandsAreLimitsOperatorsWithSourcePreservingAccents() {
+        val source = "\\overbrace{a+b}^{n}+\\underbrace{x}\\nolimits_0"
+        val result = MathParser().parse(source)
+
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val scripted = result.root.children.filterIsInstance<MathScripts>()
+        val over = assertIs<MathBraceNoad>(scripted[0].base)
+        assertEquals(MathBraceKind.Over, over.kind)
+        assertEquals(MathLimitsPolicy.Limits, over.limitsPolicy)
+        assertEquals("\\overbrace", source.substring(over.commandRange.start, over.commandRange.endExclusive))
+        assertIs<MathGroup>(over.base)
+
+        val under = assertIs<MathBraceNoad>(scripted[1].base)
+        assertEquals(MathBraceKind.Under, under.kind)
+        assertEquals(MathLimitsPolicy.NoLimits, under.limitsPolicy)
+        assertEquals("\\underbrace", source.substring(under.commandRange.start, under.commandRange.endExclusive))
+        assertEquals("\\nolimits", source.substring(under.limitsModifierRange!!.start, under.limitsModifierRange!!.endExclusive))
+    }
+
+    @Test
     fun limitsModifierOutsideAnOperatorRecoversExplicitly() {
         val result = MathParser().parse("x\\limits+y\\nolimits")
 

@@ -298,6 +298,18 @@ data class MathOperator(
     val hasExplicitLimitsPolicy: Boolean get() = limitsModifierRange != null
 }
 
+/** A primitive-style `\mathop{...}` whose nucleus is an arbitrary completed math list. */
+data class MathOperatorNoad(
+    val nucleus: MathNode,
+    val limitsPolicy: MathLimitsPolicy = MathLimitsPolicy.Auto,
+    val commandRange: SourceRange,
+    val limitsModifierRange: SourceRange? = null,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = MathAtomClass.Operator
+    val hasExplicitLimitsPolicy: Boolean get() = limitsModifierRange != null
+}
+
 /**
  * A log-like function name (`\sin`, `\log`, `\lim`, …). It is an Operator-class atom rendered as
  * upright roman text; [limitsPolicy] decides whether attached scripts stack over/under in display
@@ -343,6 +355,7 @@ enum class MathAccentIdentity(
     val debugName: String,
     val scalar: Int,
     val wide: Boolean,
+    val placement: MathAccentPlacement = MathAccentPlacement.Top,
 ) {
     Hat("hat", 0x0302, false),
     Bar("bar", 0x0304, false),
@@ -352,7 +365,11 @@ enum class MathAccentIdentity(
     Vec("vec", 0x20D7, false),
     WideHat("widehat", 0x0302, true),
     WideTilde("widetilde", 0x0303, true),
+    OverBrace("overbrace", 0x23DE, true, MathAccentPlacement.Top),
+    UnderBrace("underbrace", 0x23DF, true, MathAccentPlacement.Bottom),
 }
+
+enum class MathAccentPlacement { Top, Bottom }
 
 /** A TeX math accent noad. The nucleus is laid out cramped; the source is never rewritten. */
 data class MathAccent(
@@ -362,6 +379,21 @@ data class MathAccent(
     override val range: SourceRange,
 ) : MathNode {
     val atomClass: MathAtomClass get() = MathAtomClass.Ordinary
+}
+
+enum class MathBraceKind { Over, Under }
+
+/** TeX `\overbrace`/`\underbrace`: a growing accent nucleus wrapped in a limits op noad. */
+data class MathBraceNoad(
+    val kind: MathBraceKind,
+    val base: MathNode,
+    val limitsPolicy: MathLimitsPolicy = MathLimitsPolicy.Limits,
+    val commandRange: SourceRange,
+    val limitsModifierRange: SourceRange? = null,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = MathAtomClass.Operator
+    val hasExplicitLimitsPolicy: Boolean get() = limitsModifierRange != null
 }
 
 enum class MathRuleDecorationKind { Overline, Underline }
@@ -555,12 +587,32 @@ enum class FractionKind {
     Ruleless,
 }
 
+enum class MathFractionOrigin {
+    Fraction,
+    Binomial,
+    DisplayFraction,
+    ContinuedFraction,
+}
+
+enum class MathFractionAlignment { Center, Left, Right }
+
 data class MathFraction(
     val numerator: MathNode,
     val denominator: MathNode,
     val kind: FractionKind,
     val hasParentheses: Boolean,
     override val range: SourceRange,
+    val origin: MathFractionOrigin = if (hasParentheses) MathFractionOrigin.Binomial else MathFractionOrigin.Fraction,
+    /** LaTeX `\dfrac` and amsmath `\cfrac` select display style inside their local group. */
+    val styleOverride: MathStyleLevel? = null,
+    /** `\cfrac[l]`/`\cfrac[r]` align only the numerator inside the common fraction width. */
+    val numeratorAlignment: MathFractionAlignment = MathFractionAlignment.Center,
+    /** amsmath inserts a text-size strut at the start of every continued-fraction numerator. */
+    val numeratorStrut: Boolean = false,
+    /** amsmath `\cfrac` cancels the fraction noad's trailing `\nulldelimiterspace`. */
+    val retainRightNullDelimiterSpace: Boolean = true,
+    val commandRange: SourceRange = range,
+    val alignmentRange: SourceRange? = null,
 ) : MathNode
 
 /** A TeX radical noad, with LaTeX's optional root degree retained as its own math list. */

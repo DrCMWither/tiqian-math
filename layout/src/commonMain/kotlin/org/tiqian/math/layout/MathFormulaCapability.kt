@@ -180,6 +180,8 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.UnclosedRadicalRadicand,
         DiagnosticCode.MissingExtensibleArrowLabel,
         DiagnosticCode.UnclosedExtensibleArrowBelow,
+        DiagnosticCode.InvalidContinuedFractionAlignment,
+        DiagnosticCode.UnclosedContinuedFractionAlignment,
         DiagnosticCode.MisplacedLimitsModifier,
         DiagnosticCode.MissingDelimiterAfterLeft,
         DiagnosticCode.MissingDelimiterAfterMiddle,

@@ -285,8 +285,10 @@ private class MathLayoutPass(
         is MathSymbol -> layoutSymbol(node, style, alphabetOverride)
         is MathOperator -> layoutOperator(node, style, alphabetOverride)
         is MathOperatorName -> layoutOperatorName(node, style, alphabetOverride)
+        is MathOperatorNoad -> layoutOperatorNoad(node, style, alphabetOverride)
         is MathText -> layoutText(node, style)
         is MathAccent -> layoutAccent(node, style, alphabetOverride)
+        is MathBraceNoad -> layoutBraceNoad(node, style, alphabetOverride)
         is MathRuleDecoration -> layoutRuleDecoration(node, style, alphabetOverride)
         is MathOverUnder -> layoutOverUnder(node, style, alphabetOverride)
         is MathExtensibleArrow -> layoutExtensibleArrow(node, style, alphabetOverride)
@@ -305,6 +307,8 @@ private class MathLayoutPass(
         is MathScripts -> when (val base = node.base) {
             is MathOperator -> layoutOperatorScripts(node, base, style, alphabetOverride)
             is MathOperatorName -> layoutOperatorNameScripts(node, base, style, alphabetOverride)
+            is MathOperatorNoad -> layoutOperatorNoadScripts(node, base, style, alphabetOverride)
+            is MathBraceNoad -> layoutBraceNoadScripts(node, base, style, alphabetOverride)
             else -> layoutScripts(node, style, alphabetOverride)
         }
         is MathFraction -> layoutFraction(node, style, alphabetOverride)
@@ -1825,6 +1829,7 @@ private class MathLayoutPass(
         style: MathStyle,
         alphabetOverride: MathAlphabetOverride?,
     ): LaidNode {
+        val isBottom = node.identity.placement == MathAccentPlacement.Bottom
         val nucleusStyle = style.cramped()
         // XeTeX clean_box uses the exact native glyph bbox for a character nucleus and the
         // already-completed TeX box for a compound nucleus. Reuse the same placement kernel as
@@ -1940,7 +1945,9 @@ private class MathLayoutPass(
         }
         val accentAttachment = accentAttachmentEvidence.valuePx
         val baseGlyph = base.box.singleGlyphOrNull()
-        val baseAttachmentEvidence = if (baseGlyph != null) {
+        val baseAttachmentEvidence = if (isBottom) {
+            AccentAttachmentEvidence(base.box.width / 2f, "XeTeXBottomAccentNucleusLogicalCenter")
+        } else if (baseGlyph != null) {
             resolveTopAccentAttachment(
                 baseGlyph.faceId, baseGlyph.glyphId, baseGlyph.fontSizePx, baseGlyph.advance, node.base.range, "base",
             ).let { it.copy(valuePx = baseGlyph.x + it.valuePx) }
@@ -1952,7 +1959,12 @@ private class MathLayoutPass(
         val accentBaseHeight = scale(constants.accentBaseHeight, style)
         val baseInkAscent = (-base.box.inkBounds.top).coerceAtLeast(0f)
         val baseCleanAscent = base.box.texCleanBoxMetrics.ascent
-        val accentBaselineY = -(baseCleanAscent - accentBaseHeight).coerceAtLeast(0f)
+        val baseCleanDescent = base.box.texCleanBoxMetrics.descent
+        val accentBaselineY = if (isBottom) {
+            baseCleanDescent
+        } else {
+            -(baseCleanAscent - accentBaseHeight).coerceAtLeast(0f)
+        }
         val positionedAccent = accentGlyphs.map { glyph ->
             glyph.copy(
                 x = glyph.x + accentX,
@@ -1984,13 +1996,15 @@ private class MathLayoutPass(
             constructionPaintGroups = groups,
         )
         val accentTop = positionedAccent.minOfOrNull { it.inkBounds.top } ?: 0f
-        val cleanAscent = max(base.box.texCleanBoxMetrics.ascent, -accentTop)
+        val accentBottom = positionedAccent.maxOfOrNull { it.inkBounds.bottom } ?: 0f
+        val cleanAscent = if (isBottom) base.box.texCleanBoxMetrics.ascent else max(baseCleanAscent, -accentTop)
+        val cleanDescent = if (isBottom) max(baseCleanDescent, accentBottom) else baseCleanDescent
         val box = inkGeometry.copy(
-            ascent = max(base.box.ascent, -accentTop),
-            descent = base.box.descent,
+            ascent = if (isBottom) base.box.ascent else max(base.box.ascent, -accentTop),
+            descent = if (isBottom) max(base.box.descent, accentBottom) else base.box.descent,
             texCleanBoxMetrics = MathTeXCleanBoxMetrics(
                 ascent = cleanAscent,
-                descent = base.box.texCleanBoxMetrics.descent,
+                descent = cleanDescent,
                 policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
                 evidence = inkGeometry.texCleanBoxMetrics.evidence +
                     base.box.texCleanBoxMetrics.evidence + MathTeXCleanBoxEvidence.CompletedChildBox,
@@ -2001,6 +2015,7 @@ private class MathLayoutPass(
             node.range,
             "identity" to node.identity.debugName,
             "wide" to node.identity.wide,
+            "placement" to node.identity.placement,
             "style" to style,
             "nucleusStyle" to nucleusStyle,
             "nucleusBoxPolicy" to "XeTeXNativeGlyphOutlineOrCompletedChildBox",
@@ -2008,7 +2023,11 @@ private class MathLayoutPass(
             "baseInkAscentPx" to baseInkAscent,
             "baseCleanAscentPx" to baseCleanAscent,
             "accentBaseHeightPx" to accentBaseHeight,
-            "verticalPlacementPolicy" to "XeTeXMakeMathAccentMinCleanBoxHeightAndAccentBaseHeight",
+            "verticalPlacementPolicy" to if (isBottom) {
+                "XeTeXBottomMathAccentAfterCompletedNucleusDepth"
+            } else {
+                "XeTeXMakeMathAccentMinCleanBoxHeightAndAccentBaseHeight"
+            },
             "flattenedAccentBaseHeightPx" to scale(constants.flattenedAccentBaseHeight, style),
             "baseAttachmentPx" to baseAttachment,
             "baseAttachmentPolicy" to baseAttachmentEvidence.policy,
@@ -2174,6 +2193,76 @@ private class MathLayoutPass(
             box = horizontal.laid.box.copy(range = node.range),
             atomClass = MathAtomClass.Operator,
             italicCorrectionPx = 0f,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutOperatorNoad(
+        node: MathOperatorNoad,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val nucleus = layoutNode(node.nucleus, style, alphabetOverride).completedTeXMathField()
+        decision(
+            "TeXMathOperatorNoad",
+            node.range,
+            "commandRange" to node.commandRange,
+            "nucleusRange" to node.nucleus.range,
+            "limitsPolicy" to node.limitsPolicy,
+            "limitsPolicyExplicit" to node.hasExplicitLimitsPolicy,
+            "modifierRange" to node.limitsModifierRange,
+            "atomClass" to MathAtomClass.Operator,
+            "nucleusPolicy" to "XeTeXCleanBoxSubMlistCurrentStyle",
+            "italicCorrectionPx" to 0f,
+        )
+        return LaidNode(
+            node = node,
+            box = nucleus.box.copy(range = node.range),
+            atomClass = MathAtomClass.Operator,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutBraceNoad(
+        node: MathBraceNoad,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val identity = if (node.kind == MathBraceKind.Over) {
+            MathAccentIdentity.OverBrace
+        } else {
+            MathAccentIdentity.UnderBrace
+        }
+        val accent = layoutAccent(
+            MathAccent(
+                identity = identity,
+                commandRange = node.commandRange,
+                base = node.base,
+                range = node.range,
+            ),
+            style,
+            alphabetOverride,
+        )
+        decision(
+            "TeXBraceOperatorNoad",
+            node.range,
+            "kind" to node.kind,
+            "commandRange" to node.commandRange,
+            "baseRange" to node.base.range,
+            "limitsPolicy" to node.limitsPolicy,
+            "limitsPolicyExplicit" to node.hasExplicitLimitsPolicy,
+            "modifierRange" to node.limitsModifierRange,
+            "accentIdentity" to identity,
+            "atomClass" to MathAtomClass.Operator,
+            "constructionPolicy" to "XeTeXGrowingTopOrBottomMathAccentWrappedInLimitsOpNoad",
+        )
+        return accent.copy(
+            node = node,
+            box = accent.box.copy(range = node.range),
+            atomClass = MathAtomClass.Operator,
+            style = style,
             scriptBaseKind = ScriptBaseKind.CompoundBox,
         )
     }
@@ -3251,6 +3340,46 @@ private class MathLayoutPass(
         alphabetOverride = alphabetOverride,
     )
 
+    private fun layoutOperatorNoadScripts(
+        node: MathScripts,
+        operator: MathOperatorNoad,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode = layoutScriptsWithOperatorLimits(
+        node = node,
+        base = layoutOperatorNoad(operator, style, alphabetOverride),
+        semantics = OperatorLimitsSemantics(
+            identity = "mathop",
+            declaredPolicy = operator.limitsPolicy,
+            explicit = operator.hasExplicitLimitsPolicy,
+            modifierRange = operator.limitsModifierRange,
+            sideScriptHorizontalPolicy = SideScriptHorizontalPolicy.OrdinaryNucleus,
+            sideScriptGeometry = "XeTeXSubMlistOperatorPlusSharedSideScriptKernel",
+        ),
+        style = style,
+        alphabetOverride = alphabetOverride,
+    )
+
+    private fun layoutBraceNoadScripts(
+        node: MathScripts,
+        brace: MathBraceNoad,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode = layoutScriptsWithOperatorLimits(
+        node = node,
+        base = layoutBraceNoad(brace, style, alphabetOverride),
+        semantics = OperatorLimitsSemantics(
+            identity = "${brace.kind.name.lowercase()}brace",
+            declaredPolicy = brace.limitsPolicy,
+            explicit = brace.hasExplicitLimitsPolicy,
+            modifierRange = brace.limitsModifierRange,
+            sideScriptHorizontalPolicy = SideScriptHorizontalPolicy.OrdinaryNucleus,
+            sideScriptGeometry = "XeTeXBraceAccentOperatorPlusSharedSideScriptKernel",
+        ),
+        style = style,
+        alphabetOverride = alphabetOverride,
+    )
+
     private fun layoutScriptsWithOperatorLimits(
         node: MathScripts,
         base: LaidNode,
@@ -4125,24 +4254,38 @@ private class MathLayoutPass(
     }
 
     private fun layoutFraction(node: MathFraction, style: MathStyle, alphabetOverride: MathAlphabetOverride?): LaidNode {
+        val fractionStyle = node.styleOverride?.let(::styleForLevel) ?: style
         val numerator = refineFractionChildBox(
-            layoutNode(node.numerator, style.fractionNumerator(), alphabetOverride).box,
+            layoutNode(node.numerator, fractionStyle.fractionNumerator(), alphabetOverride).box,
             node,
             "numerator",
-        )
+        ).let { if (node.numeratorStrut) applyContinuedFractionNumeratorStrut(it, node, fractionStyle) else it }
         val denominator = refineFractionChildBox(
-            layoutNode(node.denominator, style.fractionDenominator(), alphabetOverride).box,
+            layoutNode(node.denominator, fractionStyle.fractionDenominator(), alphabetOverride).box,
             node,
             "denominator",
         )
-        val display = style.level == MathStyleLevel.Display
-        val stack = layoutFractionStack(node, style, numerator, denominator, display)
+        val display = fractionStyle.level == MathStyleLevel.Display
+        val stack = layoutFractionStack(node, fractionStyle, numerator, denominator, display)
         val fractionNoad = addNullFractionDelimiters(stack, node)
         val withDelimiters = if (node.hasParentheses) {
-            addBinomialParentheses(fractionNoad, stack, node, style)
+            addBinomialParentheses(fractionNoad, stack, node, fractionStyle)
         } else {
             fractionNoad
         }
+        decision(
+            "TeXFractionCommand",
+            node.range,
+            "origin" to node.origin,
+            "commandRange" to node.commandRange,
+            "outerStyle" to style,
+            "fractionStyle" to fractionStyle,
+            "styleOverride" to node.styleOverride,
+            "numeratorAlignment" to node.numeratorAlignment,
+            "alignmentRange" to node.alignmentRange,
+            "numeratorStrut" to node.numeratorStrut,
+            "retainRightNullDelimiterSpace" to node.retainRightNullDelimiterSpace,
+        )
         return LaidNode(
             node,
             withDelimiters,
@@ -4151,6 +4294,44 @@ private class MathLayoutPass(
             style,
             ScriptBaseKind.CompoundBox,
         )
+    }
+
+    private fun applyContinuedFractionNumeratorStrut(
+        box: MathBox,
+        node: MathFraction,
+        style: MathStyle,
+    ): MathBox {
+        val size = fontSize(style)
+        val minimumAscent = TEX_ARRAY_STRUT_ASCENT_EM * size
+        val minimumDescent = TEX_ARRAY_STRUT_DESCENT_EM * size
+        val ascent = max(box.ascent, minimumAscent)
+        val descent = max(box.descent, minimumDescent)
+        val result = box.copy(
+            ascent = ascent,
+            descent = descent,
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = max(box.texCleanBoxMetrics.ascent, minimumAscent),
+                descent = max(box.texCleanBoxMetrics.descent, minimumDescent),
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = box.texCleanBoxMetrics.evidence + MathTeXCleanBoxEvidence.CompletedChildBox,
+            ),
+        )
+        decision(
+            "AmsmathContinuedFractionNumeratorStrut",
+            node.range,
+            "style" to style,
+            "fontSizePx" to size,
+            "strutAscentEm" to TEX_ARRAY_STRUT_ASCENT_EM,
+            "strutDescentEm" to TEX_ARRAY_STRUT_DESCENT_EM,
+            "minimumAscentPx" to minimumAscent,
+            "minimumDescentPx" to minimumDescent,
+            "inputAscentPx" to box.ascent,
+            "inputDescentPx" to box.descent,
+            "outputAscentPx" to result.ascent,
+            "outputDescentPx" to result.descent,
+            "policy" to "AmsmathCfracTextSizeStrut",
+        )
+        return result
     }
 
     /** Consumes the child's already completed TeX box; no flattened-ink reconstruction. */
@@ -4180,16 +4361,22 @@ private class MathLayoutPass(
 
     private fun addNullFractionDelimiters(stack: MathBox, node: MathFraction): MathBox {
         val shiftedStack = stack.translated(nullDelimiterSpacePx, 0f)
+        val rightSpace = if (node.retainRightNullDelimiterSpace) nullDelimiterSpacePx else 0f
         decision(
             "TeXFractionNullDelimiters",
             node.range,
             "leftSpacePx" to nullDelimiterSpacePx,
-            "rightSpacePx" to nullDelimiterSpacePx,
+            "rightSpacePx" to rightSpace,
             "parameter" to "nullDelimiterSpacePx",
             "styleInvariant" to true,
+            "rightSpacePolicy" to if (node.retainRightNullDelimiterSpace) {
+                "TeXFractionNullDelimiterSpace"
+            } else {
+                "AmsmathCfracTrailingNullDelimiterSpaceCancellation"
+            },
         )
         return geometryExtentsPreservingLogicalChildren(
-            width = stack.width + 2f * nullDelimiterSpacePx,
+            width = stack.width + nullDelimiterSpacePx + rightSpace,
             glyphs = shiftedStack.glyphs,
             rules = shiftedStack.rules,
             range = node.range,
@@ -4206,7 +4393,11 @@ private class MathLayoutPass(
         display: Boolean,
     ): MathBox {
         val contentWidth = max(numerator.width, denominator.width)
-        val numeratorX = (contentWidth - numerator.width) / 2f
+        val numeratorX = when (node.numeratorAlignment) {
+            MathFractionAlignment.Center -> (contentWidth - numerator.width) / 2f
+            MathFractionAlignment.Left -> 0f
+            MathFractionAlignment.Right -> contentWidth - numerator.width
+        }
         val denominatorX = (contentWidth - denominator.width) / 2f
         val axisY = -scale(constants.axisHeight, style)
         var numeratorShift: Float
@@ -4252,6 +4443,9 @@ private class MathLayoutPass(
                 "gapConstantScalePolicy" to "XeTeXPostCleanBoxChildMathFontSize",
                 "actualNumeratorGapPx" to actualNumeratorGap,
                 "actualDenominatorGapPx" to actualDenominatorGap,
+                "numeratorAlignment" to node.numeratorAlignment,
+                "numeratorX" to numeratorX,
+                "denominatorX" to denominatorX,
             )
         } else {
             // TeX Rule 15c uses num1 in display and num3 otherwise, together with denom1/2,
@@ -4289,6 +4483,9 @@ private class MathLayoutPass(
                 "symmetricGapCorrectionPx" to missingGap / 2f,
                 "actualGapPx" to finalGap,
                 "shiftPolicy" to "TeXRule15cNum1Num3Denom1Denom2WithOpenTypeStackGap",
+                "numeratorAlignment" to node.numeratorAlignment,
+                "numeratorX" to numeratorX,
+                "denominatorX" to denominatorX,
             )
         }
 
