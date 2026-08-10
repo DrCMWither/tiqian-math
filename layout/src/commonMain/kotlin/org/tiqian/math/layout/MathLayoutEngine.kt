@@ -150,6 +150,7 @@ private class MathLayoutPass(
     private var formulaMode: MathMode = MathMode.Inline
     private var displayWidthPx: Float? = null
     private var nextConstructionPaintGroupId: Int = 1
+    private val outlineGlyphMeasurements = mutableMapOf<OutlineGlyphMeasurementKey, MeasuredMathRun>()
 
     /**
      * Keep legacy/decorated single-face adapters virtual while allowing a real family to resolve
@@ -180,10 +181,15 @@ private class MathLayoutPass(
         size: Float,
         style: MathStyle,
         range: SourceRange,
-    ): MeasuredMathRun = if (faceId == glyphSource.faceId) {
-        glyphSource.measureGlyphOutlineBounds(glyphId, size, style, range)
-    } else {
-        glyphSource.measureGlyphOutlineBoundsForFace(faceId, glyphId, size, style, range)
+    ): MeasuredMathRun {
+        val key = OutlineGlyphMeasurementKey(faceId, glyphId, size.toRawBits(), style)
+        return outlineGlyphMeasurements.getOrPut(key) {
+            if (faceId == glyphSource.faceId) {
+                glyphSource.measureGlyphOutlineBounds(glyphId, size, style, range)
+            } else {
+                glyphSource.measureGlyphOutlineBoundsForFace(faceId, glyphId, size, style, range)
+            }
+        }
     }
 
     private fun measureConstructionGlyphForFace(
@@ -5829,54 +5835,84 @@ private class MathLayoutPass(
         constructionPaintGroups: List<MathConstructionPaintGroup> = emptyList(),
     ): MathBox {
         val cleanEvidence = mutableSetOf<MathTeXCleanBoxEvidence>()
-        val cleanGlyphs = glyphs.map { placement ->
-            if (mathFontForFaceOrNull(placement.faceId) == null) {
-                cleanEvidence += MathTeXCleanBoxEvidence.GlyphOutline
-                return@map placement
-            }
-            val measured = measureGlyphOutlineForFace(
-                placement.faceId,
-                placement.glyphId,
-                placement.fontSizePx,
-                placement.style,
-                placement.sourceRange,
-            )
-            cleanEvidence += if (measured.boundsSource == MathGlyphBoundsSource.Outline) {
-                MathTeXCleanBoxEvidence.GlyphOutline
+        var hasGlyph = false
+        var glyphLeft = 0f
+        var glyphTop = 0f
+        var glyphRight = 0f
+        var glyphBottom = 0f
+        var cleanGlyphTop = 0f
+        var cleanGlyphBottom = 0f
+        glyphs.forEach { placement ->
+            if (!hasGlyph) {
+                glyphLeft = placement.inkBounds.left
+                glyphTop = placement.inkBounds.top
+                glyphRight = placement.inkBounds.right
+                glyphBottom = placement.inkBounds.bottom
             } else {
-                MathTeXCleanBoxEvidence.FontReportedGlyphBounds
+                glyphLeft = minOf(glyphLeft, placement.inkBounds.left)
+                glyphTop = minOf(glyphTop, placement.inkBounds.top)
+                glyphRight = maxOf(glyphRight, placement.inkBounds.right)
+                glyphBottom = maxOf(glyphBottom, placement.inkBounds.bottom)
             }
-            val glyph = measured.glyphs.singleOrNull() ?: return@map placement
-            placement.copy(inkBounds = glyph.inkBounds.translated(placement.x, placement.baselineY))
+
+            val cleanBounds = if (mathFontForFaceOrNull(placement.faceId) == null) {
+                cleanEvidence += MathTeXCleanBoxEvidence.GlyphOutline
+                placement.inkBounds
+            } else {
+                val measured = measureGlyphOutlineForFace(
+                    placement.faceId,
+                    placement.glyphId,
+                    placement.fontSizePx,
+                    placement.style,
+                    placement.sourceRange,
+                )
+                cleanEvidence += if (measured.boundsSource == MathGlyphBoundsSource.Outline) {
+                    MathTeXCleanBoxEvidence.GlyphOutline
+                } else {
+                    MathTeXCleanBoxEvidence.FontReportedGlyphBounds
+                }
+                measured.glyphs.singleOrNull()?.inkBounds
+                    ?.translated(placement.x, placement.baselineY)
+                    ?: placement.inkBounds
+            }
+            if (!hasGlyph) {
+                cleanGlyphTop = cleanBounds.top
+                cleanGlyphBottom = cleanBounds.bottom
+                hasGlyph = true
+            } else {
+                cleanGlyphTop = minOf(cleanGlyphTop, cleanBounds.top)
+                cleanGlyphBottom = maxOf(cleanGlyphBottom, cleanBounds.bottom)
+            }
+        }
+        var hasRule = false
+        var ruleLeft = 0f
+        var ruleTop = 0f
+        var ruleRight = 0f
+        var ruleBottom = 0f
+        rules.forEach { rule ->
+            if (!hasRule) {
+                ruleLeft = rule.left
+                ruleTop = rule.top
+                ruleRight = rule.right
+                ruleBottom = rule.bottom
+                hasRule = true
+            } else {
+                ruleLeft = minOf(ruleLeft, rule.left)
+                ruleTop = minOf(ruleTop, rule.top)
+                ruleRight = maxOf(ruleRight, rule.right)
+                ruleBottom = maxOf(ruleBottom, rule.bottom)
+            }
         }
         if (rules.isNotEmpty()) cleanEvidence += MathTeXCleanBoxEvidence.RuleGeometry
-        if (cleanGlyphs.isEmpty() && rules.isEmpty()) cleanEvidence += MathTeXCleanBoxEvidence.Empty
-        val left = minOf(
-            glyphs.minOfOrNull { it.inkBounds.left } ?: 0f,
-            rules.minOfOrNull { it.left } ?: 0f,
-        )
-        val top = minOf(
-            glyphs.minOfOrNull { it.inkBounds.top } ?: 0f,
-            rules.minOfOrNull { it.top } ?: 0f,
-        )
-        val right = maxOf(
-            glyphs.maxOfOrNull { it.inkBounds.right } ?: 0f,
-            rules.maxOfOrNull { it.right } ?: 0f,
-        )
-        val bottom = maxOf(
-            glyphs.maxOfOrNull { it.inkBounds.bottom } ?: 0f,
-            rules.maxOfOrNull { it.bottom } ?: 0f,
-        )
+        if (glyphs.isEmpty() && rules.isEmpty()) cleanEvidence += MathTeXCleanBoxEvidence.Empty
+        val left = minOf(if (hasGlyph) glyphLeft else 0f, if (hasRule) ruleLeft else 0f)
+        val top = minOf(if (hasGlyph) glyphTop else 0f, if (hasRule) ruleTop else 0f)
+        val right = maxOf(if (hasGlyph) glyphRight else 0f, if (hasRule) ruleRight else 0f)
+        val bottom = maxOf(if (hasGlyph) glyphBottom else 0f, if (hasRule) ruleBottom else 0f)
+        val cleanTop = minOf(if (hasGlyph) cleanGlyphTop else 0f, if (hasRule) ruleTop else 0f)
+        val cleanBottom = maxOf(if (hasGlyph) cleanGlyphBottom else 0f, if (hasRule) ruleBottom else 0f)
         val ascent = (-top).coerceAtLeast(0f)
         val descent = bottom.coerceAtLeast(0f)
-        val cleanTop = minOf(
-            cleanGlyphs.minOfOrNull { it.inkBounds.top } ?: 0f,
-            rules.minOfOrNull { it.top } ?: 0f,
-        )
-        val cleanBottom = maxOf(
-            cleanGlyphs.maxOfOrNull { it.inkBounds.bottom } ?: 0f,
-            rules.maxOfOrNull { it.bottom } ?: 0f,
-        )
         return MathBox(
             width,
             ascent,
@@ -5969,6 +6005,13 @@ private class MathLayoutPass(
         val style: MathStyle,
         val scriptBaseKind: ScriptBaseKind,
         val horizontalKernPx: Float = 0f,
+    )
+
+    private data class OutlineGlyphMeasurementKey(
+        val faceId: MathFaceId,
+        val glyphId: UShort,
+        val fontSizeBits: Int,
+        val style: MathStyle,
     )
 
     private data class StackedLimitsPlacement(
