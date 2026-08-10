@@ -98,13 +98,14 @@ class MathTextAccentParserTest {
     }
 
     @Test
-    fun malformedAndUnsupportedTextContentRetainsStructuredDiagnostics() {
+    fun malformedTextAndNestedBoldTextRetainStructuredSemantics() {
         val missing = MathParser().parse("\\text{hello")
         assertTrue(missing.diagnostics.any { it.code == DiagnosticCode.UnclosedGroup })
-        val unsupported = MathParser().parse("\\text{a \\textbf{b}}+x")
-        assertTrue(unsupported.diagnostics.any {
-            it.code == DiagnosticCode.UnsupportedCommand && it.range == SourceRange(8, 15)
-        })
-        assertTrue(unsupported.root.children.isNotEmpty(), "recovery retains following math")
+        val styled = MathParser().parse("\\text{a \\textbf{b}}+x")
+        assertTrue(styled.diagnostics.isEmpty(), styled.diagnostics.toString())
+        val text = assertIs<MathText>(styled.root.children.first())
+        assertEquals(listOf(null, MathFontWeight.Bold), text.segments.map { it.requestedWeight })
+        assertEquals("a b", text.text)
+        assertTrue(styled.root.children.size > 1, "following math remains outside the text atom")
     }
 }

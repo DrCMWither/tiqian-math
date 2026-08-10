@@ -52,7 +52,7 @@ class AndroidMathRenderer(
         }
         box.rules.filter {
             it.constructionGroupId == null && it.paintLayer == MathPaintLayer.Foreground &&
-                it.paintRole != MathRulePaintRole.Border
+                it.paintRole != MathRulePaintRole.Border && it.lineSegment == null
         }.forEach { rule ->
             paint.color = resolvedMathPaintArgb(rule.paintColor, color)
             canvas.drawRect(
@@ -90,6 +90,23 @@ class AndroidMathRenderer(
                 is AndroidMathConstructionPathResult.Unavailable ->
                     throw AndroidMathConstructionPathUnavailableException(construction)
             }
+        }
+        box.rules.filter {
+            it.constructionGroupId == null && it.paintLayer == MathPaintLayer.Foreground &&
+                it.lineSegment != null
+        }.forEach { rule ->
+            val line = checkNotNull(rule.lineSegment)
+            paint.color = resolvedMathPaintArgb(rule.paintColor, color)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = line.thickness
+            canvas.drawLine(
+                originX + line.startX,
+                baselineFromTop + line.startY,
+                originX + line.endX,
+                baselineFromTop + line.endY,
+                paint,
+            )
+            paint.style = Paint.Style.FILL
         }
         box.rules.filter {
             it.constructionGroupId == null && it.paintLayer == MathPaintLayer.Foreground &&

@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.skiaCanvas
 import androidx.compose.ui.graphics.toArgb
 import org.jetbrains.skia.Font
 import org.jetbrains.skia.Paint
+import org.jetbrains.skia.PaintMode
 import org.jetbrains.skia.Point
 import org.jetbrains.skia.Rect
 import org.jetbrains.skia.TextBlobBuilder
@@ -164,7 +165,7 @@ private fun drawSkiaMathPlan(
         plan.boxes.forEach { positioned ->
             positioned.box.rules.filter {
                 it.constructionGroupId == null && it.paintLayer == MathPaintLayer.Foreground &&
-                    it.paintRole != MathRulePaintRole.Border
+                    it.paintRole != MathRulePaintRole.Border && it.lineSegment == null
             }.forEach { rule ->
                 paint.color = resolvedMathPaintArgb(rule.paintColor, color)
                 canvas.drawRect(
@@ -203,6 +204,23 @@ private fun drawSkiaMathPlan(
                     is MathConstructionOutlineResult.Unavailable ->
                         throw MathConstructionOutlineUnavailableException(outline)
                 }
+            }
+            positioned.box.rules.filter {
+                it.constructionGroupId == null && it.paintLayer == MathPaintLayer.Foreground &&
+                    it.lineSegment != null
+            }.forEach { rule ->
+                val line = checkNotNull(rule.lineSegment)
+                paint.color = resolvedMathPaintArgb(rule.paintColor, color)
+                paint.mode = PaintMode.STROKE
+                paint.strokeWidth = line.thickness
+                canvas.drawLine(
+                    positioned.x + line.startX,
+                    positioned.baselineFromTop + line.startY,
+                    positioned.x + line.endX,
+                    positioned.baselineFromTop + line.endY,
+                    paint,
+                )
+                paint.mode = PaintMode.FILL
             }
             positioned.box.rules.filter {
                 it.constructionGroupId == null && it.paintLayer == MathPaintLayer.Foreground &&

@@ -74,11 +74,21 @@ data class MathRulePlacement(
     val paintColor: MathPaintColor? = null,
     val paintLayer: MathPaintLayer = MathPaintLayer.Foreground,
     val paintRole: MathRulePaintRole = MathRulePaintRole.MathRule,
+    /** Non-null replaces rectangle fill with one replayable stroked line in the same bounds. */
+    val lineSegment: MathLineSegment? = null,
 )
 
 enum class MathPaintLayer { Background, Foreground }
 
-enum class MathRulePaintRole { MathRule, BackgroundFill, Border }
+enum class MathRulePaintRole { MathRule, BackgroundFill, Border, Cancellation }
+
+data class MathLineSegment(
+    val startX: Float,
+    val startY: Float,
+    val endX: Float,
+    val endY: Float,
+    val thickness: Float,
+)
 
 enum class MathConstructionPaintKind {
     Radical,

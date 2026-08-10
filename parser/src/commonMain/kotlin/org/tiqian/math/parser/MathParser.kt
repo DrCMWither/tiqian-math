@@ -141,11 +141,58 @@ private class ParserState(
         opening: MathToken?,
         unclosedCode: DiagnosticCode = DiagnosticCode.UnclosedGroup,
         unclosedMessage: String = "Group opened here is not closed",
+        generalizedFractionAllowed: Boolean = true,
     ): MathList {
         val children = mutableListOf<MathNode>()
         while (true) {
             skipIgnored()
             val token = peek()
+            if (token.kind == MathTokenKind.ControlWord && token.text == "atop") {
+                advance()
+                if (!generalizedFractionAllowed) {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.AmbiguousGeneralizedFraction,
+                        "Only one generalized fraction command is allowed in a math list",
+                        token.range,
+                    )
+                    children += MathErrorNode(sourceSlice(token.range), token.range)
+                    continue
+                }
+                val numerator = mathListFrom(children, token.range.start)
+                if (children.isEmpty()) {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.MissingGeneralizedFractionNumerator,
+                        "Command \\atop requires material before it in the containing math list",
+                        token.range,
+                    )
+                }
+                val denominator = parseList(
+                    stopAtClosingGroup = stopAtClosingGroup,
+                    opening = opening,
+                    unclosedCode = unclosedCode,
+                    unclosedMessage = unclosedMessage,
+                    generalizedFractionAllowed = false,
+                )
+                if (denominator.children.isEmpty()) {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.MissingGeneralizedFractionDenominator,
+                        "Command \\atop requires material after it in the containing math list",
+                        token.range,
+                    )
+                }
+                val fractionRange = numerator.range.cover(token.range).cover(denominator.range)
+                children.clear()
+                children += MathFraction(
+                    numerator = numerator,
+                    denominator = denominator,
+                    kind = FractionKind.Ruleless,
+                    hasParentheses = false,
+                    range = fractionRange,
+                    origin = MathFractionOrigin.GeneralizedAtop,
+                    commandRange = token.range,
+                )
+                break
+            }
             when (token.kind) {
                 MathTokenKind.End -> {
                     if (stopAtClosingGroup && opening != null) {
@@ -179,6 +226,12 @@ private class ParserState(
         return MathList(children, range)
     }
 
+    private fun mathListFrom(nodes: List<MathNode>, insertionOffset: Int): MathList {
+        val range = nodes.firstOrNull()?.range?.cover(nodes.last().range)
+            ?: SourceRange(insertionOffset, insertionOffset)
+        return MathList(nodes.toList(), range)
+    }
+
     private fun parseAtomWithScripts(): MathNode? {
         val first = peek()
         if (first.kind == MathTokenKind.Superscript || first.kind == MathTokenKind.Subscript) {
@@ -194,7 +247,7 @@ private class ParserState(
 
         var base = parsePrimary() ?: return null
         if (
-            base is MathStyleDeclaration || base is MathAlphabetDeclaration ||
+            base is MathStyleDeclaration || base is MathAlphabetDeclaration || base is MathVersionDeclaration ||
             base is MathExplicitRowBreak || base is MathEquationTag
         ) {
             return base
@@ -427,6 +480,9 @@ private class ParserState(
         if (token.text == "rm") {
             return MathAlphabetDeclaration(MathFamily.Operators, MathAlphabet.Roman, token.range)
         }
+        if (token.text == "bf") {
+            return MathVersionDeclaration(MathVersion.Bold, token.range)
+        }
         if (token.text == "text") {
             val argument = parseTextArgument(token, "text content")
             return MathText(
@@ -435,6 +491,47 @@ private class ParserState(
                 contentRange = argument.contentRange,
                 range = token.range.cover(argument.totalRange),
             )
+        }
+        if (token.text == "textbf") {
+            val argument = parseTextArgument(token, "bold text content", MathFontWeight.Bold)
+            return MathText(
+                segments = argument.segments,
+                commandRange = token.range,
+                contentRange = argument.contentRange,
+                range = token.range.cover(argument.totalRange),
+            )
+        }
+        if (token.text == "not") {
+            skipIgnored()
+            val next = peek()
+            if (next.kind in setOf(
+                    MathTokenKind.End,
+                    MathTokenKind.CloseGroup,
+                    MathTokenKind.Superscript,
+                    MathTokenKind.Subscript,
+                )
+            ) {
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.MissingNegatedAtom,
+                    "Command \\not requires a following math atom",
+                    token.range,
+                )
+                return MathErrorNode(sourceSlice(token.range), token.range)
+            }
+            val base = parsePrimary() ?: MathErrorNode("", next.range)
+            return MathNegation(base, token.range, token.range.cover(base.range))
+        }
+        if (token.text == "cancel") {
+            val body = parseRequiredArgument(token, "cancellation body")
+            return MathCancel(body, token.range, token.range.cover(body.range))
+        }
+        if (token.text == "hline") {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MisplacedHorizontalRule,
+                "Command \\hline is only valid between rows of an array-like environment",
+                token.range,
+            )
+            return MathErrorNode(sourceSlice(token.range), token.range)
         }
         if (token.text == "color") {
             val argument = parseTextArgument(token, "color name")
@@ -680,6 +777,7 @@ private class ParserState(
         }
 
         val rows = mutableListOf<MathTableRow>()
+        val horizontalRules = mutableListOf<MathTableHorizontalRule>()
         var currentNodes = mutableListOf<MathNode>()
         var currentCells = mutableListOf<MathTableCell>()
         var currentCellStart = parsedName.totalRange.endExclusive
@@ -782,6 +880,21 @@ private class ParserState(
                         val additionalSpacing = parseOptionalRowSpacing(separator)
                         finishRow(separator.range, additionalSpacing, true)
                     }
+                    token.kind == MathTokenKind.ControlWord && token.text == "hline" -> {
+                        val command = advance()
+                        val rowHasContent = currentNodes.isNotEmpty() || currentCells.any {
+                            it.body.children.isNotEmpty()
+                        }
+                        if (rowHasContent) {
+                            diagnostics += MathDiagnostic(
+                                DiagnosticCode.MisplacedHorizontalRule,
+                                "Command \\hline must occur before the first row or immediately after a row separator",
+                                command.range,
+                            )
+                        } else {
+                            horizontalRules += MathTableHorizontalRule(rows.size, command.range)
+                        }
+                    }
                     else -> parseAtomWithScripts()?.let { currentNodes.appendParsedNode(it) }
                 }
             }
@@ -796,6 +909,7 @@ private class ParserState(
             environmentName = parsedName.name,
             environment = environment,
             rows = rows,
+            horizontalRules = horizontalRules,
             columnAlignments = columnAlignments,
             beginCommandRange = beginCommand.range,
             beginNameRange = parsedName.contentRange,
@@ -1407,7 +1521,11 @@ private class ParserState(
         else -> null
     }
 
-    private fun parseTextArgument(command: MathToken, role: String): ParsedTextArgument {
+    private fun parseTextArgument(
+        command: MathToken,
+        role: String,
+        requestedWeight: MathFontWeight? = null,
+    ): ParsedTextArgument {
         skipIgnored()
         val opening = peek()
         if (opening.kind != MathTokenKind.OpenGroup) {
@@ -1426,7 +1544,7 @@ private class ParserState(
                 }
                 if (text != null) {
                     return ParsedTextArgument(
-                        segments = listOf(MathTextSegment(text, token.range)),
+                        segments = listOf(MathTextSegment(text, token.range, requestedWeight)),
                         contentRange = token.range,
                         totalRange = token.range,
                     )
@@ -1442,16 +1560,17 @@ private class ParserState(
         }
         advance()
         val segments = mutableListOf<MathTextSegment>()
-        fun appendText(text: String, range: SourceRange) {
+        fun appendText(text: String, range: SourceRange, weight: MathFontWeight? = requestedWeight) {
             if (text.isEmpty()) return
             val previous = segments.lastOrNull()
-            if (previous != null && previous.range.endExclusive == range.start) {
+            if (previous != null && previous.range.endExclusive == range.start && previous.requestedWeight == weight) {
                 segments[segments.lastIndex] = MathTextSegment(
                     previous.text + text,
                     previous.range.cover(range),
+                    weight,
                 )
             } else {
-                segments += MathTextSegment(text, range)
+                segments += MathTextSegment(text, range, weight)
             }
         }
         var depth = 1
@@ -1488,12 +1607,20 @@ private class ParserState(
                 }
                 MathTokenKind.ControlWord -> {
                     advance()
-                    diagnostics += MathDiagnostic(
-                        DiagnosticCode.UnsupportedCommand,
-                        "Text-mode command \\${token.text} is not supported",
-                        token.range,
-                    )
-                    lastContentEnd = token.range.endExclusive
+                    if (token.text == "textbf") {
+                        val nested = parseTextArgument(token, "bold text content", MathFontWeight.Bold)
+                        nested.segments.forEach { segment ->
+                            appendText(segment.text, segment.range, segment.requestedWeight)
+                        }
+                        lastContentEnd = nested.totalRange.endExclusive
+                    } else {
+                        diagnostics += MathDiagnostic(
+                            DiagnosticCode.UnsupportedCommand,
+                            "Text-mode command \\${token.text} is not supported",
+                            token.range,
+                        )
+                        lastContentEnd = token.range.endExclusive
+                    }
                 }
                 MathTokenKind.ControlSymbol -> {
                     advance()

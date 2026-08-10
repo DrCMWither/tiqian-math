@@ -47,6 +47,10 @@ data class MathLayoutOptions(
     val fboxSeparationPx: Float? = null,
     /** LaTeX `\fboxrule`; null is the standard 0.4pt converted to CSS pixels. */
     val fboxRuleThicknessPx: Float? = null,
+    /** LaTeX `\arrayrulewidth`; null is the standard 0.4pt converted to CSS pixels. */
+    val arrayRuleThicknessPx: Float? = null,
+    /** cancel.sty's default `\thinlines` width; null is LaTeX's standard 0.4pt. */
+    val cancelLineThicknessPx: Float? = null,
     /** Completed display-row width used to right-align explicit amsmath equation tags. */
     val displayWidthPx: Float? = null,
 ) {
@@ -70,6 +74,12 @@ data class MathLayoutOptions(
         }
         require(fboxRuleThicknessPx == null || fboxRuleThicknessPx >= 0f) {
             "fbox rule thickness must not be negative"
+        }
+        require(arrayRuleThicknessPx == null || arrayRuleThicknessPx >= 0f) {
+            "array rule thickness must not be negative"
+        }
+        require(cancelLineThicknessPx == null || cancelLineThicknessPx >= 0f) {
+            "cancel line thickness must not be negative"
         }
         require(displayWidthPx == null || displayWidthPx > 0f) {
             "display width must be positive"
@@ -135,6 +145,8 @@ private class MathLayoutPass(
     private var explicitArrayColumnSeparationPx: Float? = null
     private var fboxSeparationPx: Float = DEFAULT_FBOX_SEPARATION_PT * TEX_POINT_TO_PX
     private var fboxRuleThicknessPx: Float = DEFAULT_FBOX_RULE_THICKNESS_PT * TEX_POINT_TO_PX
+    private var arrayRuleThicknessPx: Float = DEFAULT_ARRAY_RULE_THICKNESS_PT * TEX_POINT_TO_PX
+    private var cancelLineThicknessPx: Float = DEFAULT_CANCEL_LINE_THICKNESS_PT * TEX_POINT_TO_PX
     private var formulaMode: MathMode = MathMode.Inline
     private var displayWidthPx: Float? = null
     private var nextConstructionPaintGroupId: Int = 1
@@ -220,6 +232,8 @@ private class MathLayoutPass(
         explicitArrayColumnSeparationPx = options.arrayColumnSeparationPx
         fboxSeparationPx = options.fboxSeparationPx ?: DEFAULT_FBOX_SEPARATION_PT * TEX_POINT_TO_PX
         fboxRuleThicknessPx = options.fboxRuleThicknessPx ?: DEFAULT_FBOX_RULE_THICKNESS_PT * TEX_POINT_TO_PX
+        arrayRuleThicknessPx = options.arrayRuleThicknessPx ?: DEFAULT_ARRAY_RULE_THICKNESS_PT * TEX_POINT_TO_PX
+        cancelLineThicknessPx = options.cancelLineThicknessPx ?: DEFAULT_CANCEL_LINE_THICKNESS_PT * TEX_POINT_TO_PX
         diagnostics += parsed.diagnostics
         val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
         val horizontal = layoutList(parsed.root, initialStyle)
@@ -316,6 +330,8 @@ private class MathLayoutPass(
         is MathRuleDecoration -> layoutRuleDecoration(node, style, alphabetOverride)
         is MathOverUnder -> layoutOverUnder(node, style, alphabetOverride)
         is MathExtensibleArrow -> layoutExtensibleArrow(node, style, alphabetOverride)
+        is MathNegation -> layoutNegation(node, style, alphabetOverride)
+        is MathCancel -> layoutCancel(node, style, alphabetOverride)
         is MathExplicitSpace -> layoutExplicitSpace(node, style)
         is MathTable -> layoutTable(node, style, alphabetOverride)
         is MathDisplayEnvironment -> layoutDisplayEnvironment(node, alphabetOverride)
@@ -373,6 +389,14 @@ private class MathLayoutPass(
             style,
             ScriptBaseKind.CompoundBox,
         )
+        is MathVersionDeclaration -> LaidNode(
+            node,
+            emptyBox(node.range),
+            MathAtomClass.Ordinary,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
         is MathAlphabetScope -> layoutAlphabetScopeNode(node, style)
         is MathVersionScope -> layoutMathVersionScopeNode(node, style)
         is MathErrorNode -> LaidNode(
@@ -421,6 +445,170 @@ private class MathLayoutPass(
             style = style,
             scriptBaseKind = ScriptBaseKind.CompoundBox,
             horizontalKernPx = advance.coerceAtMost(0f),
+        )
+    }
+
+    private fun layoutNegation(
+        node: MathNegation,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val base = node.base as? MathSymbol
+        val negatedScalar = base?.identity?.baseScalar?.let(NEGATED_RELATION_SCALARS::get)
+        if (base == null || negatedScalar == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.UnsupportedNegatedSymbol,
+                "The current TeX \\not slice requires a relation with a standard precomposed negation",
+                node.range,
+            )
+            val laid = layoutNode(node.base, style, alphabetOverride)
+            decision(
+                "TeXNotRelation",
+                node.range,
+                "commandRange" to node.commandRange,
+                "baseKind" to node.base::class.simpleName,
+                "precomposedScalar" to null,
+                "policy" to "ExplicitUnsupportedRatherThanSyntheticSlashGuess",
+            )
+            return laid.copy(node = node)
+        }
+        val synthetic = MathSymbol(
+            sourceText = "\\not${base.sourceText}",
+            identity = MathSymbolIdentity.Literal(negatedScalar),
+            atomClass = base.atomClass,
+            family = MathFamily.Symbols,
+            familyBinding = MathFamilyBinding.Fixed,
+            range = node.range,
+        )
+        val laid = layoutSymbol(synthetic, style, alphabetOverride)
+        decision(
+            "TeXNotRelation",
+            node.range,
+            "commandRange" to node.commandRange,
+            "baseIdentity" to base.identity.debugName,
+            "baseScalar" to unicodeLabel(base.identity.baseScalar),
+            "precomposedScalar" to unicodeLabel(negatedScalar),
+            "atomClass" to base.atomClass,
+            "policy" to "XeTeXUnicodeMathPrecomposedNegatedRelation",
+        )
+        return laid.copy(node = node)
+    }
+
+    private fun layoutCancel(
+        node: MathCancel,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val content = layoutNode(node.body, style, alphabetOverride).completedTeXMathField().box
+        val clean = content.texCleanBoxMetrics
+        val totalHeight = clean.height
+        val geometry = cancelStrokeGeometry(content.width, clean.ascent, clean.descent)
+        val halfThickness = cancelLineThicknessPx / 2f
+        val line = MathLineSegment(
+            startX = geometry.startX,
+            startY = geometry.startY,
+            endX = geometry.endX,
+            endY = geometry.endY,
+            thickness = cancelLineThicknessPx,
+        )
+        val stroke = MathRulePlacement(
+            left = minOf(geometry.startX, geometry.endX) - halfThickness,
+            top = minOf(geometry.startY, geometry.endY) - halfThickness,
+            right = maxOf(geometry.startX, geometry.endX) + halfThickness,
+            bottom = maxOf(geometry.startY, geometry.endY) + halfThickness,
+            sourceRange = node.commandRange,
+            paintRole = MathRulePaintRole.Cancellation,
+            lineSegment = line,
+        )
+        val painted = geometryExtents(
+            width = content.width,
+            glyphs = content.glyphs,
+            rules = content.rules + stroke,
+            range = node.range,
+            constructionPaintGroups = content.constructionPaintGroups,
+        )
+        val strokeTop = minOf(geometry.startY, geometry.endY) - cancelLineThicknessPx / 2f
+        val strokeBottom = maxOf(geometry.startY, geometry.endY) + cancelLineThicknessPx / 2f
+        val ascent = max(content.ascent, -strokeTop)
+        val descent = max(content.descent, strokeBottom)
+        val box = painted.copy(
+            width = content.width,
+            ascent = ascent,
+            descent = descent,
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = max(clean.ascent, -strokeTop),
+                descent = max(clean.descent, strokeBottom),
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = clean.evidence + MathTeXCleanBoxEvidence.RuleGeometry +
+                    MathTeXCleanBoxEvidence.CompletedChildBox,
+            ),
+        )
+        decision(
+            "LatexCancelStroke",
+            node.range,
+            "commandRange" to node.commandRange,
+            "style" to style,
+            "contentWidthPx" to content.width,
+            "contentAscentPx" to clean.ascent,
+            "contentDescentPx" to clean.descent,
+            "contentTotalHeightPx" to totalHeight,
+            "shapeClass" to geometry.shapeClass,
+            "slope" to "${geometry.slopeX}:${geometry.slopeY}",
+            "lineHorizontalExtentPx" to (geometry.endX - geometry.startX),
+            "lineVerticalExtentPx" to (geometry.startY - geometry.endY),
+            "lineThicknessPx" to cancelLineThicknessPx,
+            "logicalWidthPx" to box.width,
+            "logicalAscentPx" to box.ascent,
+            "logicalDescentPx" to box.descent,
+            "horizontalRoomPolicy" to "CancelPackageDefaultOverlapKeepsArgumentAdvance",
+            "geometryPolicy" to "CancelSty2.2QuantizedPictureSlopeAndTwoPointExtension",
+        )
+        return LaidNode(
+            node,
+            box,
+            MathAtomClass.Ordinary,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun cancelStrokeGeometry(width: Float, ascent: Float, descent: Float): CancelStrokeGeometry {
+        val totalHeight = ascent + descent
+        val twoPoint = 2f * TEX_POINT_TO_PX
+        val centerX = width / 2f
+        val centerY = (descent - ascent) / 2f
+        val shapeClass: String
+        val slopeX: Int
+        val slopeY: Int
+        val horizontalExtent: Float
+        if (totalHeight < width) {
+            shapeClass = "Wide"
+            val preExtensionWidth = max(width, 2f * totalHeight)
+            val slopeCase = floor(totalHeight * 5f / preExtensionWidth).toInt().coerceIn(0, 4)
+            val slope = CANCEL_WIDE_SLOPES[slopeCase]
+            slopeX = slope.first
+            slopeY = slope.second
+            horizontalExtent = preExtensionWidth + twoPoint
+        } else {
+            shapeClass = "Tall"
+            val extendedHeight = max(totalHeight, 8f * TEX_POINT_TO_PX) + twoPoint
+            val slopeCase = floor(width * 5f / extendedHeight).toInt().coerceIn(0, 4)
+            val slope = CANCEL_TALL_SLOPES[slopeCase]
+            slopeX = slope.first
+            slopeY = slope.second
+            val factor = CANCEL_TALL_WIDTH_FACTORS[slopeCase]
+            horizontalExtent = factor * extendedHeight
+        }
+        val verticalExtent = horizontalExtent * slopeY / slopeX
+        return CancelStrokeGeometry(
+            startX = centerX - horizontalExtent / 2f,
+            startY = centerY + verticalExtent / 2f,
+            endX = centerX + horizontalExtent / 2f,
+            endY = centerY - verticalExtent / 2f,
+            slopeX = slopeX,
+            slopeY = slopeY,
+            shapeClass = shapeClass,
         )
     }
 
@@ -539,6 +727,8 @@ private class MathLayoutPass(
         } else {
             0f
         }
+        val horizontalRulesByBoundary = node.horizontalRules.groupBy { it.boundaryIndex }
+        val horizontalRuleTotalHeight = node.horizontalRules.size * arrayRuleThicknessPx
         val outerPadding = if (node.environment == MathTableEnvironment.Array) {
             arrayColumnSeparation
         } else {
@@ -547,7 +737,7 @@ private class MathLayoutPass(
         val bodyWidth = outerPadding * 2f + columnWidths.sum() + columnGaps.sum()
         val bodyHeight = rowAscents.zip(rowDescents).sumOf { (ascent, descent) ->
             (ascent + descent).toDouble()
-        }.toFloat() + rowGaps.sum() + trailingExplicitRowSpacing
+        }.toFloat() + rowGaps.sum() + trailingExplicitRowSpacing + horizontalRuleTotalHeight
         val axisHeight = scale(constants.axisHeight, style)
         val bodyTop = -axisHeight - bodyHeight / 2f
         var rowTop = bodyTop
@@ -556,7 +746,33 @@ private class MathLayoutPass(
         val paintGroups = mutableListOf<MathConstructionPaintGroup>()
         val positionedChildren = mutableListOf<Pair<MathBox, Float>>()
         val rowBaselines = mutableListOf<Float>()
+        fun placeHorizontalRules(boundaryIndex: Int) {
+            horizontalRulesByBoundary[boundaryIndex].orEmpty().forEach { horizontalRule ->
+                rules += MathRulePlacement(
+                    left = 0f,
+                    top = rowTop,
+                    right = bodyWidth,
+                    bottom = rowTop + arrayRuleThicknessPx,
+                    sourceRange = horizontalRule.commandRange,
+                )
+                decision(
+                    "LaTeXArrayHorizontalRule",
+                    horizontalRule.commandRange,
+                    "environment" to node.environment,
+                    "boundaryIndex" to boundaryIndex,
+                    "leftPx" to 0f,
+                    "rightPx" to bodyWidth,
+                    "topPx" to rowTop,
+                    "bottomPx" to (rowTop + arrayRuleThicknessPx),
+                    "thicknessPx" to arrayRuleThicknessPx,
+                    "parameter" to "arrayRuleThicknessPx",
+                    "policy" to "LaTeXArrayHlineFullPreambleWidth",
+                )
+                rowTop += arrayRuleThicknessPx
+            }
+        }
         rowLayouts.forEachIndexed { rowIndex, row ->
+            placeHorizontalRules(rowIndex)
             val baselineY = rowTop + rowAscents[rowIndex]
             rowBaselines += baselineY
             var columnLeft = outerPadding
@@ -576,6 +792,7 @@ private class MathLayoutPass(
             rowTop += rowAscents[rowIndex] + rowDescents[rowIndex] +
                 rowGaps.getOrElse(rowIndex) { 0f }
         }
+        placeHorizontalRules(node.rows.size)
         val bodyBottom = bodyTop + bodyHeight
         val paintedBody = geometryExtents(
             bodyWidth,
@@ -641,6 +858,10 @@ private class MathLayoutPass(
             } else {
                 "LaTeXArrayPreviousRowStrutDepthExtension"
             },
+            "horizontalRuleCount" to node.horizontalRules.size,
+            "horizontalRuleBoundaries" to node.horizontalRules.joinToString(",") { it.boundaryIndex.toString() },
+            "arrayRuleThicknessPx" to arrayRuleThicknessPx,
+            "horizontalRulePolicy" to "LaTeXArrayHlineFullPreambleWidth",
             "bodyWidthPx" to bodyWidth,
             "bodyAscentPx" to bodyBox.ascent,
             "bodyDescentPx" to bodyBox.descent,
@@ -2069,6 +2290,9 @@ private class MathLayoutPass(
             "text" to node.text,
             "origin" to node.origin,
             "segmentCount" to node.segments.size,
+            "segmentRequestedWeights" to node.segments.joinToString(",") {
+                (it.requestedWeight ?: glyphSource.requestedWeight).toString()
+            },
             "spaceCount" to node.text.count { it.isWhitespace() || it == '\u00A0' },
             "style" to style,
             "fontSizePx" to fontSize(style),
@@ -2131,7 +2355,7 @@ private class MathLayoutPass(
                         text = segment.text,
                         sourceRange = segment.range,
                         fontSizePx = size,
-                        requestedWeight = glyphSource.requestedWeight,
+                        requestedWeight = segment.requestedWeight ?: glyphSource.requestedWeight,
                         locale = textLocale,
                         origin = origin,
                     ),
@@ -5369,6 +5593,18 @@ private class MathLayoutPass(
                         "listRange" to "${list.range.start}..${list.range.endExclusive}",
                         "policy" to "LegacyTeXListDeclaration",
                     )
+                } else if (child is MathVersionDeclaration) {
+                    currentAlphabetOverride = (currentAlphabetOverride ?: MathAlphabetOverride()).copy(
+                        version = child.version,
+                    )
+                    decision(
+                        "TeXMathVersionDeclaration",
+                        child.range,
+                        "version" to child.version,
+                        "listRange" to "${list.range.start}..${list.range.endExclusive}",
+                        "scopePolicy" to "TeXDeclarationUntilCurrentMathListGroupEnd",
+                        "versionPolicy" to "UnicodeMathBoldVersionCompatibilityForLegacyBf",
+                    )
                 } else if (child is MathColorDeclaration) {
                     currentPaintColor = child.color
                     decision(
@@ -5757,10 +5993,11 @@ private class MathLayoutPass(
             )
         }
         box.rules.forEachIndexed { index, rule ->
+            val line = rule.lineSegment?.let { " line=$it" }.orEmpty()
             appendLine(
                 "rule[$index] ${rule.left},${rule.top},${rule.right},${rule.bottom} " +
                     "layer=${rule.paintLayer} role=${rule.paintRole} color=${rule.paintColor} " +
-                    "constructionGroup=${rule.constructionGroupId}",
+                    "constructionGroup=${rule.constructionGroupId}$line",
             )
         }
         box.constructionPaintGroups.forEach { group ->
@@ -5919,6 +6156,16 @@ private class MathLayoutPass(
         val version: MathVersion? = null,
     )
 
+    private data class CancelStrokeGeometry(
+        val startX: Float,
+        val startY: Float,
+        val endX: Float,
+        val endY: Float,
+        val slopeX: Int,
+        val slopeY: Int,
+        val shapeClass: String,
+    )
+
     private data class OperatorLimitsSemantics(
         val identity: String,
         val declaredPolicy: MathLimitsPolicy,
@@ -5955,7 +6202,40 @@ private class MathLayoutPass(
         const val DEFAULT_SCRIPT_SPACE_PT = 0.5f
         const val DEFAULT_FBOX_SEPARATION_PT = 3f
         const val DEFAULT_FBOX_RULE_THICKNESS_PT = 0.4f
+        const val DEFAULT_ARRAY_RULE_THICKNESS_PT = 0.4f
+        const val DEFAULT_CANCEL_LINE_THICKNESS_PT = 0.4f
         const val BIG_POINT_TO_PX = CSS_PIXELS_PER_INCH / BIG_POINTS_PER_INCH
+
+        val CANCEL_WIDE_SLOPES = listOf(6 to 1, 4 to 1, 2 to 1, 4 to 3, 1 to 1)
+        val CANCEL_TALL_SLOPES = listOf(1 to 6, 1 to 4, 1 to 2, 3 to 4, 1 to 1)
+        val CANCEL_TALL_WIDTH_FACTORS = listOf(0.16f, 0.25f, 0.5f, 0.75f, 1f)
+
+        val NEGATED_RELATION_SCALARS = mapOf(
+            0x003D to 0x2260,
+            0x003C to 0x226E,
+            0x003E to 0x226F,
+            0x2190 to 0x219A,
+            0x2192 to 0x219B,
+            0x2194 to 0x21AE,
+            0x21D0 to 0x21CD,
+            0x21D2 to 0x21CF,
+            0x21D4 to 0x21CE,
+            0x2208 to 0x2209,
+            0x220B to 0x220C,
+            0x2223 to 0x2224,
+            0x2225 to 0x2226,
+            0x223C to 0x2241,
+            0x2243 to 0x2244,
+            0x2245 to 0x2247,
+            0x2248 to 0x2249,
+            0x2261 to 0x2262,
+            0x2264 to 0x2270,
+            0x2265 to 0x2271,
+            0x2282 to 0x2284,
+            0x2283 to 0x2285,
+            0x2286 to 0x2288,
+            0x2287 to 0x2289,
+        )
 
         val binaryLeftCanceller = setOf(
             MathAtomClass.Binary,
@@ -6035,6 +6315,14 @@ private fun MathBox.translated(dx: Float, dy: Float): MathBox = copy(
             right = rule.right + dx,
             top = rule.top + dy,
             bottom = rule.bottom + dy,
+            lineSegment = rule.lineSegment?.let { line ->
+                line.copy(
+                    startX = line.startX + dx,
+                    startY = line.startY + dy,
+                    endX = line.endX + dx,
+                    endY = line.endY + dy,
+                )
+            },
         )
     },
 )

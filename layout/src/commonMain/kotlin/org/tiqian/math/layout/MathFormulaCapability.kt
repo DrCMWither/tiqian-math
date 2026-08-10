@@ -161,6 +161,7 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.UnsupportedDelimiter,
         DiagnosticCode.UnsupportedEnvironment,
         DiagnosticCode.UnsupportedBboxStyle,
+        DiagnosticCode.UnsupportedNegatedSymbol,
         -> MathFormulaCapabilityCategory.UnsupportedSyntax
 
         DiagnosticCode.TrailingEscape,
@@ -209,6 +210,11 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.UnclosedBboxOptions,
         DiagnosticCode.InvalidBboxOption,
         DiagnosticCode.DuplicateBboxOption,
+        DiagnosticCode.MissingGeneralizedFractionNumerator,
+        DiagnosticCode.MissingGeneralizedFractionDenominator,
+        DiagnosticCode.AmbiguousGeneralizedFraction,
+        DiagnosticCode.MissingNegatedAtom,
+        DiagnosticCode.MisplacedHorizontalRule,
         -> MathFormulaCapabilityCategory.MalformedSource
 
         DiagnosticCode.MissingEquationTagDisplayWidth,

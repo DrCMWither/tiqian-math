@@ -99,6 +99,12 @@ enum class DiagnosticCode {
     DuplicateBboxOption,
     UnsupportedBboxStyle,
     MissingBboxXHeight,
+    MissingGeneralizedFractionNumerator,
+    MissingGeneralizedFractionDenominator,
+    AmbiguousGeneralizedFraction,
+    MissingNegatedAtom,
+    UnsupportedNegatedSymbol,
+    MisplacedHorizontalRule,
 }
 
 data class MathDiagnostic(

@@ -386,6 +386,8 @@ enum class MathOperatorNameOrigin { BuiltInCommand, OperatorNameCommand }
 data class MathTextSegment(
     val text: String,
     val range: SourceRange,
+    /** Null inherits the formula request; non-null is an explicit text-mode weight command. */
+    val requestedWeight: MathFontWeight? = null,
 )
 
 /** Text mode embedded in math. Spaces and Unicode text are shaped as text, never as math noads. */
@@ -511,6 +513,22 @@ data class MathExtensibleArrow(
     val atomClass: MathAtomClass get() = MathAtomClass.Relation
 }
 
+/** Plain-TeX `\not`: a relation modifier kept separate from the following symbol identity. */
+data class MathNegation(
+    val base: MathNode,
+    val commandRange: SourceRange,
+    override val range: SourceRange,
+) : MathNode
+
+/** The public-domain LaTeX cancel package's single rising cancellation stroke. */
+data class MathCancel(
+    val body: MathNode,
+    val commandRange: SourceRange,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = MathAtomClass.Ordinary
+}
+
 /** Explicit TeX math space or kern, resolved in mu units at the active math style's font size. */
 data class MathExplicitSpace(
     val command: String,
@@ -553,6 +571,12 @@ data class MathTableRow(
     val tag: MathEquationTag? = null,
 )
 
+/** One LaTeX `\hline` at a table boundary; boundary 0 is above the first row. */
+data class MathTableHorizontalRule(
+    val boundaryIndex: Int,
+    val commandRange: SourceRange,
+)
+
 enum class MathTeXDimensionUnit(val sourceName: String) {
     Point("pt"),
     BigPoint("bp"),
@@ -576,6 +600,7 @@ data class MathTable(
     val environmentName: String,
     val environment: MathTableEnvironment?,
     val rows: List<MathTableRow>,
+    val horizontalRules: List<MathTableHorizontalRule> = emptyList(),
     val columnAlignments: List<MathTableColumnAlignment>,
     val beginCommandRange: SourceRange,
     val beginNameRange: SourceRange,
@@ -680,6 +705,7 @@ enum class MathFractionOrigin {
     Binomial,
     DisplayFraction,
     ContinuedFraction,
+    GeneralizedAtop,
 }
 
 enum class MathFractionAlignment { Center, Left, Right }
@@ -855,6 +881,12 @@ enum class MathVersion {
 data class MathVersionScope(
     val version: MathVersion,
     val body: MathNode,
+    override val range: SourceRange,
+) : MathNode
+
+/** A compatibility math-version declaration such as legacy `\bf`; scoped to its containing mlist. */
+data class MathVersionDeclaration(
+    val version: MathVersion,
     override val range: SourceRange,
 ) : MathNode
 

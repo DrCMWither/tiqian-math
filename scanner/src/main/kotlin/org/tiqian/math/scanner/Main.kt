@@ -6,20 +6,17 @@ import kotlin.io.path.writeText
 import org.tiqian.math.core.MathFaceId
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathFontWeight
-import org.tiqian.math.font.opentype.LeteSansMath
+import org.tiqian.math.font.skia.SkiaMathFontFamily
 import org.tiqian.math.font.skia.SkiaMathFontFace
 import org.tiqian.math.font.skia.SkiaMathTextRunProvider
 import org.tiqian.math.font.skia.formulaCapabilityEngine
 import org.tiqian.math.font.stix.StixTwoMath
+import org.tiqian.math.layout.MathComposeFontFace
 import org.tiqian.math.layout.MathLayoutOptions
 
 fun main(args: Array<String>) {
     val arguments = ScannerArguments.parse(args)
     val sources = MathFormulaCorpusInput.read(arguments.input, arguments.inputFormat)
-    val mathFont = when (arguments.font) {
-        ScannerFont.Lete -> LeteSansMath.load()
-        ScannerFont.Stix -> StixTwoMath.load()
-    }
     val textProvider = arguments.textFont?.let { path ->
         SkiaMathTextRunProvider.fromBytes(
             faceId = MathFaceId("scanner-explicit-host-text"),
@@ -28,7 +25,7 @@ fun main(args: Array<String>) {
         )
     }
     val report = try {
-        SkiaMathFontFace(mathFont).use { face ->
+        fun scan(face: MathComposeFontFace) =
             MathFormulaCorpusScanner(
                 capabilityEngine = face.formulaCapabilityEngine(textProvider),
                 options = MathLayoutOptions(
@@ -38,6 +35,10 @@ fun main(args: Array<String>) {
                 ),
                 maxSamplesPerCategory = arguments.maxSamples,
             ).scan(sources)
+
+        when (arguments.font) {
+            ScannerFont.Lete -> SkiaMathFontFamily.loadBundledLete().use(::scan)
+            ScannerFont.Stix -> SkiaMathFontFace(StixTwoMath.load()).use(::scan)
         }
     } finally {
         textProvider?.close()
