@@ -16,8 +16,8 @@ import kotlin.test.assertTrue
 
 class ComparisonCorpusTest {
     @Test
-    fun texKatexAndOpenTypeComparisonCorpusRunsThroughBothFaces() {
-        val corpus = checkNotNull(javaClass.getResourceAsStream("/corpus/tex-katex-geometry.tsv"))
+    fun texXeTeXAndOpenTypeComparisonCorpusRunsThroughBothFaces() {
+        val corpus = checkNotNull(javaClass.getResourceAsStream("/corpus/tex-xetex-geometry.tsv"))
             .bufferedReader()
             .useLines { lines ->
                 lines.filter { it.isNotBlank() && !it.startsWith('#') }.map { line ->
@@ -54,7 +54,7 @@ class ComparisonCorpusTest {
                     val result = engine.layout(case.source, MathLayoutOptions(fontSizePx = 44f))
                     when (case.invariant) {
                         ComparisonInvariant.OrdinarySubMlistBoundary -> {
-                            assertEquals(ComparisonOracle.TeXOrdinarySubMlistAndKaTeXOrdGroup, case.oracle)
+                            assertEquals(ComparisonOracle.TeXOrdinarySubMlist, case.oracle)
                             assertEquals(3, result.fragments.size, case.toString())
                             assertTrue(result.breakOpportunities.isEmpty(), case.toString())
                             assertTrue(result.decisions.any { it.name == "TeXOrdSubMlist" }, case.toString())
@@ -64,13 +64,13 @@ class ComparisonCorpusTest {
                             }, case.toString())
                         }
                         ComparisonInvariant.TightBinaryGlueSuppressed -> {
-                            assertEquals(ComparisonOracle.KaTeXTightSpacingTable, case.oracle)
+                            assertEquals(ComparisonOracle.XeTeXMlistToHlistSpacingTable, case.oracle)
                             val binary = result.decisions.filter { it.name == "TeXMathAtomSpacing" && it.range.start in 4..5 }
                             assertEquals(2, binary.size, case.toString())
                             assertTrue(binary.all { it.details["table"] == "tight" && it.details["kind"] == "None" }, case.toString())
                         }
                         ComparisonInvariant.CrampedNestedSuperscript -> {
-                            assertEquals(ComparisonOracle.KaTeXSuperscriptStyleTable, case.oracle)
+                            assertEquals(ComparisonOracle.XeTeXSuperscriptStyleFormula, case.oracle)
                             val z = result.box.glyphs.first { it.sourceRange == SourceRange(case.source.indexOf('z'), case.source.indexOf('z') + 1) }
                             assertEquals(MathStyle.ScriptScriptCramped, z.style, case.toString())
                         }
@@ -194,9 +194,9 @@ private data class CorpusCase(
 )
 
 private enum class ComparisonOracle(val corpusText: String) {
-    TeXOrdinarySubMlistAndKaTeXOrdGroup("TeX ordinary sub-mlist noad; KaTeX ord group"),
-    KaTeXTightSpacingTable("KaTeX spacingData tight table"),
-    KaTeXSuperscriptStyleTable("KaTeX Style.sup [S,Sc,S,Sc,SS,SSc,SS,SSc]"),
+    TeXOrdinarySubMlist("TeX ordinary sub-mlist noad"),
+    XeTeXMlistToHlistSpacingTable("XeTeX mlist_to_hlist 8x8 spacing table"),
+    XeTeXSuperscriptStyleFormula("XeTeX clean_box superscript style formula"),
     LaTeX2eXeTeXGenfracFixedTargets("LaTeX2e XeTeX genfrac fixed style targets"),
     OpenTypeMathKern("OpenType MATH MathKern two-height algorithm"),
     TectonicXeTeXBoxTrace("Tectonic 0.17.0 XeTeX box trace"),

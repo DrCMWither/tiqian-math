@@ -53,6 +53,7 @@ enum class MathConstructionPaintKind {
     Radical,
     Delimiter,
     Accent,
+    ExtensibleArrow,
 }
 
 enum class MathConstructionShapeKind {

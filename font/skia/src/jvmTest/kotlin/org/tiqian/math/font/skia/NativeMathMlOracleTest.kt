@@ -37,17 +37,19 @@ class NativeMathMlOracleTest {
 
     private fun compareFormula(actual: MathLayoutResult, oracle: OracleRow) {
         assertTrue(actual.diagnostics.isEmpty(), "$oracle: ${actual.diagnostics}")
-        // Chrome and Skia expose slightly different fractional advances, while both consume
-        // the same font. Native MathML does not expose TeX's terminal italic-correction kern,
-        // so compare the shared nucleus width rather than erasing that named TeX geometry.
+        // Native MathML joins adjacent variables into one row, while XeTeX completes every math
+        // noad with its own italic correction. Remove those named XeTeX boundaries when comparing
+        // the shared glyph advances from the same font.
         val terminalCorrection = actual.fragments.lastOrNull()?.trailingItalicCorrectionPx ?: 0f
-        val adjacencyExtras = if (oracle.case == "fraction-adjacency") {
-            val nullDelimiters = actual.decisions.single { it.name == "TeXFractionNullDelimiters" }
-            actual.fragments.first().trailingItalicCorrectionPx +
-                nullDelimiters.details.getValue("leftSpacePx").toFloat() +
-                nullDelimiters.details.getValue("rightSpacePx").toFloat()
-        } else {
-            0f
+        val adjacencyExtras = when (oracle.case) {
+            "fraction-adjacency" -> {
+                val nullDelimiters = actual.decisions.single { it.name == "TeXFractionNullDelimiters" }
+                actual.fragments.first().trailingItalicCorrectionPx +
+                    nullDelimiters.details.getValue("leftSpacePx").toFloat() +
+                    nullDelimiters.details.getValue("rightSpacePx").toFloat()
+            }
+            "variable-run" -> actual.fragments.dropLast(1).sumOf { it.trailingItalicCorrectionPx.toDouble() }.toFloat()
+            else -> 0f
         }
         assertNearCssPixel(
             oracle.width,
@@ -90,9 +92,24 @@ class NativeMathMlOracleTest {
                 val b = actual.exactGlyphAt(actual.source.indexOf('b'))
                 val c = actual.exactGlyphAt(actual.source.indexOf('c'))
                 oracle.assertProbe("aRight", a.x + a.advance, 0.35f)
-                oracle.assertProbe("bLeft", b.x, 0.35f)
-                oracle.assertProbe("bRight", b.x + b.advance, 0.35f)
-                oracle.assertProbe("cLeft", c.x, 0.35f)
+                assertNearCssPixel(
+                    actual.fragments[0].trailingItalicCorrectionPx,
+                    b.x - (a.x + a.advance),
+                    0.05f,
+                    "$oracle XeTeX a noad correction",
+                )
+                assertNearCssPixel(
+                    oracle.probes.getValue("bRight") - oracle.probes.getValue("bLeft"),
+                    b.advance,
+                    0.35f,
+                    "$oracle shared b glyph advance",
+                )
+                assertNearCssPixel(
+                    actual.fragments[1].trailingItalicCorrectionPx,
+                    c.x - (b.x + b.advance),
+                    0.05f,
+                    "$oracle XeTeX b noad correction",
+                )
             }
             "paired-scripts" -> {
                 val sup = actual.glyphAt(actual.source.indexOf('2'))

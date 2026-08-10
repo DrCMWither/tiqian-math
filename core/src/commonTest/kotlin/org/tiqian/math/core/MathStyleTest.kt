@@ -28,7 +28,7 @@ class MathStyleTest {
                 MathStyle.ScriptScriptCramped,
             ),
             MathStyle.entries.map { it.superscript() },
-            "KaTeX/TeX sup transition [S,Sc,S,Sc,SS,SSc,SS,SSc]",
+            "XeTeX clean_box sup transition 2*(style/4)+4+(style%2)",
         )
     }
 }

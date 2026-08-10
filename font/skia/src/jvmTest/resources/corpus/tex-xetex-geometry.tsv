@@ -1,8 +1,8 @@
-# KaTeX comparison revision and MIT attribution: /THIRD_PARTY_NOTICES.md
+# TeX/XeTeX/OpenType comparison corpus. Hard coordinates live in dedicated Tectonic oracle tests.
 # id	source	oracle	invariant
-ordinary-sub-mlist	a{+}b	TeX ordinary sub-mlist noad; KaTeX ord group	group is one Ord atom and edge Bin becomes Ord internally
-tight-spacing	x_{k-1}	KaTeX spacingData tight table	binary glue is suppressed in ScriptCramped
-cramped-superscript	\frac{a}{x^{y^z}}	KaTeX Style.sup [S,Sc,S,Sc,SS,SSc,SS,SSc]	nested denominator superscripts remain ScriptScriptCramped
+ordinary-sub-mlist	a{+}b	TeX ordinary sub-mlist noad	group is one Ord atom and edge Bin becomes Ord internally
+tight-spacing	x_{k-1}	XeTeX mlist_to_hlist 8x8 spacing table	binary glue is suppressed in ScriptCramped
+cramped-superscript	\frac{a}{x^{y^z}}	XeTeX clean_box superscript style formula	nested denominator superscripts remain ScriptScriptCramped
 script-binomial	\frac{a}{\binom{n}{k}}	LaTeX2e XeTeX genfrac fixed style targets	ScriptCramped uses 1.45 script em target with text-style delimiter selection
 math-kern	x_1^2	OpenType MATH MathKern two-height algorithm	parsed corner kerns participate in final script x
 operator-auto	\sum_i^n	TeX make_op displaylimits; OpenType MATH n-ary variants	Auto uses stacked limits only in display style and the operator follows the math axis

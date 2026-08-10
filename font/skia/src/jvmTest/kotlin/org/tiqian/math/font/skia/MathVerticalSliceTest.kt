@@ -220,7 +220,10 @@ class MathVerticalSliceTest {
             val noAfterScript = ConstantOverrideFace(realFace, shifted.copy(spaceAfterScript = 0))
             val widthWithout = MathLayoutEngine(noAfterScript).layout("x^2", MathLayoutOptions(fontSizePx = size)).box.width
             val widthWith = engine.layout("x^2", MathLayoutOptions(fontSizePx = size)).box.width
-            assertNear(19f, widthWith - widthWithout, "synthetic spaceAfterScript")
+            assertNear(0f, widthWith - widthWithout, "XeTeX default does not consume MATH SpaceAfterScript")
+            val explicitZero = engine.layout("x^2", MathLayoutOptions(fontSizePx = size, scriptSpacePx = 0f)).box.width
+            val explicitNineteen = engine.layout("x^2", MathLayoutOptions(fontSizePx = size, scriptSpacePx = 19f)).box.width
+            assertNear(19f, explicitNineteen - explicitZero, "explicit TeX scriptspace")
 
             val cramped = engine.layout("x_{y^z}", MathLayoutOptions(MathMode.Display, size))
             val y = cramped.glyphAt(3)

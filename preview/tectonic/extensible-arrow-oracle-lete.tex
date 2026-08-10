@@ -1,0 +1,32 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=400
+\showboxdepth=400
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-EXTENSIBLE-ARROW-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-EXTENSIBLE-ARROW-ORACLE-#1-END}%
+}
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/]{LeteSansMath-Regular.otf}
+\traceformula{RIGHT-UPPER}{X\xrightarrow{p_k}Y}
+\traceformula{RIGHT-BOTH}{X\xrightarrow[k-1]{p_k}Y}
+\traceformula{RIGHT-LONG}{X\xrightarrow{\alpha+\beta+\gamma}Y}
+\traceformula{LEFT-BOTH}{X\xleftarrow[k-1]{p_k}Y}
+\traceformula{SCRIPT-RIGHT}{A_{X\xrightarrow[k-1]{p_k}Y}}
+\traceformula{OVERSET}{a\overset{u}{=}b}
+\traceformula{UNDERSET}{a\underset{d}{+}b}
+\traceformula{STACKREL}{a\stackrel{def}{=}b}
+\traceformula{SCRIPT-P-K}{\scriptstyle p_k}
+\traceformula{SCRIPTSCRIPT-K}{\scriptscriptstyle k}
+\traceformula{ORD-ABC}{abc}
+\traceformula{ORD-X2}{x2}
+\traceformula{UPRIGHT-ABC}{\mathrm{abc}}
+\end{document}

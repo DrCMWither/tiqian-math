@@ -178,6 +178,8 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.UnclosedRadicalDegree,
         DiagnosticCode.MissingRadicalRadicand,
         DiagnosticCode.UnclosedRadicalRadicand,
+        DiagnosticCode.MissingExtensibleArrowLabel,
+        DiagnosticCode.UnclosedExtensibleArrowBelow,
         DiagnosticCode.MisplacedLimitsModifier,
         DiagnosticCode.MissingDelimiterAfterLeft,
         DiagnosticCode.MissingDelimiterAfterMiddle,
@@ -204,7 +206,9 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.InvalidHostTextRunEvidence -> MathFormulaCapabilityCategory.HostTextEvidenceInvalid
         DiagnosticCode.ReplayFaceOwnershipConflict -> MathFormulaCapabilityCategory.ReplayFaceOwnershipConflict
         DiagnosticCode.MissingMathConstruction -> MathFormulaCapabilityCategory.MissingMathConstruction
-        DiagnosticCode.MathVariantTooShort -> MathFormulaCapabilityCategory.InsufficientMathConstruction
+        DiagnosticCode.MathVariantTooShort,
+        DiagnosticCode.InvalidExtensibleArrowFill,
+        -> MathFormulaCapabilityCategory.InsufficientMathConstruction
         DiagnosticCode.MissingConstructionOutlineEvidence ->
             MathFormulaCapabilityCategory.ConstructionOutlineUnavailable
         DiagnosticCode.MissingGlyphOutlineEvidence ->

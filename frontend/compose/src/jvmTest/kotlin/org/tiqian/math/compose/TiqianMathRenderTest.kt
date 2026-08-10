@@ -620,6 +620,45 @@ class TiqianMathRenderTest {
             }
         }
     }
+
+    @Test
+    fun extensibleArrowAndOverUnderStacksReplayTheSharedLayoutWithoutCropping() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var measured: MeasureSnapshot? = null
+            var observed: MathLayoutResult? = null
+            ImageComposeScene(width = 640, height = 260, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    MeasureProbe(onMeasured = { measured = it }) {
+                        TiqianMath(
+                            source = "X\\xrightarrow[k-1]{p_k}Y+\\overset{u}{=}+\\underset{d}{x}",
+                            modifier = Modifier.padding(14.dp),
+                            mode = MathMode.Display,
+                            fontFace = face,
+                            style = TextStyle(fontSize = 34.sp, lineHeight = 58.sp, color = Color.Black),
+                            onMathLayout = { observed = it },
+                        )
+                    }
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                val snapshot = assertNotNull(measured)
+                val layout = assertNotNull(observed)
+                assertTrue(layout.diagnostics.isEmpty(), layout.diagnostics.toString())
+                assertEquals(1, layout.decisions.count { it.name == "AmsmathXeTeXExtensibleArrow" })
+                assertEquals(2, layout.decisions.count { it.name == "TeXOverUnderNoad" })
+                assertEquals(
+                    1,
+                    layout.box.constructionPaintGroups.count {
+                        it.kind == org.tiqian.math.core.MathConstructionPaintKind.ExtensibleArrow
+                    },
+                )
+                assertTrue(snapshot.firstBaseline in 14 until snapshot.height - 14)
+                val ink = darkPixelBounds(pixels)
+                assertTrue(ink.left >= 14 && ink.right < snapshot.width - 14, "arrow/stack ink is not horizontally cropped")
+                assertTrue(ink.top >= 14 && ink.bottom < snapshot.height - 14, "arrow/stack ink is not vertically cropped")
+            }
+        }
+    }
 }
 
 private data class MeasureSnapshot(val width: Int, val height: Int, val firstBaseline: Int)

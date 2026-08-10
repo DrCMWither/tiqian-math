@@ -402,6 +402,43 @@ private class ParserState(
             val argument = parseRequiredArgument(token, "rule decoration base")
             return MathRuleDecoration(kind, token.range, argument, token.range.cover(argument.range))
         }
+        overUnderCommands[token.text]?.let { kind ->
+            val annotation = parseRequiredArgument(token, "annotation")
+            val base = parseRequiredArgument(token, "base")
+            return MathOverUnder(
+                kind = kind,
+                annotation = annotation,
+                base = base,
+                atomClass = if (kind == MathOverUnderKind.StackRel) {
+                    MathAtomClass.Relation
+                } else {
+                    binRelClass(base)
+                },
+                commandRange = token.range,
+                range = token.range.cover(annotation.range).cover(base.range),
+            )
+        }
+        extensibleArrowCommands[token.text]?.let { identity ->
+            val below = parseOptionalExtensibleArrowBelow()
+            val above = parseRequiredArgument(token, "upper label")
+            if (above is MathErrorNode && above.range.isEmpty) {
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.MissingExtensibleArrowLabel,
+                    "Command \\${token.text} requires an upper label",
+                    token.range,
+                )
+            }
+            return MathExtensibleArrow(
+                identity = identity,
+                above = above,
+                below = below?.node,
+                commandRange = token.range,
+                belowRange = below?.range,
+                range = token.range
+                    .let { below?.range?.let(it::cover) ?: it }
+                    .cover(above.range),
+            )
+        }
         if (token.text == "boldsymbol") {
             val argument = parseRequiredArgument(token, "bold math version scope")
             return MathVersionScope(
@@ -1165,6 +1202,65 @@ private class ParserState(
         )
     }
 
+    private fun parseOptionalExtensibleArrowBelow(): ParsedOptionalMathList? {
+        skipIgnored()
+        val opening = peek()
+        if (opening.kind != MathTokenKind.Symbol || opening.text != "[") return null
+        advance()
+
+        val children = mutableListOf<MathNode>()
+        var closing: MathToken? = null
+        while (true) {
+            skipIgnored()
+            val token = peek()
+            when {
+                token.kind == MathTokenKind.End -> {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.UnclosedExtensibleArrowBelow,
+                        "Optional extensible-arrow lower label opened here is not closed with ]",
+                        opening.range,
+                    )
+                    break
+                }
+                token.kind == MathTokenKind.Symbol && token.text == "]" -> {
+                    closing = advance()
+                    break
+                }
+                token.kind == MathTokenKind.CloseGroup -> {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.UnclosedExtensibleArrowBelow,
+                        "Optional extensible-arrow lower label is not closed before this group ends",
+                        opening.range.cover(token.range),
+                    )
+                    break
+                }
+                else -> parseAtomWithScripts()?.let { children.appendParsedNode(it) }
+            }
+        }
+        val bodyRange = if (children.isEmpty()) {
+            SourceRange(opening.range.endExclusive, opening.range.endExclusive)
+        } else {
+            children.first().range.cover(children.last().range)
+        }
+        val range = closing?.let { opening.range.cover(it.range) } ?: opening.range.cover(bodyRange)
+        return ParsedOptionalMathList(
+            node = MathList(children, bodyRange),
+            range = range,
+        )
+    }
+
+    private fun binRelClass(node: MathNode): MathAtomClass = when (node) {
+        is MathSymbol -> node.atomClass.takeIf { it == MathAtomClass.Binary || it == MathAtomClass.Relation }
+        is MathExtensibleArrow -> MathAtomClass.Relation
+        is MathOverUnder -> node.atomClass.takeIf { it == MathAtomClass.Binary || it == MathAtomClass.Relation }
+        is MathScripts -> binRelClass(node.base).takeIf { it == MathAtomClass.Binary || it == MathAtomClass.Relation }
+        is MathGroup -> node.body.children.singleOrNull()?.let(::binRelClass)
+            ?.takeIf { it == MathAtomClass.Binary || it == MathAtomClass.Relation }
+        is MathList -> node.children.singleOrNull()?.let(::binRelClass)
+            ?.takeIf { it == MathAtomClass.Binary || it == MathAtomClass.Relation }
+        else -> null
+    } ?: MathAtomClass.Ordinary
+
     private fun parseRadicalRadicand(command: MathToken): MathNode {
         skipIgnored()
         val next = peek()
@@ -1283,6 +1379,17 @@ private class ParserState(
             "underline" to MathRuleDecorationKind.Underline,
         )
 
+        val overUnderCommands = mapOf(
+            "overset" to MathOverUnderKind.Overset,
+            "underset" to MathOverUnderKind.Underset,
+            "stackrel" to MathOverUnderKind.StackRel,
+        )
+
+        val extensibleArrowCommands = mapOf(
+            "xleftarrow" to MathExtensibleArrowIdentity.Left,
+            "xrightarrow" to MathExtensibleArrowIdentity.Right,
+        )
+
         val textControlSymbols = mapOf(
             " " to " ",
             "," to "\u2009",
@@ -1376,6 +1483,11 @@ private class ParserState(
 
     private data class ParsedRadicalDegree(
         val node: MathNode?,
+        val range: SourceRange,
+    )
+
+    private data class ParsedOptionalMathList(
+        val node: MathNode,
         val range: SourceRange,
     )
 

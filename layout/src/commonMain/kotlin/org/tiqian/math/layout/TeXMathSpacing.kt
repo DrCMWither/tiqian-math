@@ -3,7 +3,7 @@ package org.tiqian.math.layout
 import org.tiqian.math.core.MathAtomClass
 import org.tiqian.math.core.MathGlueKind
 
-/** TeX/KaTeX atom-spacing matrices. Missing entries are explicit zero glue. */
+/** XeTeX `mlist_to_hlist` 8x8 noad-spacing matrix. Missing entries are explicit zero glue. */
 internal object TeXMathSpacing {
     fun kind(left: MathAtomClass, right: MathAtomClass, tight: Boolean): MathGlueKind =
         (if (tight) tightTable else normalTable)[left to right] ?: MathGlueKind.None

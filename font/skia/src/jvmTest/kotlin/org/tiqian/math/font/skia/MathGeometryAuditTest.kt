@@ -127,12 +127,12 @@ class MathGeometryAuditTest {
         val grouped = engine.layout("a{b}c", MathLayoutOptions(fontSizePx = 40f))
 
         assertEquals(plain.box.glyphs.map { it.glyphId }, grouped.box.glyphs.map { it.glyphId })
-        assertEquals(1, plain.fragments.size, "$label plain compatible Ord sequence is one shaped run")
+        assertEquals(3, plain.fragments.size, "$label XeTeX keeps plain Ord noads separate")
         assertEquals(3, grouped.fragments.size, "$label braces interrupt the outer shaping run")
         assertTrue(plain.decisions.any {
-            it.name == "TeXCompatibleOrdRunShaping" && it.range == SourceRange(0, 3)
+            it.name == "XeTeXNativeMathOrdNoadSequence" && it.range == SourceRange(0, 3)
         })
-        assertTrue(grouped.decisions.none { it.name == "TeXCompatibleOrdRunShaping" })
+        assertTrue(grouped.decisions.none { it.name == "XeTeXNativeMathOrdNoadSequence" })
         assertTrue(grouped.decisions.any { it.name == "TeXOrdSubMlist" })
 
         val parenthesized = engine.layout("(\\frac{a}{b})", MathLayoutOptions(fontSizePx = 40f))

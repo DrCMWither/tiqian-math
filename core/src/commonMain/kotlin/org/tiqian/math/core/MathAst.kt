@@ -376,6 +376,44 @@ data class MathRuleDecoration(
     val atomClass: MathAtomClass get() = MathAtomClass.Ordinary
 }
 
+/** TeX/amsmath over-under constructions whose annotation is a real math list. */
+enum class MathOverUnderKind {
+    Overset,
+    Underset,
+    StackRel,
+}
+
+data class MathOverUnder(
+    val kind: MathOverUnderKind,
+    val annotation: MathNode,
+    val base: MathNode,
+    /** `\stackrel` is Rel; `\overset`/`\underset` retain Bin/Rel bases and otherwise become Ord. */
+    val atomClass: MathAtomClass,
+    val commandRange: SourceRange,
+    override val range: SourceRange,
+) : MathNode
+
+enum class MathExtensibleArrowIdentity(
+    val debugName: String,
+    val arrowHeadScalar: Int,
+) {
+    Left("xleftarrow", 0x2190),
+    Right("xrightarrow", 0x2192),
+}
+
+/** An amsmath extensible relation arrow with script-style labels above and optionally below. */
+data class MathExtensibleArrow(
+    val identity: MathExtensibleArrowIdentity,
+    val above: MathNode,
+    val below: MathNode?,
+    val commandRange: SourceRange,
+    /** Includes the square brackets when an optional lower label was present. */
+    val belowRange: SourceRange?,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = MathAtomClass.Relation
+}
+
 /** Explicit TeX math space, resolved in mu units at the active math style's font size. */
 data class MathExplicitSpace(
     val command: String,

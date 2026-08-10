@@ -31,26 +31,27 @@ class SecondAuditGeometryTest {
     }
 
     @Test
-    fun compatibleOrdNoadsShapeAsOneRunWithSourceClustersAndOneFinalCorrection() = withSecondAuditFaces { label, face ->
+    fun nativeOrdNoadsMatchXeTeXPerCharacterFieldsAndCorrections() = withSecondAuditFaces { label, face ->
         val engine = MathLayoutEngine(face)
-        val continuous = engine.layout("abc", MathLayoutOptions(fontSizePx = 40f))
-        assertEquals(1, continuous.fragments.size, "$label compatible Ord noads are one fragment")
-        assertEquals(SourceRange(0, 3), continuous.fragments.single().sourceRange)
+        val continuous = engine.layout("abc", MathLayoutOptions(fontSizePx = 32f))
+        assertEquals(3, continuous.fragments.size, "$label XeTeX keeps one native math field per noad")
         assertEquals(
             listOf(SourceRange(0, 1), SourceRange(1, 2), SourceRange(2, 3)),
             continuous.box.glyphs.map { it.sourceRange }.distinct(),
-            "$label backend clusters map to original symbols",
+            "$label native glyph fields map to original symbols",
         )
-        val runDecision = continuous.decisions.single { it.name == "TeXCompatibleOrdRunShaping" }
+        val runDecision = continuous.decisions.single { it.name == "XeTeXNativeMathOrdNoadSequence" }
         assertEquals("3", runDecision.details["noadCount"])
-        assertEquals("one-shaping-call-final-glyph-correction", runDecision.details["policy"])
-        val finalGlyph = continuous.box.glyphs.last().glyphId
-        val expected = face.mathFont.italicCorrection(finalGlyph, 40f)
-        assertNear(expected, continuous.fragments.single().trailingItalicCorrectionPx, "$label run final glyph")
+        assertEquals("OneNativeMathGlyphFieldPerSourceNoad", runDecision.details["shapingPolicy"])
+        continuous.fragments.zip(continuous.box.glyphs).forEachIndexed { index, (fragment, glyph) ->
+            val expected = face.mathFont.italicCorrection(glyph.glyphId, 32f)
+            assertNear(expected, fragment.trailingItalicCorrectionPx, "$label noad $index correction")
+        }
+        val expectedWidthPt = if (label.startsWith("Lete")) 39.21852f else 35.94228f
         assertNear(
-            continuous.fragments.single().box.width + expected,
+            expectedWidthPt * 96f / 72.27f,
             continuous.box.width,
-            "$label formula includes its terminal correction",
+            "$label reviewed Tectonic 0.17 abc width",
         )
     }
 
@@ -193,7 +194,7 @@ class SecondAuditGeometryTest {
         assertTrue(letters.breakOpportunities.isEmpty(), label)
         val oneOverflow = letters.breakIntoLines(letters.box.width / 3f)
         assertEquals(1, oneOverflow.lines.size, label)
-        assertEquals(1, oneOverflow.lines.single().fragments.size, label)
+        assertEquals(6, oneOverflow.lines.single().fragments.size, label)
         assertTrue(oneOverflow.lines.single().unbreakableOverflow, label)
 
         val operator = engine.layout("a+b", MathLayoutOptions(fontSizePx = 40f))

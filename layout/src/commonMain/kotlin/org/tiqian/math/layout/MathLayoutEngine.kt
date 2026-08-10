@@ -15,6 +15,7 @@ import org.tiqian.math.parser.MacroExpansionLimits
 import org.tiqian.math.parser.MathFormulaParser
 import org.tiqian.math.parser.MathMacroDefinition
 import org.tiqian.math.parser.MathParser
+import kotlin.math.floor
 import kotlin.math.max
 
 data class MathLayoutOptions(
@@ -29,7 +30,8 @@ data class MathLayoutOptions(
     val nullDelimiterSpacePx: Float? = null,
     /**
      * Formula-scoped equivalent of TeX's `\scriptspace`; fixed across math styles.
-     * Null keeps the selected OpenType MATH font's `SpaceAfterScript` constant.
+     * Null keeps plain TeX/XeTeX's 0.5pt value. The OpenType MATH `SpaceAfterScript`
+     * constant remains available to non-TeX dialects, but is not XeTeX's default.
      */
     val scriptSpacePx: Float? = null,
     /** Plain-TeX `\delimiterfactor`; 901 means roughly 90.1% of the axis-symmetric span. */
@@ -109,7 +111,8 @@ private class MathLayoutPass(
     private val decisions = mutableListOf<MathLayoutDecision>()
     private var baseFontSizePx: Float = 24f
     private var nullDelimiterSpacePx: Float = 2.88f
-    private var explicitScriptSpacePx: Float? = null
+    private var scriptSpacePx: Float = DEFAULT_SCRIPT_SPACE_PT * TEX_POINT_TO_PX
+    private var scriptSpacePolicy: String = "PlainTeXXeTeXScriptSpace"
     private var delimiterFactor: Int = 901
     private var delimiterShortfallPx: Float = 12f
     private var textLocale: String? = null
@@ -184,7 +187,12 @@ private class MathLayoutPass(
         nextConstructionPaintGroupId = 1
         nullDelimiterSpacePx = options.nullDelimiterSpacePx
             ?: options.fontSizePx * DEFAULT_NULL_DELIMITER_SPACE_EM
-        explicitScriptSpacePx = options.scriptSpacePx
+        scriptSpacePx = options.scriptSpacePx ?: DEFAULT_SCRIPT_SPACE_PT * TEX_POINT_TO_PX
+        scriptSpacePolicy = if (options.scriptSpacePx == null) {
+            "PlainTeXXeTeXScriptSpace"
+        } else {
+            "ExplicitTeXScriptSpace"
+        }
         delimiterFactor = options.delimiterFactor
         delimiterShortfallPx = options.delimiterShortfallPx
             ?: options.fontSizePx * DEFAULT_DELIMITER_SHORTFALL_EM
@@ -279,6 +287,8 @@ private class MathLayoutPass(
         is MathText -> layoutText(node, style)
         is MathAccent -> layoutAccent(node, style, alphabetOverride)
         is MathRuleDecoration -> layoutRuleDecoration(node, style, alphabetOverride)
+        is MathOverUnder -> layoutOverUnder(node, style, alphabetOverride)
+        is MathExtensibleArrow -> layoutExtensibleArrow(node, style, alphabetOverride)
         is MathExplicitSpace -> layoutExplicitSpace(node, style)
         is MathTable -> layoutTable(node, style, alphabetOverride)
         is MathDisplayEnvironment -> layoutDisplayEnvironment(node, alphabetOverride)
@@ -1350,103 +1360,6 @@ private class MathLayoutPass(
                 else -> ScriptBaseKind.Character
             },
         )
-    }
-
-    private fun layoutSymbolRun(items: List<PendingHorizontalItem>): HorizontalItem {
-        require(items.size >= 2)
-        val symbols = items.map { it.node as MathSymbol }
-        val style = items.first().style
-        val requests = items.map { symbolRequest(it.node as MathSymbol, it.style, it.alphabetOverride) }
-        val size = fontSize(style)
-        val resolved = glyphSource.resolveSymbols(requests, size)
-        val coveredRange = SourceRange(symbols.first().range.start, symbols.last().range.endExclusive)
-        val finalGlyph = resolved.run.glyphs.lastOrNull()
-        val finalItalicCorrection = finalGlyph
-            ?.let { mathFontForFaceOrNull(it.faceId)?.italicCorrection(it.glyphId, size) }
-            ?: 0f
-
-        symbols.indices.forEach { index ->
-            val symbol = symbols[index]
-            val request = requests[index]
-            val glyphIds = resolved.run.glyphs.indices
-                .filter { resolved.glyphSourceRanges[it] == symbol.range }
-                .map { resolved.run.glyphs[it].glyphId }
-            if (!resolved.supported[index]) {
-                diagnostics += MathDiagnostic(
-                    DiagnosticCode.UnsupportedMathAlphabet,
-                    "The selected formula-wide math face cannot resolve ${symbol.identity.debugName} " +
-                        "in ${request.family}/${request.alphabet}",
-                    symbol.range,
-                )
-            }
-            if (glyphIds.any { it == 0.toUShort() }) {
-                diagnostics += MathDiagnostic(
-                    DiagnosticCode.MissingGlyph,
-                    "The selected formula-wide math face has no ${request.family}/${request.alphabet} glyph " +
-                        "for ${symbol.identity.debugName}",
-                    symbol.range,
-                )
-            }
-            decision(
-                "TeXMathSymbolResolution",
-                symbol.range,
-                "sourceText" to symbol.sourceText,
-                "identity" to symbol.identity.debugName,
-                "baseScalar" to unicodeLabel(symbol.identity.baseScalar),
-                "atomClass" to symbol.atomClass,
-                "familyBinding" to symbol.familyBinding,
-                "declaredFamily" to symbol.family,
-                "declaredAlphabet" to symbol.alphabet,
-                "resolvedFamily" to request.family,
-                "resolvedAlphabet" to request.alphabet,
-                "backendScalar" to unicodeLabel(resolved.backendScalars[index]),
-                "glyphIds" to glyphIds.joinToString(","),
-                "faceIds" to resolved.run.glyphs.indices
-                    .filter { resolved.glyphSourceRanges[it] == symbol.range }
-                    .joinToString(",") { resolved.run.glyphs[it].faceId.toString() },
-                "italicCorrectionPx" to if (index == symbols.lastIndex) finalItalicCorrection else 0f,
-                "shaping" to "compatible-ord-run",
-            )
-        }
-        val placements = resolved.run.glyphs.mapIndexed { index, glyph ->
-            MathGlyphPlacement(
-                glyphId = glyph.glyphId,
-                x = glyph.x,
-                baselineY = glyph.baselineOffsetPx,
-                advance = glyph.advance,
-                inkBounds = glyph.inkBounds.translated(glyph.x, glyph.baselineOffsetPx),
-                fontSizePx = size,
-                sourceRange = resolved.glyphSourceRanges[index],
-                style = style,
-                faceId = glyph.faceId,
-                fontClass = glyph.fontClass,
-                requestedWeight = glyph.requestedWeight,
-                resolvedWeight = glyph.resolvedWeight,
-                fallbackReason = glyph.fallbackReason,
-            )
-        }
-        val runNode = MathList(symbols, coveredRange)
-        decision(
-            "TeXCompatibleOrdRunShaping",
-            coveredRange,
-            "noadCount" to symbols.size,
-            "family" to requests.first().family,
-            "alphabet" to requests.first().alphabet,
-            "style" to style,
-            "backendScalars" to resolved.backendScalars.joinToString(",") { unicodeLabel(it) },
-            "glyphIds" to resolved.run.glyphs.joinToString(",") { it.glyphId.toString() },
-            "finalItalicCorrectionPx" to finalItalicCorrection,
-            "policy" to "one-shaping-call-final-glyph-correction",
-        )
-        val laid = LaidNode(
-            node = runNode,
-            box = geometryExtents(resolved.run.width, placements, emptyList(), coveredRange),
-            atomClass = MathAtomClass.Ordinary,
-            italicCorrectionPx = finalItalicCorrection,
-            style = style,
-            scriptBaseKind = ScriptBaseKind.CompoundBox,
-        )
-        return HorizontalItem(runNode, laid, MathGlueAdjustment.Zero, MathAtomClass.Ordinary)
     }
 
     private fun symbolRequest(
@@ -3204,81 +3117,440 @@ private class MathLayoutPass(
         val base = rawBase.copy(box = rawBase.box.completedTeXBox())
         val upper = node.superscript
             ?.let { layoutNode(it, style.superscript(), alphabetOverride) }
-            ?.let { it.copy(box = it.box.completedTeXBox()) }
+            ?.completedTeXMathField()
         val lower = node.subscript
             ?.let { layoutNode(it, style.subscript(), alphabetOverride) }
-            ?.let { it.copy(box = it.box.completedTeXBox()) }
-        val upperGapMin = scale(constants.upperLimitGapMin, style)
-        val upperBaselineRiseMin = scale(constants.upperLimitBaselineRiseMin, style)
-        val lowerGapMin = scale(constants.lowerLimitGapMin, style)
-        val lowerBaselineDropMin = scale(constants.lowerLimitBaselineDropMin, style)
-        val upperShift = upper?.let {
-            base.box.ascent + max(upperBaselineRiseMin, it.box.descent + upperGapMin)
-        }
-        val lowerShift = lower?.let {
-            base.box.descent + max(lowerBaselineDropMin, it.box.ascent + lowerGapMin)
-        }
-        val halfItalicCorrection = base.italicCorrectionPx / 2f
-        val logicalWidth = maxOf(
-            base.box.width,
-            upper?.box?.width ?: 0f,
-            lower?.box?.width ?: 0f,
-        )
-        val baseX = (logicalWidth - base.box.width) / 2f
-        val upperX = upper?.let { (logicalWidth - it.box.width) / 2f + halfItalicCorrection }
-        val lowerX = lower?.let { (logicalWidth - it.box.width) / 2f - halfItalicCorrection }
-        val shiftedBase = base.box.translated(baseX, 0f)
-        val shiftedUpper = upper?.let { it.box.translated(upperX!!, -upperShift!!) }
-        val shiftedLower = lower?.let { it.box.translated(lowerX!!, lowerShift!!) }
-        val actualUpperGap = upper?.let { upperShift!! - base.box.ascent - it.box.descent }
-        val actualUpperRise = upperShift?.minus(base.box.ascent)
-        val actualLowerGap = lower?.let { lowerShift!! - base.box.descent - it.box.ascent }
-        val actualLowerDrop = lowerShift?.minus(base.box.descent)
+            ?.completedTeXMathField()
+        val placement = placeStackedLimits(base, upper, lower, style, base.italicCorrectionPx, node.range)
         decision(
             "OpenTypeMathOperatorLimits",
             node.range,
             "style" to style,
             "upperStyle" to upper?.style,
             "lowerStyle" to lower?.style,
-            "upperLimitGapMinPx" to upperGapMin,
-            "upperLimitBaselineRiseMinPx" to upperBaselineRiseMin,
-            "lowerLimitGapMinPx" to lowerGapMin,
-            "lowerLimitBaselineDropMinPx" to lowerBaselineDropMin,
-            "upperShiftPx" to upperShift,
-            "lowerShiftPx" to lowerShift,
-            "actualUpperGapPx" to actualUpperGap,
-            "actualUpperBaselineRisePx" to actualUpperRise,
-            "actualLowerGapPx" to actualLowerGap,
-            "actualLowerBaselineDropPx" to actualLowerDrop,
+            "upperLimitGapMinPx" to placement.upperGapMin,
+            "upperLimitBaselineRiseMinPx" to placement.upperBaselineRiseMin,
+            "lowerLimitGapMinPx" to placement.lowerGapMin,
+            "lowerLimitBaselineDropMinPx" to placement.lowerBaselineDropMin,
+            "upperOuterPaddingPx" to placement.upperOuterPadding,
+            "lowerOuterPaddingPx" to placement.lowerOuterPadding,
+            "outerLimitPaddingPolicy" to "XeTeXBigOpSpacing5FromOpenTypeMATHStackGapMin",
+            "upperShiftPx" to placement.upperShift,
+            "lowerShiftPx" to placement.lowerShift,
+            "actualUpperGapPx" to placement.actualUpperGap,
+            "actualUpperBaselineRisePx" to placement.actualUpperRise,
+            "actualLowerGapPx" to placement.actualLowerGap,
+            "actualLowerBaselineDropPx" to placement.actualLowerDrop,
             "operatorItalicCorrectionPx" to base.italicCorrectionPx,
-            "upperCenterOffsetPx" to halfItalicCorrection,
-            "lowerCenterOffsetPx" to -halfItalicCorrection,
-            "logicalWidthPx" to logicalWidth,
+            "upperCenterOffsetPx" to placement.halfItalicCorrection,
+            "lowerCenterOffsetPx" to -placement.halfItalicCorrection,
+            "logicalWidthPx" to placement.logicalWidth,
             "logicalWidthPolicy" to "max-unskewed-operator-and-limits",
             "operatorWidthPx" to base.box.width,
             "upperWidthPx" to upper?.box?.width,
             "lowerWidthPx" to lower?.box?.width,
-            "operatorX" to baseX,
-            "upperX" to upperX,
-            "lowerX" to lowerX,
+            "operatorX" to placement.baseX,
+            "upperX" to placement.upperX,
+            "lowerX" to placement.lowerX,
         )
         return LaidNode(
             node = node,
-            box = geometryExtentsPreservingLogicalChildren(
-                logicalWidth,
-                shiftedBase.glyphs + shiftedUpper?.glyphs.orEmpty() + shiftedLower?.glyphs.orEmpty(),
-                shiftedBase.rules + shiftedUpper?.rules.orEmpty() + shiftedLower?.rules.orEmpty(),
-                node.range,
-                buildList {
-                    add(base.box to 0f)
-                    upper?.let { add(it.box to -upperShift!!) }
-                    lower?.let { add(it.box to lowerShift!!) }
-                },
-            ),
+            box = placement.box,
             atomClass = MathAtomClass.Operator,
             italicCorrectionPx = 0f,
             style = style,
             scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutOverUnder(
+        node: MathOverUnder,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val base = layoutNode(node.base, style, alphabetOverride)
+            .let { it.copy(box = it.box.completedTeXBox()) }
+        val annotationStyle = when (node.kind) {
+            MathOverUnderKind.Underset -> style.subscript()
+            MathOverUnderKind.Overset, MathOverUnderKind.StackRel -> style.superscript()
+        }
+        val annotation = layoutNode(node.annotation, annotationStyle, alphabetOverride)
+            .completedTeXMathField()
+        val upper = annotation.takeIf { node.kind != MathOverUnderKind.Underset }
+        val lower = annotation.takeIf { node.kind == MathOverUnderKind.Underset }
+        // amsmath overset/underset suppress operator slant; stackrel retains TeX mathop skew.
+        val italicCorrection = if (node.kind == MathOverUnderKind.StackRel) base.italicCorrectionPx else 0f
+        val placement = placeStackedLimits(base, upper, lower, style, italicCorrection, node.range)
+        decision(
+            "TeXOverUnderNoad",
+            node.range,
+            "kind" to node.kind,
+            "atomClass" to node.atomClass,
+            "style" to style,
+            "annotationStyle" to annotationStyle,
+            "commandRange" to node.commandRange,
+            "baseRange" to node.base.range,
+            "annotationRange" to node.annotation.range,
+            "upperLimitGapMinPx" to placement.upperGapMin,
+            "upperLimitBaselineRiseMinPx" to placement.upperBaselineRiseMin,
+            "lowerLimitGapMinPx" to placement.lowerGapMin,
+            "lowerLimitBaselineDropMinPx" to placement.lowerBaselineDropMin,
+            "upperOuterPaddingPx" to placement.upperOuterPadding,
+            "lowerOuterPaddingPx" to placement.lowerOuterPadding,
+            "outerLimitPaddingPolicy" to "XeTeXBigOpSpacing5FromOpenTypeMATHStackGapMin",
+            "upperShiftPx" to placement.upperShift,
+            "lowerShiftPx" to placement.lowerShift,
+            "actualUpperGapPx" to placement.actualUpperGap,
+            "actualLowerGapPx" to placement.actualLowerGap,
+            "baseItalicCorrectionPx" to base.italicCorrectionPx,
+            "usedItalicCorrectionPx" to italicCorrection,
+            "logicalWidthPx" to placement.logicalWidth,
+            "baseX" to placement.baseX,
+            "annotationX" to (placement.upperX ?: placement.lowerX),
+            "geometryKernel" to "OpenTypeMathUpperLowerLimitConstants",
+            "baseShiftPolicy" to if (node.kind == MathOverUnderKind.StackRel) {
+                "TeXMathOpRelationBase"
+            } else {
+                "AmsmathSuppressBaseShift"
+            },
+        )
+        return LaidNode(
+            node = node,
+            box = placement.box,
+            atomClass = node.atomClass,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutForMeasurement(
+        node: MathNode,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): MeasurementLayoutNode {
+        val decisionStart = decisions.size
+        val diagnosticStart = diagnostics.size
+        val constructionGroupStart = nextConstructionPaintGroupId
+        val laid = layoutNode(node, style, alphabetOverride).completedTeXMathField()
+        val measurementDecisions = decisions.subList(decisionStart, decisions.size).toList()
+        val measurementDiagnostics = diagnostics.subList(diagnosticStart, diagnostics.size).toList()
+        decisions.subList(decisionStart, decisions.size).clear()
+        diagnostics.subList(diagnosticStart, diagnostics.size).clear()
+        nextConstructionPaintGroupId = constructionGroupStart
+        return MeasurementLayoutNode(laid, measurementDiagnostics, measurementDecisions)
+    }
+
+    private fun layoutExtensibleArrow(
+        node: MathExtensibleArrow,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val upperStyle = style.superscript()
+        val lowerStyle = style.subscript()
+        val upper = layoutNode(node.above, upperStyle, alphabetOverride)
+            .completedTeXMathField()
+        val lower = node.below?.let { below ->
+            layoutNode(below, lowerStyle, alphabetOverride).completedTeXMathField()
+        }
+        // amsmath measures both labels in a fresh scriptstyle box, even when the arrow itself is
+        // nested in Script/ScriptScript. The measurement is not painted and must not leak its
+        // decisions or construction ownership into the production result.
+        val measuredUpper = layoutForMeasurement(node.above, MathStyle.Script, alphabetOverride)
+        val measuredLower = node.below?.let { layoutForMeasurement(it, MathStyle.Script, alphabetOverride) }
+        (measuredUpper.diagnostics + measuredLower?.diagnostics.orEmpty()).forEach { diagnostic ->
+            if (diagnostic !in diagnostics) diagnostics += diagnostic
+        }
+
+        val arrowStyle = MathStyle.Display
+        val arrowSize = fontSize(arrowStyle)
+        val measurementMu = fontSize(MathStyle.Script) / TEX_MU_PER_EM
+        val measureLeftMu = if (node.identity == MathExtensibleArrowIdentity.Right) 5f else 9f
+        val measureRightMu = if (node.identity == MathExtensibleArrowIdentity.Right) 9f else 5f
+        val measuredLabelWidth = max(
+            measuredUpper.node.box.width,
+            measuredLower?.node?.box?.width ?: 0f,
+        )
+        val labelTargetWidth = measuredLabelWidth + (measureLeftMu + measureRightMu) * measurementMu
+
+        val arrowHeadCandidates = constructionBaseCandidates(
+            scalarString(node.identity.arrowHeadScalar), arrowSize, node.commandRange,
+        )
+        val relbarCandidates = constructionBaseCandidates(AMSMATH_RELBAR, arrowSize, node.commandRange)
+        val faceEvidence = arrowHeadCandidates.firstNotNullOfOrNull { head ->
+            val headGlyph = head.run.glyphs.singleOrNull()
+            if (head.run.missingGlyph || headGlyph == null) return@firstNotNullOfOrNull null
+            relbarCandidates.firstOrNull { bar ->
+                val barGlyph = bar.run.glyphs.singleOrNull()
+                !bar.run.missingGlyph && barGlyph != null && barGlyph.faceId == headGlyph.faceId
+            }?.let { bar -> AmsmathArrowFaceEvidence(headGlyph.faceId, head, bar) }
+        }
+        if (faceEvidence == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingGlyph,
+                "${node.identity.debugName} requires one math face containing both the arrow head and U+2212 relbar",
+                node.commandRange,
+            )
+            return LaidNode(
+                node = node,
+                box = emptyBox(node.range),
+                atomClass = MathAtomClass.Relation,
+                italicCorrectionPx = 0f,
+                style = style,
+                scriptBaseKind = ScriptBaseKind.CompoundBox,
+            )
+        }
+
+        val headRun = faceEvidence.head.run
+        val relbarRun = faceEvidence.relbar.run
+        val headGlyph = headRun.glyphs.single()
+        val relbarGlyph = relbarRun.glyphs.single()
+        val fillMu = arrowSize / TEX_MU_PER_EM
+        val endpointOverlap = 7f * fillMu
+        val leaderInnerOverlap = 2f * fillMu
+        val leftRun = if (node.identity == MathExtensibleArrowIdentity.Left) headRun else relbarRun
+        val rightRun = if (node.identity == MathExtensibleArrowIdentity.Right) headRun else relbarRun
+        val leftGlyph = leftRun.glyphs.single()
+        val rightGlyph = rightRun.glyphs.single()
+        val naturalFillWidth = leftRun.width + rightRun.width - 2f * endpointOverlap
+        val leaderBoxWidth = relbarRun.width - 2f * leaderInnerOverlap
+        if (naturalFillWidth < 0f || leaderBoxWidth <= 0f) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.InvalidExtensibleArrowFill,
+                "${node.identity.debugName} cannot form positive amsmath leader geometry from the selected glyph advances",
+                node.commandRange,
+            )
+        }
+        val targetWidth = max(naturalFillWidth.coerceAtLeast(0f), labelTargetWidth)
+        val leaderGlueWidth = (targetWidth - naturalFillWidth).coerceAtLeast(0f)
+        val leaderCount = if (leaderBoxWidth > 0f) floor(leaderGlueWidth / leaderBoxWidth).toInt() else 0
+        val centeredLeaderRemainder = if (leaderCount > 0) {
+            (leaderGlueWidth - leaderCount * leaderBoxWidth) / 2f
+        } else {
+            leaderGlueWidth / 2f
+        }
+        val leaderGlueStart = leftRun.width - endpointOverlap
+        val leaderOrigins = List(leaderCount) { index ->
+            leaderGlueStart + centeredLeaderRemainder + index * leaderBoxWidth - leaderInnerOverlap
+        }
+        val rightOrigin = targetWidth - rightRun.width
+        val group = MathConstructionPaintGroup(
+            id = nextConstructionPaintGroupId++,
+            kind = MathConstructionPaintKind.ExtensibleArrow,
+            shapeKind = MathConstructionShapeKind.Assembly,
+            sourceRange = node.commandRange,
+            outlinePolicy = MathConstructionOutlinePolicy.RequireOutlineUnion,
+            faceId = faceEvidence.faceId,
+        )
+        fun placement(glyph: MeasuredMathGlyph, x: Float): MathGlyphPlacement = MathGlyphPlacement(
+            glyphId = glyph.glyphId,
+            x = x,
+            baselineY = 0f,
+            advance = glyph.advance,
+            inkBounds = glyph.inkBounds.translated(x, 0f),
+            fontSizePx = arrowSize,
+            sourceRange = node.commandRange,
+            style = arrowStyle,
+            constructionGroupId = group.id,
+            faceId = glyph.faceId,
+            fontClass = glyph.fontClass,
+            requestedWeight = glyph.requestedWeight,
+            resolvedWeight = glyph.resolvedWeight,
+            fallbackReason = glyph.fallbackReason,
+        )
+        val arrowGlyphs = buildList {
+            add(placement(leftGlyph, 0f))
+            leaderOrigins.forEach { add(placement(relbarGlyph, it)) }
+            add(placement(rightGlyph, rightOrigin))
+        }
+        val outlinesReplayable = faceEvidence.head.outlineCapability == MathConstructionOutlineCapability.Replayable &&
+            faceEvidence.relbar.outlineCapability == MathConstructionOutlineCapability.Replayable
+        if (!outlinesReplayable) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingConstructionOutlineEvidence,
+                "The math font adapter cannot replay the complete ${node.identity.debugName} arrow fill",
+                node.commandRange,
+            )
+        }
+        val arrowInkBox = geometryExtents(
+            targetWidth,
+            arrowGlyphs,
+            emptyList(),
+            node.commandRange,
+            listOf(group),
+        )
+        // amsmath smashes every relbar vertically; only the terminal arrow head contributes the
+        // nucleus height/depth. Painted relbar ink remains in inkBounds and in the semantic union.
+        val arrowBox = arrowInkBox.copy(
+            ascent = headRun.ascent,
+            descent = headRun.descent,
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = headRun.ascent,
+                descent = headRun.descent,
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = setOf(MathTeXCleanBoxEvidence.GlyphOutline),
+            ),
+        )
+        val arrowBase = LaidNode(
+            node = node,
+            box = arrowBox,
+            atomClass = MathAtomClass.Operator,
+            italicCorrectionPx = 0f,
+            style = arrowStyle,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+        fun paddedLimit(limit: LaidNode?, limitStyle: MathStyle): LaidNode? = limit?.let {
+            val threeMu = 3f * fontSize(limitStyle) / TEX_MU_PER_EM
+            val leftKern = if (node.identity == MathExtensibleArrowIdentity.Left) threeMu else 0f
+            val rightKern = if (node.identity == MathExtensibleArrowIdentity.Right) threeMu else 0f
+            it.copy(box = it.box.withHorizontalKerns(leftKern, rightKern))
+        }
+        val paddedUpper = paddedLimit(upper, upperStyle)
+        val paddedLower = paddedLimit(lower, lowerStyle)
+        val placement = placeStackedLimits(arrowBase, paddedUpper, paddedLower, style, 0f, node.range)
+        decision(
+            "AmsmathXeTeXExtensibleArrow",
+            node.range,
+            "identity" to node.identity,
+            "atomClass" to node.atomClass,
+            "style" to style,
+            "arrowMeasurementStyle" to arrowStyle,
+            "labelMeasurementStyle" to MathStyle.Script,
+            "upperStyle" to upperStyle,
+            "lowerStyle" to if (lower == null) null else lowerStyle,
+            "commandRange" to node.commandRange,
+            "upperRange" to node.above.range,
+            "lowerRange" to node.belowRange,
+            "arrowFontSizePx" to arrowSize,
+            "faceId" to faceEvidence.faceId,
+            "arrowHeadScalar" to unicodeLabel(node.identity.arrowHeadScalar),
+            "arrowHeadGlyphId" to headGlyph.glyphId,
+            "relbarScalar" to "U+2212",
+            "relbarGlyphId" to relbarGlyph.glyphId,
+            "measuredUpperWidthPx" to measuredUpper.node.box.width,
+            "measuredLowerWidthPx" to measuredLower?.node?.box?.width,
+            "measuredUpperGlyphs" to measuredUpper.node.box.glyphs.joinToString(",") {
+                "${it.glyphId}@${it.fontSizePx}:${it.advance}"
+            },
+            "measurementScriptPlacements" to
+                (measuredUpper.decisions + measuredLower?.decisions.orEmpty())
+                    .filter { it.name == "OpenTypeMathScriptPlacement" }
+                    .joinToString("|") { it.details.toString() },
+            "measurementMuPx" to measurementMu,
+            "measurementLeftPaddingMu" to measureLeftMu,
+            "measurementRightPaddingMu" to measureRightMu,
+            "labelTargetWidthPx" to labelTargetWidth,
+            "naturalFillWidthPx" to naturalFillWidth,
+            "targetWidthPx" to targetWidth,
+            "targetPolicy" to "AmsmathExtArrowMeasureScriptLabelsAndDisplayArrowFill",
+            "fillMuPx" to fillMu,
+            "endpointOverlapMu" to 7,
+            "leaderInnerOverlapMu" to 2,
+            "leaderBoxWidthPx" to leaderBoxWidth,
+            "leaderGlueWidthPx" to leaderGlueWidth,
+            "leaderCount" to leaderCount,
+            "leaderCenteredRemainderPx" to centeredLeaderRemainder,
+            "leaderOriginsPx" to leaderOrigins.joinToString(","),
+            "rightEndpointOriginPx" to rightOrigin,
+            "fillPolicy" to "AmsmathArrowfillCLeadersRelbar",
+            "relbarVerticalPolicy" to "AmsmathMathSmash",
+            "upperLimitGapMinPx" to placement.upperGapMin,
+            "lowerLimitGapMinPx" to placement.lowerGapMin,
+            "upperBaselineRiseMinPx" to placement.upperBaselineRiseMin,
+            "lowerBaselineDropMinPx" to placement.lowerBaselineDropMin,
+            "upperOuterPaddingPx" to placement.upperOuterPadding,
+            "lowerOuterPaddingPx" to placement.lowerOuterPadding,
+            "outerLimitPaddingPolicy" to "XeTeXBigOpSpacing5FromOpenTypeMATHStackGapMin",
+            "upperShiftPx" to placement.upperShift,
+            "lowerShiftPx" to placement.lowerShift,
+            "upperX" to placement.upperX,
+            "lowerX" to placement.lowerX,
+            "logicalWidthPx" to placement.box.width,
+            "logicalAscentPx" to placement.box.ascent,
+            "logicalDescentPx" to placement.box.descent,
+            "paintGroupId" to group.id,
+            "outlineReplayable" to outlinesReplayable,
+        )
+        return LaidNode(
+            node = node,
+            box = placement.box,
+            atomClass = MathAtomClass.Relation,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun placeStackedLimits(
+        base: LaidNode,
+        upper: LaidNode?,
+        lower: LaidNode?,
+        style: MathStyle,
+        italicCorrectionPx: Float,
+        range: SourceRange,
+    ): StackedLimitsPlacement {
+        val upperGapMin = scale(constants.upperLimitGapMin, style)
+        val upperBaselineRiseMin = scale(constants.upperLimitBaselineRiseMin, style)
+        val lowerGapMin = scale(constants.lowerLimitGapMin, style)
+        val lowerBaselineDropMin = scale(constants.lowerLimitBaselineDropMin, style)
+        // XeTeX maps legacy `big_op_spacing5` to OpenType MATH StackGapMin. This is
+        // logical padding outside the top/bottom limit, not a translation of painted content.
+        val outerLimitPadding = scale(constants.stackGapMin, style)
+        val upperOuterPadding = if (upper == null) 0f else outerLimitPadding
+        val lowerOuterPadding = if (lower == null) 0f else outerLimitPadding
+        val upperShift = upper?.let {
+            base.box.ascent + max(upperBaselineRiseMin, it.box.descent + upperGapMin)
+        }
+        val lowerShift = lower?.let {
+            base.box.descent + max(lowerBaselineDropMin, it.box.ascent + lowerGapMin)
+        }
+        val halfItalicCorrection = italicCorrectionPx / 2f
+        val logicalWidth = maxOf(base.box.width, upper?.box?.width ?: 0f, lower?.box?.width ?: 0f)
+        val baseX = (logicalWidth - base.box.width) / 2f
+        val upperX = upper?.let { (logicalWidth - it.box.width) / 2f + halfItalicCorrection }
+        val lowerX = lower?.let { (logicalWidth - it.box.width) / 2f - halfItalicCorrection }
+        val shiftedBase = base.box.translated(baseX, 0f)
+        val shiftedUpper = upper?.let { it.box.translated(upperX!!, -upperShift!!) }
+        val shiftedLower = lower?.let { it.box.translated(lowerX!!, lowerShift!!) }
+        val unpaddedBox = geometryExtentsPreservingLogicalChildren(
+            logicalWidth,
+            shiftedBase.glyphs + shiftedUpper?.glyphs.orEmpty() + shiftedLower?.glyphs.orEmpty(),
+            shiftedBase.rules + shiftedUpper?.rules.orEmpty() + shiftedLower?.rules.orEmpty(),
+            range,
+            buildList {
+                add(base.box to 0f)
+                upper?.let { add(it.box to -upperShift!!) }
+                lower?.let { add(it.box to lowerShift!!) }
+            },
+        )
+        val box = unpaddedBox.copy(
+            ascent = unpaddedBox.ascent + upperOuterPadding,
+            descent = unpaddedBox.descent + lowerOuterPadding,
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = unpaddedBox.texCleanBoxMetrics.ascent + upperOuterPadding,
+                descent = unpaddedBox.texCleanBoxMetrics.descent + lowerOuterPadding,
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = unpaddedBox.texCleanBoxMetrics.evidence + MathTeXCleanBoxEvidence.CompletedChildBox,
+            ),
+        )
+        return StackedLimitsPlacement(
+            box = box,
+            base = base,
+            upper = upper,
+            lower = lower,
+            upperGapMin = upperGapMin,
+            upperBaselineRiseMin = upperBaselineRiseMin,
+            lowerGapMin = lowerGapMin,
+            lowerBaselineDropMin = lowerBaselineDropMin,
+            upperOuterPadding = upperOuterPadding,
+            lowerOuterPadding = lowerOuterPadding,
+            upperShift = upperShift,
+            lowerShift = lowerShift,
+            halfItalicCorrection = halfItalicCorrection,
+            logicalWidth = logicalWidth,
+            baseX = baseX,
+            upperX = upperX,
+            lowerX = lowerX,
         )
     }
 
@@ -3333,12 +3605,17 @@ private class MathLayoutPass(
 
         val superscriptKern = superscript?.let { superscriptMathKern(base, it, superscriptShift, node.range) } ?: 0f
         val subscriptKern = subscript?.let { subscriptMathKern(base, it, subscriptShift, node.range) } ?: 0f
-        val spaceAfterScript = explicitScriptSpacePx ?: scale(constants.spaceAfterScript, style)
+        // XeTeX appends the fixed `\scriptspace` to each completed script field. Adding the
+        // same fixed amount after the maximum script edge is algebraically identical and avoids
+        // duplicating logical padding when both scripts are present.
+        val spaceAfterScript = scriptSpacePx
+        val superscriptFieldWidth = superscript?.completedTeXScriptFieldWidth()
+        val subscriptFieldWidth = subscript?.completedTeXScriptFieldWidth()
         val horizontalPlacement = resolveSideScriptHorizontalPlacement(
             baseWidthPx = base.box.width,
             italicCorrectionPx = base.italicCorrectionPx,
-            superscriptWidthPx = superscript?.box?.width,
-            subscriptWidthPx = subscript?.box?.width,
+            superscriptWidthPx = superscriptFieldWidth,
+            subscriptWidthPx = subscriptFieldWidth,
             superscriptKernPx = superscriptKern,
             subscriptKernPx = subscriptKern,
             spaceAfterScriptPx = spaceAfterScript,
@@ -3369,9 +3646,11 @@ private class MathLayoutPass(
             "subscriptKernPx" to subscriptKern,
             "horizontalPlacementPolicy" to horizontalPlacement.policy,
             "baseOriginalLogicalWidthPx" to horizontalPlacement.originalBaseWidthPx,
-            "superscriptLogicalWidthPx" to superscript?.box?.width,
-            "subscriptLogicalWidthPx" to subscript?.box?.width,
-            "childLogicalAdvancePolicy" to "ReplayedGlyphAdvanceOrCompletedCompoundBox",
+            "superscriptLogicalWidthPx" to superscriptFieldWidth,
+            "subscriptLogicalWidthPx" to subscriptFieldWidth,
+            "superscriptTerminalItalicCorrectionPx" to superscript?.italicCorrectionPx?.coerceAtLeast(0f),
+            "subscriptTerminalItalicCorrectionPx" to subscript?.italicCorrectionPx?.coerceAtLeast(0f),
+            "childLogicalAdvancePolicy" to "XeTeXCleanScriptFieldIncludingTerminalItalicCorrection",
             "italicCorrectionDeltaPx" to horizontalPlacement.italicCorrectionDeltaPx,
             "operatorWidthReductionPx" to horizontalPlacement.operatorWidthReductionPx,
             "nucleusLogicalWidthPx" to horizontalPlacement.nucleusLogicalWidthPx,
@@ -3380,11 +3659,7 @@ private class MathLayoutPass(
             "subscriptXPx" to subscriptX,
             "logicalWidthPx" to width,
             "spaceAfterScriptPx" to spaceAfterScript,
-            "spaceAfterScriptPolicy" to if (explicitScriptSpacePx != null) {
-                "ExplicitTeXScriptSpace"
-            } else {
-                "OpenTypeMATHSpaceAfterScript"
-            },
+            "spaceAfterScriptPolicy" to scriptSpacePolicy,
             "baseKind" to base.scriptBaseKind,
             "superscriptKind" to superscript?.scriptBaseKind,
             "subscriptKind" to subscript?.scriptBaseKind,
@@ -3525,6 +3800,16 @@ private class MathLayoutPass(
         ascent = texCleanBoxMetrics.ascent,
         descent = texCleanBoxMetrics.descent,
     )
+
+    /** XeTeX `clean_box` completes a math field with its terminal italic correction. */
+    private fun LaidNode.completedTeXMathField(): LaidNode = copy(
+        box = box.completedTeXBox().copy(width = box.width + italicCorrectionPx.coerceAtLeast(0f)),
+        italicCorrectionPx = 0f,
+    )
+
+    /** XeTeX `clean_box` retains a character field's terminal italic correction. */
+    private fun LaidNode.completedTeXScriptFieldWidth(): Float =
+        box.width + italicCorrectionPx.coerceAtLeast(0f)
 
     private fun superscriptMathKern(
         base: LaidNode,
@@ -4208,27 +4493,40 @@ private class MathLayoutPass(
         else -> listOf(PendingHorizontalItem(node, style, alphabetOverride))
     }
 
-    private fun layoutPendingItems(pending: List<PendingHorizontalItem>): List<HorizontalItem> = buildList {
+    private fun layoutPendingItems(pending: List<PendingHorizontalItem>): List<HorizontalItem> {
         var index = 0
         while (index < pending.size) {
             val first = pending[index]
-            val key = first.ordRunKey()
-            if (key == null) {
-                add(first.layoutIndividually())
+            val firstSymbol = first.node as? MathSymbol
+            if (firstSymbol?.atomClass != MathAtomClass.Ordinary) {
                 index += 1
                 continue
             }
+            val request = symbolRequest(firstSymbol, first.style, first.alphabetOverride)
             var endExclusive = index + 1
-            while (endExclusive < pending.size && pending[endExclusive].ordRunKey() == key) {
+            while (endExclusive < pending.size) {
+                val candidate = pending[endExclusive]
+                val symbol = candidate.node as? MathSymbol ?: break
+                if (symbol.atomClass != MathAtomClass.Ordinary || candidate.style != first.style) break
+                val candidateRequest = symbolRequest(symbol, candidate.style, candidate.alphabetOverride)
+                if (candidateRequest.family != request.family || candidateRequest.alphabet != request.alphabet) break
                 endExclusive += 1
             }
             if (endExclusive - index >= 2) {
-                add(layoutSymbolRun(pending.subList(index, endExclusive)))
-            } else {
-                add(first.layoutIndividually())
+                decision(
+                    "XeTeXNativeMathOrdNoadSequence",
+                    pending[index].node.range.cover(pending[endExclusive - 1].node.range),
+                    "noadCount" to (endExclusive - index),
+                    "family" to request.family,
+                    "alphabet" to request.alphabet,
+                    "style" to first.style,
+                    "shapingPolicy" to "OneNativeMathGlyphFieldPerSourceNoad",
+                    "italicCorrectionPolicy" to "EachCompletedNoadOwnsItsCorrection",
+                )
             }
             index = endExclusive
         }
+        return pending.map { it.layoutIndividually() }
     }
 
     private fun PendingHorizontalItem.layoutIndividually(): HorizontalItem = HorizontalItem(
@@ -4238,13 +4536,6 @@ private class MathLayoutPass(
         atomClass = MathAtomClass.Ordinary,
         participatesInNoadSpacing = node !is MathExplicitSpace,
     )
-
-    private fun PendingHorizontalItem.ordRunKey(): OrdRunKey? {
-        val symbol = node as? MathSymbol ?: return null
-        if (symbol.atomClass != MathAtomClass.Ordinary) return null
-        val request = symbolRequest(symbol, style, alphabetOverride)
-        return OrdRunKey(style, request.family, request.alphabet)
-    }
 
     private fun atomGlue(
         left: MathAtomClass,
@@ -4579,9 +4870,51 @@ private class MathLayoutPass(
         val scriptBaseKind: ScriptBaseKind,
     )
 
+    private data class StackedLimitsPlacement(
+        val box: MathBox,
+        val base: LaidNode,
+        val upper: LaidNode?,
+        val lower: LaidNode?,
+        val upperGapMin: Float,
+        val upperBaselineRiseMin: Float,
+        val lowerGapMin: Float,
+        val lowerBaselineDropMin: Float,
+        val upperOuterPadding: Float,
+        val lowerOuterPadding: Float,
+        val upperShift: Float?,
+        val lowerShift: Float?,
+        val halfItalicCorrection: Float,
+        val logicalWidth: Float,
+        val baseX: Float,
+        val upperX: Float?,
+        val lowerX: Float?,
+    ) {
+        val actualUpperGap: Float?
+            get() = upper?.let { upperShift!! - base.box.ascent - it.box.descent }
+        val actualUpperRise: Float?
+            get() = upperShift?.minus(base.box.ascent)
+        val actualLowerGap: Float?
+            get() = lower?.let { lowerShift!! - base.box.descent - it.box.ascent }
+        val actualLowerDrop: Float?
+            get() = lowerShift?.minus(base.box.descent)
+
+    }
+
     private data class AccentAttachmentEvidence(
         val valuePx: Float,
         val policy: String,
+    )
+
+    private data class MeasurementLayoutNode(
+        val node: LaidNode,
+        val diagnostics: List<MathDiagnostic>,
+        val decisions: List<MathLayoutDecision>,
+    )
+
+    private data class AmsmathArrowFaceEvidence(
+        val faceId: MathFaceId,
+        val head: MeasuredOutlineConstructionRun,
+        val relbar: MeasuredOutlineConstructionRun,
     )
 
     private data class DelimiterTargetEvidence(
@@ -4626,12 +4959,6 @@ private class MathLayoutPass(
         val alphabetOverride: MathAlphabetOverride?,
     )
 
-    private data class OrdRunKey(
-        val style: MathStyle,
-        val family: MathFamily,
-        val alphabet: MathAlphabet,
-    )
-
     private data class HorizontalLayout(
         val laid: LaidNode,
         val items: List<HorizontalItem>,
@@ -4654,6 +4981,7 @@ private class MathLayoutPass(
 
     private companion object {
         const val GEOMETRY_EPSILON_PX = 0.02f
+        const val TEX_MU_PER_EM = 18f
         const val LATEX_XETEX_GENFRAC_DISPLAY_DELIMITER_EM = 2.39f
         const val LATEX_XETEX_GENFRAC_TEXT_DELIMITER_EM = 1f
         const val LATEX_XETEX_GENFRAC_SCRIPT_DELIMITER_EM = 1.45f
@@ -4703,6 +5031,7 @@ private fun unicodeLabel(scalar: Int): String = "U+${scalar.toString(16).upperca
 private const val DEFAULT_NULL_DELIMITER_SPACE_EM = 0.12f
 private const val DEFAULT_DELIMITER_SHORTFALL_EM = 0.5f
 private const val RADICAL_SIGN = "\u221A"
+private const val AMSMATH_RELBAR = "\u2212"
 
 private fun scalarString(scalar: Int): String = if (scalar <= 0xFFFF) {
     scalar.toChar().toString()
@@ -4757,3 +5086,9 @@ private fun MathBox.translated(dx: Float, dy: Float): MathBox = copy(
         )
     },
 )
+
+private fun MathBox.withHorizontalKerns(left: Float, right: Float): MathBox {
+    require(left >= 0f && right >= 0f) { "math limit kerns must not be negative" }
+    val shifted = translated(left, 0f)
+    return shifted.copy(width = left + width + right)
+}

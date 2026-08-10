@@ -7,8 +7,8 @@ import kotlin.test.assertEquals
 
 class TeXMathSpacingTest {
     @Test
-    fun normalAndTightMatricesMatchTeXAndKatexSpacingData() {
-        // KaTeX src/spacingData.ts at the revision recorded in THIRD_PARTY_NOTICES.md.
+    fun normalAndTightMatricesMatchXeTeXMlistToHlistOffsetTable() {
+        // Tectonic 0.17.0 engine_xetex/xetex/xetex-math.c `offset_table`.
         val classes = listOf(
             MathAtomClass.Ordinary,
             MathAtomClass.Operator,

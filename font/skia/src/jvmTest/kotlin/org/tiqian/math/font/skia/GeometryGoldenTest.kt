@@ -69,6 +69,18 @@ class GeometryGoldenTest {
                     MathMode.Inline,
                     40f,
                 ),
+                GoldenCase(
+                    "extensible-arrow",
+                    "X\\xrightarrow[k-1]{p_k}Y",
+                    MathMode.Inline,
+                    40f,
+                ),
+                GoldenCase(
+                    "over-under",
+                    "a\\overset{u}{=}b+\\underset{d}{x}+\\stackrel{s}{=}",
+                    MathMode.Inline,
+                    40f,
+                ),
                 GoldenCase("adjustment", "a,b=c+d", MathMode.Inline, 40f),
             ).forEach { case ->
                 val result = engine.layout(case.source, MathLayoutOptions(case.mode, case.size))
@@ -275,6 +287,30 @@ class GeometryGoldenTest {
                                 },
                         )
                     }
+                    "extensible-arrow" -> {
+                        val arrow = result.decisions.single { it.name == "AmsmathXeTeXExtensibleArrow" }
+                        appendLine(
+                            "  evidence=${arrow.details["identity"]}/" +
+                                "head=${arrow.details["arrowHeadGlyphId"]}/" +
+                                "relbar=${arrow.details["relbarGlyphId"]}/" +
+                                "leaders=${arrow.details["leaderCount"]}@${arrow.details["leaderOriginsPx"]}/" +
+                                "${arrow.details["fillPolicy"]}/" +
+                                "target=${arrow.details.getValue("targetWidthPx").toFloat().fmt()}/" +
+                                "up=${arrow.details["upperShiftPx"]}/down=${arrow.details["lowerShiftPx"]}/" +
+                                "outer=${arrow.details["upperOuterPaddingPx"]},${arrow.details["lowerOuterPaddingPx"]}/" +
+                                "box=${arrow.details["logicalWidthPx"]},${arrow.details["logicalAscentPx"]}," +
+                                "${arrow.details["logicalDescentPx"]}",
+                        )
+                    }
+                    "over-under" -> appendLine(
+                        "  evidence=" + result.decisions.filter { it.name == "TeXOverUnderNoad" }
+                            .joinToString(",") { stack ->
+                                "${stack.details["kind"]}/${stack.details["atomClass"]}/" +
+                                    "${stack.details["annotationStyle"]}/" +
+                                    "${stack.details["actualUpperGapPx"]}/${stack.details["actualLowerGapPx"]}/" +
+                                    "${stack.details["logicalWidthPx"]}/${stack.details["geometryKernel"]}"
+                            },
+                    )
                     "adjustment" -> appendLine(
                         "  evidence=" + result.fragments.joinToString(",") {
                             "${it.sourceRange.start}:ic=${it.trailingItalicCorrectionPx.fmt()}/" +

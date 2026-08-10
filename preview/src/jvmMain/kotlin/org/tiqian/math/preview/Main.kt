@@ -142,6 +142,10 @@ private fun ExtendedStructureSample(
             ExtendedStructureTier("fixed / wide accents", "\\hat{x}+\\bar{x}+\\vec{v}+\\widehat{x+y+z}+\\widetilde{abc}", face, textProvider)
             ExtendedStructureTier("nested rules", "\\overline{x+\\underline{\\frac{a}{b}}}+\\underline{\\sqrt{x}}", face, textProvider)
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            ExtendedStructureTier("extensible arrows", "X\\xrightarrow[k-1]{p_k}Y+Z\\xleftarrow{f}W", face, textProvider)
+            ExtendedStructureTier("over / under / stackrel", "a\\overset{u}{=}b+\\underset{d}{x}+\\stackrel{def}{=}", face, textProvider)
+        }
     }
 }
 
@@ -555,7 +559,7 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("preview=${output.absolutePath} bytes=${output.length()}")
     }
-    ImageComposeScene(width = 1200, height = 900) { ExtendedStructureOracleScreen() }.use { scene ->
+    ImageComposeScene(width = 1200, height = 1180) { ExtendedStructureOracleScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/tiqian-text-accent-decoration.png")
         output.parentFile.mkdirs()
@@ -765,6 +769,8 @@ private fun ExtendedStructureOracleScreen() {
                                 "\\hat{x}+\\bar{x}+\\vec{v}+\\widehat{x+y+z}+\\widetilde{abc}",
                                 "\\overline{x+\\underline{\\frac{a}{b}}}+\\underline{\\sqrt{x}}",
                                 "\\operatorname*{argmax}_{x\\to\\infty}\\overline{\\widehat{x+y}}+\\text{ subject to }\\underline{\\frac{a}{b}}",
+                                "X\\xrightarrow[k-1]{p_k}Y+Z\\xleftarrow{f}W",
+                                "a\\overset{u}{=}b+\\underset{d}{x}+\\stackrel{def}{=}",
                             ).forEach { source ->
                                 Text(source, fontSize = 8.sp, color = Color(0xFF6B655E))
                                 TiqianMath(
