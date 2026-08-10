@@ -105,6 +105,18 @@ class GeometryGoldenTest {
                     MathMode.Inline,
                     40f,
                 ),
+                GoldenCase(
+                    "scoped-color",
+                    "{\\color{red}a+{\\color{blue}b}+c}+d",
+                    MathMode.Inline,
+                    40f,
+                ),
+                GoldenCase(
+                    "boxed",
+                    "{\\color{violet}\\boxed{\\frac{a}{b}}}+x",
+                    MathMode.Inline,
+                    40f,
+                ),
                 GoldenCase("adjustment", "a,b=c+d", MathMode.Inline, 40f),
             ).forEach { case ->
                 val result = engine.layout(case.source, MathLayoutOptions(case.mode, case.size))
@@ -375,6 +387,28 @@ class GeometryGoldenTest {
                                     "${stack.details["logicalWidthPx"]}/${stack.details["geometryKernel"]}"
                             },
                     )
+                    "scoped-color" -> appendLine(
+                        "  evidence=" + result.decisions.filter { it.name == "XColorMathDeclaration" }
+                            .joinToString(",") { color ->
+                                "${color.range.start}..${color.range.endExclusive}:" +
+                                    "${color.details["sourceName"]}/${color.details["resolvedArgb"]}/" +
+                                    "${color.details["scopePolicy"]}/${color.details["resolutionPolicy"]}"
+                            } + " glyphPaint=" + result.box.glyphs.joinToString(",") {
+                                "${it.sourceRange.start}:${it.paintColor?.argb?.toUInt()?.toString(16) ?: "host"}"
+                            },
+                    )
+                    "boxed" -> {
+                        val boxed = result.decisions.single { it.name == "AmsmathBoxedNoad" }
+                        appendLine(
+                            "  evidence=styles=${boxed.details["outerStyle"]}->${boxed.details["contentStyle"]}/" +
+                                "fbox=${boxed.details["fboxSeparationPx"]}+${boxed.details["fboxRuleThicknessPx"]}/" +
+                                "content=${boxed.details["contentWidthPx"]},${boxed.details["contentAscentPx"]}," +
+                                "${boxed.details["contentDescentPx"]}/" +
+                                "box=${boxed.details["logicalWidthPx"]},${boxed.details["logicalAscentPx"]}," +
+                                "${boxed.details["logicalDescentPx"]}/rules=${result.box.rules.size}/" +
+                                "paint=${result.box.rules.map { it.paintColor?.argb?.toUInt()?.toString(16) }}",
+                        )
+                    }
                     "adjustment" -> appendLine(
                         "  evidence=" + result.fragments.joinToString(",") {
                             "${it.sourceRange.start}:ic=${it.trailingItalicCorrectionPx.fmt()}/" +

@@ -8,6 +8,40 @@ import kotlin.test.assertTrue
 
 class MathParserTest {
     @Test
+    fun colorIsAListDeclarationAndBoxedRetainsStructuredDisplayMathBody() {
+        val source = "{\\color{red}a+{\\color{blue}b}+c}+\\boxed{\\frac{a}{b}}"
+        val result = MathParser().parse(source)
+
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val colored = assertIs<MathGroup>(result.root.children.first())
+        val outerColor = assertIs<MathColorDeclaration>(colored.body.children[0])
+        assertEquals("red", outerColor.sourceName)
+        assertEquals(MathPaintColor(255, 0, 0), outerColor.color)
+        assertEquals(SourceRange(1, 7), outerColor.commandRange)
+        assertEquals(SourceRange(8, 11), outerColor.nameRange)
+        assertEquals(SourceRange(1, 12), outerColor.range)
+        val nested = assertIs<MathGroup>(colored.body.children[3])
+        val nestedColor = assertIs<MathColorDeclaration>(nested.body.children.first())
+        assertEquals(MathPaintColor(0, 0, 255), nestedColor.color)
+
+        val boxed = assertIs<MathBoxed>(result.root.children.last())
+        assertEquals(SourceRange(source.indexOf("\\boxed"), source.indexOf("\\boxed") + 6), boxed.commandRange)
+        assertEquals(SourceRange(source.indexOf("\\boxed"), source.length), boxed.range)
+        assertIs<MathFraction>(assertIs<MathGroup>(boxed.body).body.children.single())
+    }
+
+    @Test
+    fun unknownColorRecoversWithoutDroppingFollowingAtoms() {
+        val source = "\\color{not-a-color}x+y"
+        val result = MathParser().parse(source)
+
+        val diagnostic = result.diagnostics.single { it.code == DiagnosticCode.UnknownColorName }
+        assertEquals(SourceRange(7, 18), diagnostic.range)
+        assertIs<MathErrorNode>(result.root.children.first())
+        assertEquals(listOf("x", "+", "y"), result.root.children.drop(1).map { assertIs<MathSymbol>(it).sourceText })
+    }
+
+    @Test
     fun tokenizerUsesUtf16RangesAndStopsControlWordsBeforeCjk() {
         val source = "𝑥+\\alpha函数"
         val tokens = MathTokenizer().tokenize(source).tokens

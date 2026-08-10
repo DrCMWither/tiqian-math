@@ -249,6 +249,47 @@ class TiqianMathRenderTest {
     }
 
     @Test
+    fun explicitTeXColorsReplayAcrossGlyphRulesAndConstructionUnion() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var observed: MathLayoutResult? = null
+            ImageComposeScene(width = 520, height = 240, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    TiqianMath(
+                        source = "{\\color{red}\\boxed{x}}+{\\color{blue}\\sqrt{\\frac{a}{b}}}",
+                        modifier = Modifier.padding(20.dp),
+                        fontSizePx = 48f,
+                        fontFace = face,
+                        color = Color.Black,
+                        onMathLayout = { observed = it },
+                    )
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                var redPixels = 0
+                var bluePixels = 0
+                var darkPixels = 0
+                repeat(pixels.height) { y ->
+                    repeat(pixels.width) { x ->
+                        val pixel = pixels[x, y]
+                        if (pixel.red > 0.65f && pixel.green < 0.35f && pixel.blue < 0.35f) redPixels++
+                        if (pixel.blue > 0.65f && pixel.red < 0.35f && pixel.green < 0.35f) bluePixels++
+                        if (pixel.red < 0.35f && pixel.green < 0.35f && pixel.blue < 0.35f) darkPixels++
+                    }
+                }
+                assertTrue(redPixels > 20, "boxed glyph and four rules use the explicit red paint: $redPixels")
+                assertTrue(bluePixels > 20, "radical construction, rule, and fraction use the explicit blue paint: $bluePixels")
+                assertTrue(darkPixels > 5, "the unscoped binary operator inherits the host formula color: $darkPixels")
+            }
+
+            val layout = assertNotNull(observed)
+            assertTrue(layout.box.constructionPaintGroups.all {
+                it.paintColor == org.tiqian.math.core.MathPaintColor(0, 0, 255)
+            })
+            assertTrue(layout.diagnostics.isEmpty(), layout.diagnostics.toString())
+        }
+    }
+
+    @Test
     fun actualRendererReplaysContentDrivenDelimitersAsCachedConstructionPaths() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             var observed: MathLayoutResult? = null

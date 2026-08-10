@@ -659,7 +659,62 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("common-extensions-oracle=${output.absolutePath} bytes=${output.length()}")
     }
+    ImageComposeScene(width = 1400, height = 980) { ColorBoxOracleScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-color-box.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("color-box-oracle=${output.absolutePath} bytes=${output.length()}")
+    }
     renderRadicalSeamReport()
+}
+
+@Composable
+private fun ColorBoxOracleScreen() {
+    val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
+    DisposableEffect(lete, stix) {
+        onDispose { lete.close(); stix.close() }
+    }
+    MaterialTheme {
+        Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F5F1)) {
+            Column(Modifier.padding(26.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
+                Text("Tiqian · xcolor declarations / amsmath boxed · repository OTF · 32 px", fontSize = 17.sp)
+                Text(
+                    "Tectonic 0.17.0: fboxsep=3pt · fboxrule=.4pt · explicit color owns glyph/rule/construction replay",
+                    fontSize = 11.sp,
+                    color = Color(0xFF55504A),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    ColorBoxFontColumn("Lete Sans Math", lete)
+                    ColorBoxFontColumn("STIX Two Math", stix)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColorBoxFontColumn(label: String, face: SkiaMathFontFace) {
+    Column(Modifier.width(650.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Text(label, fontSize = 14.sp)
+        COLOR_BOX_PREVIEW_CASES.forEach { (caseLabel, source) ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("$caseLabel · $source", fontSize = 9.sp, color = Color(0xFF6B655E))
+                TiqianMath(
+                    source = source,
+                    modifier = Modifier.background(Color.White).padding(8.dp),
+                    mode = MathMode.Inline,
+                    fontFace = face,
+                    style = TextStyle(fontSize = 32.sp, lineHeight = 58.sp),
+                    nullDelimiterSpacePx = TECTONIC_NULL_DELIMITER_SPACE_PX,
+                    delimiterShortfallPx = TECTONIC_DELIMITER_SHORTFALL_PX,
+                    scriptSpacePx = TECTONIC_SCRIPT_SPACE_PX,
+                    softWrap = false,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -1422,6 +1477,15 @@ private val commonExtensionPreviewCases = listOf(
         "\\overbrace{a+b+c+d+e}^{n}+\\underbrace{a+b+c+d+e}_{n}",
         lineHeightSp = 150,
     ),
+)
+
+private val COLOR_BOX_PREVIEW_CASES = listOf(
+    "nested declaration scope" to "{\\color{red}a+{\\color{blue}b}+c}+d",
+    "XeTeX middle/right color state" to "\\left(\\color{red}a\\middle|b\\right)+\\left(a\\middle|\\color{blue}b\\right)",
+    "colored construction ownership" to "{\\color{royalblue}\\sqrt{\\frac{a}{b}}}",
+    "boxed x / display fraction" to "\\boxed{x}+\\boxed{\\frac{a}{b}}",
+    "boxed ordinary spacing" to "a\\boxed{b}c",
+    "color owns box rules" to "{\\color{violet}\\boxed{\\frac{a}{b}}}+x",
 )
 
 private val DELIMITER_TALL_CONTENT =

@@ -1,0 +1,29 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=500
+\showboxdepth=500
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-COLOR-BOX-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-COLOR-BOX-ORACLE-#1-END}%
+}
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/]{STIXTwoMath-Regular.otf}
+\traceformula{PLAIN}{{a+{b}+c}+d}
+\traceformula{COLOR-SCOPE}{{\color{red}a+{\color{blue}b}+c}+d}
+\traceformula{COLOR-MIDDLE}{\left(\color{red}a\middle|b\right)}
+\traceformula{COLOR-RIGHT}{\left(a\middle|\color{blue}b\right)}
+\traceformula{COLOR-CONSTRUCTION}{{\color{RoyalBlue}\sqrt{\frac{a}{b}}}}
+\traceformula{BOXED-X}{\boxed{x}}
+\traceformula{BOXED-FRACTION}{\boxed{\frac{a}{b}}}
+\traceformula{BOXED-SPACING}{a\boxed{b}c}
+\traceformula{COLOR-BOXED}{{\color{red}\boxed{\frac{a}{b}}}}
+\end{document}

@@ -30,6 +30,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.tiqian.math.core.MathLayoutResult
+import org.tiqian.math.core.MathPaintColor
 import org.tiqian.math.font.android.AndroidMathFontFace
 import org.tiqian.math.font.android.AndroidMathFontFamily
 import org.tiqian.math.font.android.AndroidReplayCatalog
@@ -165,10 +166,54 @@ class AndroidTiqianMathDeviceTest {
                 .assertIsDisplayed()
         }
     }
+
+    @Test
+    fun explicitColorsReplayThroughNativeGlyphRuleAndConstructionPaths() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AndroidMathFontFace.loadLete(context).use { face ->
+            var result: MathLayoutResult? = null
+            compose.setContent {
+                Box(Modifier.background(Color.White)) {
+                    TiqianMath(
+                        source = "{\\color{red}\\boxed{x}}+{\\color{blue}\\sqrt{\\frac{a}{b}}}",
+                        fontSizePx = 44f,
+                        color = Color.Black,
+                        fontFace = face,
+                        modifier = Modifier.testTag(ColorFormulaTag),
+                        onMathLayout = { result = it },
+                    )
+                }
+            }
+            compose.waitForIdle()
+            val layout = assertNotNull(result)
+            assertTrue(layout.box.glyphs.any { it.paintColor == MathPaintColor(255, 0, 0) })
+            assertTrue(layout.box.rules.any { it.paintColor == MathPaintColor(255, 0, 0) })
+            assertTrue(layout.box.constructionPaintGroups.all { it.paintColor == MathPaintColor(0, 0, 255) })
+            compose.onNodeWithTag(ColorFormulaTag).assertIsDisplayed()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val image = compose.onNodeWithTag(ColorFormulaTag).captureToImage().toPixelMap()
+                val redPixels = (0 until image.height).sumOf { y ->
+                    (0 until image.width).count { x ->
+                        val pixel = image[x, y]
+                        pixel.red > 0.65f && pixel.green < 0.35f && pixel.blue < 0.35f
+                    }
+                }
+                val bluePixels = (0 until image.height).sumOf { y ->
+                    (0 until image.width).count { x ->
+                        val pixel = image[x, y]
+                        pixel.blue > 0.65f && pixel.red < 0.35f && pixel.green < 0.35f
+                    }
+                }
+                assertTrue(redPixels > 100, "Android fbox replays explicit red")
+                assertTrue(bluePixels > 100, "Android radical construction replays explicit blue")
+            }
+        }
+    }
 }
 
 private const val FormulaTag = "android-tiqian-math"
 private const val WeightedFormulaTag = "android-weighted-tiqian-math"
+private const val ColorFormulaTag = "android-colored-tiqian-math"
 
 private class DeviceTestHostTextProvider(
     private val face: AndroidMathFontFace,
