@@ -582,15 +582,19 @@ internal data class RenderPlan(
             val metrics = result.lineMetrics.forInk(fragment.box.ascent, fragment.box.descent)
             val extraLeading = ((minimumLineHeightPx ?: 0f) - metrics.logicalHeightPx).coerceAtLeast(0f)
             val topLeading = extraLeading / 2f
+            val logicalLeft = fragment.leadingKernPx
+            val visualLeft = minOf(0f, logicalLeft + fragment.box.inkBounds.left)
+            val logicalRight = logicalLeft + fragment.box.width + fragment.trailingAdvancePx
+            val visualRight = maxOf(logicalRight, logicalLeft + fragment.box.inkBounds.right)
             return RenderPlan(
                 boxes = listOf(
                     PositionedBox(
                         fragment.box,
-                        -fragment.box.visualLeft,
+                        logicalLeft - visualLeft,
                         metrics.logicalAscentPx + topLeading,
                     ),
                 ),
-                width = fragment.box.visualWidth + fragment.trailingAdvancePx,
+                width = visualRight - visualLeft,
                 height = metrics.logicalHeightPx + extraLeading,
                 firstBaseline = metrics.logicalAscentPx + topLeading,
             )
@@ -607,7 +611,16 @@ internal data class RenderPlan(
         /** Host-embedding geometry for one inline fragment; see [unbrokenInkTight]. */
         fun fragmentInkTight(result: MathLayoutResult, fragmentIndex: Int, leadingPx: Float): RenderPlan {
             val fragment = result.fragments[fragmentIndex]
-            return inkTight(fragment.box, fragment.box.visualWidth + fragment.trailingAdvancePx, leadingPx)
+            val logicalLeft = fragment.leadingKernPx
+            val visualLeft = minOf(0f, logicalLeft + fragment.box.inkBounds.left)
+            val logicalRight = logicalLeft + fragment.box.width + fragment.trailingAdvancePx
+            val visualRight = maxOf(logicalRight, logicalLeft + fragment.box.inkBounds.right)
+            return inkTight(
+                fragment.box,
+                visualRight - visualLeft,
+                leadingPx,
+                x = logicalLeft - visualLeft,
+            )
         }
 
         /**
@@ -618,32 +631,38 @@ internal data class RenderPlan(
          */
         fun fragmentRangeInkTight(result: MathLayoutResult, range: IntRange, leadingPx: Float): RenderPlan {
             if (range.first == range.last) return fragmentInkTight(result, range.first, leadingPx)
-            var visualX = 0f
+            var logicalX = 0f
+            var visualLeft = 0f
+            var visualRight = 0f
             var inkTop = 0f
             var inkBottom = 0f
             val placed = ArrayList<Pair<MathBox, Float>>()
             for (index in range) {
                 val fragment = result.fragments[index]
-                placed += fragment.box to (visualX - fragment.box.visualLeft)
+                logicalX += fragment.leadingKernPx
+                placed += fragment.box to logicalX
+                visualLeft = minOf(visualLeft, logicalX + fragment.box.inkBounds.left)
+                visualRight = maxOf(visualRight, logicalX + fragment.box.inkBounds.right)
                 inkTop = minOf(inkTop, fragment.box.inkBounds.top)
                 inkBottom = maxOf(inkBottom, fragment.box.inkBounds.bottom)
-                visualX += fragment.box.visualWidth + fragment.trailingAdvancePx
+                logicalX += fragment.box.width + fragment.trailingAdvancePx
+                visualRight = maxOf(visualRight, logicalX)
             }
             val ascent = (-inkTop).coerceAtLeast(0f) + leadingPx
             val descent = inkBottom.coerceAtLeast(0f) + leadingPx
             return RenderPlan(
-                boxes = placed.map { (box, x) -> PositionedBox(box, x, ascent) },
-                width = visualX,
+                boxes = placed.map { (box, x) -> PositionedBox(box, x - visualLeft, ascent) },
+                width = visualRight - visualLeft,
                 height = ascent + descent,
                 firstBaseline = ascent,
             )
         }
 
-        private fun inkTight(box: MathBox, width: Float, leadingPx: Float): RenderPlan {
+        private fun inkTight(box: MathBox, width: Float, leadingPx: Float, x: Float = -box.visualLeft): RenderPlan {
             val ascent = (-box.inkBounds.top).coerceAtLeast(0f) + leadingPx
             val descent = box.inkBounds.bottom.coerceAtLeast(0f) + leadingPx
             return RenderPlan(
-                boxes = listOf(PositionedBox(box, -box.visualLeft, ascent)),
+                boxes = listOf(PositionedBox(box, x, ascent)),
                 width = width,
                 height = ascent + descent,
                 firstBaseline = ascent,

@@ -1621,6 +1621,7 @@ private class ParserState(
             "qquad" to 36f,
         )
         val explicitControlSpaces = mapOf(
+            "!" to -3f,
             "," to 3f,
             ":" to 4f,
             ">" to 4f,

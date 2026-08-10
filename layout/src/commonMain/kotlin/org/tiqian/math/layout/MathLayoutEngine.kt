@@ -238,6 +238,7 @@ private class MathLayoutPass(
                 sourceRange = item.node.range,
                 atomClass = item.atomClass,
                 box = item.laid.box,
+                leadingKernPx = item.leadingKernPx,
                 trailingItalicCorrectionPx = item.trailingItalicCorrectionPx,
                 trailingGlue = trailingGlue,
                 breakAfter = opportunity,
@@ -375,7 +376,8 @@ private class MathLayoutPass(
     }
 
     private fun layoutExplicitSpace(node: MathExplicitSpace, style: MathStyle): LaidNode {
-        val width = node.mu * fontSize(style) / 18f
+        val advance = node.mu * fontSize(style) / 18f
+        val width = advance.coerceAtLeast(0f)
         decision(
             "TeXExplicitMathSpace",
             node.range,
@@ -383,8 +385,9 @@ private class MathLayoutPass(
             "mu" to node.mu,
             "style" to style,
             "fontSizePx" to fontSize(style),
-            "advancePx" to width,
-            "policy" to "NamedTeXMuSkip",
+            "advancePx" to advance,
+            "boxWidthPx" to width,
+            "policy" to if (advance < 0f) "TeXFixedSignedMuKern" else "NamedTeXMuSkip",
         )
         return LaidNode(
             node = node,
@@ -407,6 +410,7 @@ private class MathLayoutPass(
             italicCorrectionPx = 0f,
             style = style,
             scriptBaseKind = ScriptBaseKind.CompoundBox,
+            horizontalKernPx = advance.coerceAtMost(0f),
         )
     }
 
@@ -4894,6 +4898,7 @@ private class MathLayoutPass(
         val glyphs = mutableListOf<MathGlyphPlacement>()
         val rules = mutableListOf<MathRulePlacement>()
         items.forEach { item ->
+            x += item.leadingKernPx
             x += item.glueBefore.naturalPx
             val shifted = item.laid.box.translated(x, 0f)
             glyphs += shifted.glyphs
@@ -4901,7 +4906,7 @@ private class MathLayoutPass(
             x += item.laid.box.width + item.trailingItalicCorrectionPx
         }
         val box = geometryExtentsPreservingLogicalChildren(
-            x,
+            x.coerceAtLeast(0f),
             glyphs,
             rules,
             list.range,
@@ -5047,15 +5052,19 @@ private class MathLayoutPass(
         return pending.map { it.layoutIndividually() }
     }
 
-    private fun PendingHorizontalItem.layoutIndividually(): HorizontalItem = HorizontalItem(
-        node = node,
-        laid = layoutNode(node, style, alphabetOverride).let { laid ->
-            if (paintColor == null) laid else laid.copy(box = laid.box.withInheritedPaintColor(paintColor))
-        },
-        glueBefore = MathGlueAdjustment.Zero,
-        atomClass = MathAtomClass.Ordinary,
-        participatesInNoadSpacing = node !is MathExplicitSpace,
-    )
+    private fun PendingHorizontalItem.layoutIndividually(): HorizontalItem {
+        val laid = layoutNode(node, style, alphabetOverride).let { result ->
+            if (paintColor == null) result else result.copy(box = result.box.withInheritedPaintColor(paintColor))
+        }
+        return HorizontalItem(
+            node = node,
+            laid = laid,
+            glueBefore = MathGlueAdjustment.Zero,
+            atomClass = MathAtomClass.Ordinary,
+            participatesInNoadSpacing = node !is MathExplicitSpace,
+            leadingKernPx = laid.horizontalKernPx,
+        )
+    }
 
     private fun atomGlue(
         left: MathAtomClass,
@@ -5360,6 +5369,7 @@ private class MathLayoutPass(
             appendLine(
                 "fragment[${fragment.index}] range=${fragment.sourceRange.start}..${fragment.sourceRange.endExclusive} " +
                     "advance=${fragment.box.width} ink=${fragment.box.inkBounds.left}..${fragment.box.inkBounds.right} " +
+                    "leadingKern=${fragment.leadingKernPx} " +
                     "italicCorrection=${fragment.trailingItalicCorrectionPx} " +
                     "glue=${fragment.trailingGlue.kind}/${fragment.trailingGlue.naturalPx}/" +
                     "${fragment.trailingGlue.minimumPx}/${fragment.trailingGlue.maximumPx}/" +
@@ -5388,6 +5398,7 @@ private class MathLayoutPass(
         val italicCorrectionPx: Float,
         val style: MathStyle,
         val scriptBaseKind: ScriptBaseKind,
+        val horizontalKernPx: Float = 0f,
     )
 
     private data class StackedLimitsPlacement(
@@ -5478,6 +5489,7 @@ private class MathLayoutPass(
         val laid: LaidNode,
         val glueBefore: MathGlueAdjustment,
         val atomClass: MathAtomClass,
+        val leadingKernPx: Float = 0f,
         val trailingItalicCorrectionPx: Float = 0f,
         /** False for explicit glue/kern nodes, which never become TeX noads or alter Bin repair. */
         val participatesInNoadSpacing: Boolean = true,

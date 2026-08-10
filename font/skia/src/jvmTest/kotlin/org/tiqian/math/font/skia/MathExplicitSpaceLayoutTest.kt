@@ -5,10 +5,35 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.tiqian.math.core.MathAtomClass
 import org.tiqian.math.font.opentype.LeteSansMath
+import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
 
 class MathExplicitSpaceLayoutTest {
+    @Test
+    fun negativeThinSpaceIsAFixedSignedThreeMuKernInBothRealFonts() {
+        listOf(LeteSansMath.load(), StixTwoMath.load()).forEach { bytes ->
+            SkiaMathFontFace(bytes).use { face ->
+                val size = 36f
+                val plain = MathLayoutEngine(face).layout("xy", MathLayoutOptions(fontSizePx = size))
+                val kerned = MathLayoutEngine(face).layout("x\\!y", MathLayoutOptions(fontSizePx = size))
+                assertTrue(kerned.diagnostics.isEmpty(), kerned.diagnostics.toString())
+                assertEquals(-size / 6f, kerned.fragments[1].leadingKernPx, 0.001f)
+                assertEquals(plain.box.width - size / 6f, kerned.box.width, 0.02f)
+                assertEquals(
+                    plain.box.glyphs.last().x - size / 6f,
+                    kerned.box.glyphs.last().x,
+                    0.02f,
+                )
+                val decision = kerned.decisions.single {
+                    it.name == "TeXExplicitMathSpace" && it.details["command"] == "\\!"
+                }
+                assertEquals("TeXFixedSignedMuKern", decision.details["policy"])
+                assertEquals((-size / 6f).toString(), decision.details["advancePx"])
+            }
+        }
+    }
+
     @Test
     fun explicitGlueDoesNotBecomeANoadOrPreventLeadingBinRepair() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->

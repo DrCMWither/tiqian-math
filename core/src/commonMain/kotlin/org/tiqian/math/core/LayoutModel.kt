@@ -244,6 +244,8 @@ data class MathInlineFragment(
     val atomClass: MathAtomClass,
     /** Visible geometry only: no leading or trailing mathematical glue. */
     val box: MathBox,
+    /** Fixed signed TeX kern applied before this fragment; it is never stretched or discarded. */
+    val leadingKernPx: Float,
     /** Fixed italic correction owned by this character noad or compatible Ord run. */
     val trailingItalicCorrectionPx: Float,
     /** Named TeX glue and host adjustment capacity following this fragment. */

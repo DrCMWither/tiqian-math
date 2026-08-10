@@ -462,14 +462,14 @@ data class MathExtensibleArrow(
     val atomClass: MathAtomClass get() = MathAtomClass.Relation
 }
 
-/** Explicit TeX math space, resolved in mu units at the active math style's font size. */
+/** Explicit TeX math space or kern, resolved in mu units at the active math style's font size. */
 data class MathExplicitSpace(
     val command: String,
     val mu: Float,
     override val range: SourceRange,
 ) : MathNode {
     init {
-        require(mu >= 0f) { "negative math spaces require a kern-aware horizontal list" }
+        require(mu.isFinite()) { "math space must be finite" }
     }
 }
 

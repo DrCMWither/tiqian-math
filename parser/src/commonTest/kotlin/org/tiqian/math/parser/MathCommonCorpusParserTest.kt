@@ -9,12 +9,12 @@ import org.tiqian.math.core.*
 class MathCommonCorpusParserTest {
     @Test
     fun explicitSpacesRemainSourceAwareMuNodes() {
-        val source = "a\\,b\\:c\\;d\\ e\\quad f\\qquad g"
+        val source = "a\\!b\\,c\\:d\\;e\\ f\\quad g\\qquad h"
         val parsed = MathParser().parse(source)
         assertTrue(parsed.diagnostics.isEmpty(), parsed.diagnostics.toString())
         val spaces = parsed.root.children.filterIsInstance<MathExplicitSpace>()
-        assertEquals(listOf(3f, 4f, 5f, 6f, 18f, 36f), spaces.map { it.mu })
-        assertEquals(listOf("\\,", "\\:", "\\;", "\\ ", "\\quad", "\\qquad"), spaces.map { it.command })
+        assertEquals(listOf(-3f, 3f, 4f, 5f, 6f, 18f, 36f), spaces.map { it.mu })
+        assertEquals(listOf("\\!", "\\,", "\\:", "\\;", "\\ ", "\\quad", "\\qquad"), spaces.map { it.command })
         spaces.forEach { assertEquals(it.command, source.substring(it.range.start, it.range.endExclusive)) }
     }
 

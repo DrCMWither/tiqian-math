@@ -104,6 +104,7 @@ private fun MathLayoutResult.geometry(range: IntRange, resolvedGlue: List<Float>
     var hasInk = false
     val placements = range.mapIndexed { localIndex, fragmentIndex ->
         val fragment = fragments[fragmentIndex]
+        x += fragment.leadingKernPx
         val placement = MathLineFragmentPlacement(fragmentIndex, x, resolvedGlue[localIndex])
         val translated = fragment.box.inkBounds.translated(x, 0f)
         if (!hasInk) {
