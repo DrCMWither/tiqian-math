@@ -391,6 +391,57 @@ class TiqianMathRenderTest {
     }
 
     @Test
+    fun actualRendererReplaysGrowingBracesDisplayFractionsAndMathopFromOneLayoutResult() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var observed: MathLayoutResult? = null
+            val source = "\\overbrace{a+b+c+d+e}^{n}+\\underbrace{abcdefghijklmno}_{k}+" +
+                "\\dfrac{a}{b}+\\cfrac[l]{x}{bbbb}+\\mathop{rank}_0^1"
+            ImageComposeScene(width = 1500, height = 420, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    TiqianMath(
+                        source = source,
+                        modifier = Modifier.padding(18.dp),
+                        mode = MathMode.Display,
+                        fontSizePx = 40f,
+                        fontFace = face,
+                        color = Color.Black.copy(alpha = 0.5f),
+                        onMathLayout = { observed = it },
+                    )
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                val layout = assertNotNull(observed)
+                assertTrue(layout.diagnostics.isEmpty(), layout.diagnostics.toString())
+                assertEquals(2, layout.decisions.count { it.name == "TeXBraceOperatorNoad" })
+                assertEquals(2, layout.decisions.count {
+                    it.name == "OpenTypeMathAccent" && it.details["identity"]?.endsWith("brace") == true
+                })
+                assertTrue(layout.decisions.any {
+                    it.name == "TeXFractionCommand" && it.details["origin"] == "DisplayFraction"
+                })
+                assertTrue(layout.decisions.any {
+                    it.name == "TeXFractionCommand" && it.details["origin"] == "ContinuedFraction"
+                })
+                assertTrue(layout.decisions.any { it.name == "TeXMathOperatorNoad" })
+                assertTrue(layout.decisions.any { it.name == "OpenTypeMathOperatorLimits" })
+                val braceGroups = layout.box.constructionPaintGroups.filter {
+                    it.kind == org.tiqian.math.core.MathConstructionPaintKind.Accent
+                }
+                assertTrue(braceGroups.size >= 2, "wide braces use replayable construction groups")
+                var maximumAlpha = 0f
+                var painted = 0
+                for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                    val alpha = 1f - pixels[x, y].red
+                    maximumAlpha = maxOf(maximumAlpha, alpha)
+                    if (alpha > 0.15f) painted++
+                }
+                assertTrue(painted > 1000, "all common extension structures were rasterized")
+                assertTrue(maximumAlpha in 0.45f..0.53f, "brace assembly overlap is union-painted once")
+            }
+        }
+    }
+
+    @Test
     fun renderPlanMeasuresInkOverhangAndUsesSafeLogicalBaseline() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             val result = MathLayoutEngine(face).layout("x", MathLayoutOptions(MathMode.Inline, 40f))

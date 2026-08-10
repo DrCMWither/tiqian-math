@@ -87,6 +87,24 @@ class GeometryGoldenTest {
                     MathMode.Inline,
                     40f,
                 ),
+                GoldenCase(
+                    "common-fractions",
+                    "\\dfrac{a}{b}+\\cfrac[l]{x}{bbbb}",
+                    MathMode.Inline,
+                    40f,
+                ),
+                GoldenCase(
+                    "primitive-mathop",
+                    "\\mathop{abc}_0^1+{\\displaystyle\\mathop{x+y}_0^1}",
+                    MathMode.Inline,
+                    40f,
+                ),
+                GoldenCase(
+                    "growing-braces",
+                    "\\overbrace{a+b+c+d+e}^{n}+\\underbrace{x+y}_{k}",
+                    MathMode.Inline,
+                    40f,
+                ),
                 GoldenCase("adjustment", "a,b=c+d", MathMode.Inline, 40f),
             ).forEach { case ->
                 val result = engine.layout(case.source, MathLayoutOptions(case.mode, case.size))
@@ -207,6 +225,27 @@ class GeometryGoldenTest {
                                 "ic=${limits.details.getValue("operatorItalicCorrectionPx").toFloat().fmt()}",
                         )
                     }
+                    "common-fractions" -> appendLine(
+                        "  evidence=" + result.decisions.filter {
+                            it.name == "TeXFractionCommand" ||
+                                it.name == "AmsmathContinuedFractionNumeratorStrut" ||
+                                it.name == "TeXFractionNullDelimiters"
+                        }.joinToString(",") { "${it.name}:${it.details}" },
+                    )
+                    "primitive-mathop" -> appendLine(
+                        "  evidence=" + result.decisions.filter {
+                            it.name == "TeXMathOperatorNoad" ||
+                                it.name == "TeXOperatorLimitsPolicy" ||
+                                it.name == "OpenTypeMathOperatorLimits"
+                        }.joinToString(",") { "${it.name}:${it.details}" },
+                    )
+                    "growing-braces" -> appendLine(
+                        "  evidence=" + result.decisions.filter {
+                            it.name == "TeXBraceOperatorNoad" ||
+                                (it.name == "OpenTypeMathAccent" && it.details["identity"]?.endsWith("brace") == true) ||
+                                it.name == "OpenTypeMathOperatorLimits"
+                        }.joinToString(",") { "${it.name}:${it.details}" },
+                    )
                     "radical-inline", "radical-display" -> appendLine(
                         "  evidence=" + result.decisions.filter {
                             it.name == "TeXRadicalNoad" ||

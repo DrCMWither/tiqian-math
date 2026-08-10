@@ -179,6 +179,10 @@ private fun ExtendedStructureSample(
             ExtendedStructureTier("extensible arrows", "X\\xrightarrow[k-1]{p_k}Y+Z\\xleftarrow{f}W", face, textProvider)
             ExtendedStructureTier("over / under / stackrel", "a\\overset{u}{=}b+\\underset{d}{x}+\\stackrel{def}{=}", face, textProvider)
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            ExtendedStructureTier("growing braces", "\\overbrace{a+b+c+d+e}^{n}+\\underbrace{x+y+z}_{k}", face, textProvider)
+            ExtendedStructureTier("dfrac / cfrac / mathop", "\\dfrac{a}{b}+\\cfrac[l]{x}{bbbb}+\\mathop{rank}_0^1", face, textProvider)
+        }
     }
 }
 
@@ -648,7 +652,57 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("table-environment-oracle=${output.absolutePath} bytes=${output.length()}")
     }
+    ImageComposeScene(width = 1400, height = 1700) { CommonExtensionsOracleScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-common-extensions.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("common-extensions-oracle=${output.absolutePath} bytes=${output.length()}")
+    }
     renderRadicalSeamReport()
+}
+
+@Composable
+private fun CommonExtensionsOracleScreen() {
+    val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
+    DisposableEffect(lete, stix) {
+        onDispose { lete.close(); stix.close() }
+    }
+    MaterialTheme {
+        Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F5F1)) {
+            Column(Modifier.padding(26.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
+                Text("Tiqian · XeTeX common extensions · same repository OTF · 32 px", fontSize = 17.sp)
+                Text("Reproducer: preview/tectonic/common-extension-oracle-{lete,stix}.tex", fontSize = 11.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    CommonExtensionsFontColumn("Lete Sans Math", lete)
+                    CommonExtensionsFontColumn("STIX Two Math", stix)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommonExtensionsFontColumn(label: String, face: SkiaMathFontFace) {
+    Column(Modifier.width(650.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(label, fontSize = 14.sp)
+        commonExtensionPreviewCases.forEach { case ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(case.label, fontSize = 9.sp, color = Color(0xFF6B655E))
+                TiqianMath(
+                    source = case.source,
+                    modifier = Modifier.background(Color.White).padding(7.dp),
+                    mode = case.mode,
+                    fontFace = face,
+                    style = TextStyle(fontSize = 32.sp, lineHeight = case.lineHeightSp.sp),
+                    nullDelimiterSpacePx = TECTONIC_NULL_DELIMITER_SPACE_PX,
+                    delimiterShortfallPx = TECTONIC_DELIMITER_SHORTFALL_PX,
+                    softWrap = false,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -1347,6 +1401,27 @@ private data class DelimiterNoadPreviewCase(
     val mode: MathMode = MathMode.Inline,
     val fontSizeSp: Int = 32,
     val lineHeightSp: Int = 58,
+)
+
+private data class CommonExtensionPreviewCase(
+    val label: String,
+    val source: String,
+    val mode: MathMode = MathMode.Inline,
+    val lineHeightSp: Int = 100,
+)
+
+private val commonExtensionPreviewCases = listOf(
+    CommonExtensionPreviewCase("display fraction / centered continued fraction", "\\dfrac{a}{b}+\\cfrac{a}{b}"),
+    CommonExtensionPreviewCase("continued fraction numerator alignment", "\\cfrac[l]{a}{bbbb}+\\cfrac[r]{a}{bbbb}"),
+    CommonExtensionPreviewCase("nested continued fraction", "1+\\cfrac{a}{b+\\cfrac{c}{d}}", lineHeightSp = 170),
+    CommonExtensionPreviewCase("mathop inline side scripts", "\\mathop{abc}_0^1"),
+    CommonExtensionPreviewCase("mathop display / explicit limits", "\\mathop{abc}_0^1+\\mathop{x+y}\\limits_0^1", MathMode.Display, 130),
+    CommonExtensionPreviewCase("top / bottom growing braces", "\\overbrace{a+b}^{n}+\\underbrace{a+b}_{n}", lineHeightSp = 135),
+    CommonExtensionPreviewCase(
+        "assembly braces",
+        "\\overbrace{a+b+c+d+e}^{n}+\\underbrace{a+b+c+d+e}_{n}",
+        lineHeightSp = 150,
+    ),
 )
 
 private val DELIMITER_TALL_CONTENT =

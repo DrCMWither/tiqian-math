@@ -1,0 +1,34 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=500
+\showboxdepth=500
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-COMMON-EXTENSION-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-COMMON-EXTENSION-ORACLE-#1-END}%
+}
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/]{STIXTwoMath-Regular.otf}
+\traceformula{FRAC}{\frac{a}{b}}
+\traceformula{DFRAC}{\dfrac{a}{b}}
+\traceformula{CFRAC}{\cfrac{a}{b}}
+\traceformula{CFRAC-LEFT}{\cfrac[l]{a}{bbbb}}
+\traceformula{CFRAC-RIGHT}{\cfrac[r]{a}{bbbb}}
+\traceformula{CFRAC-NESTED}{1+\cfrac{a}{b+\cfrac{c}{d}}}
+\traceformula{MATHOP-AUTO}{\displaystyle\mathop{abc}_0^1}
+\traceformula{MATHOP-INLINE}{\mathop{abc}_0^1}
+\traceformula{MATHOP-NOLIMITS}{\displaystyle\mathop{abc}\nolimits_0^1}
+\traceformula{MATHOP-LIMITS}{\mathop{abc}\limits_0^1}
+\traceformula{OVERBRACE}{\overbrace{a+b}^{n}}
+\traceformula{UNDERBRACE}{\underbrace{a+b}_{n}}
+\traceformula{OVERBRACE-WIDE}{\overbrace{a+b+c+d+e}^{n}}
+\traceformula{UNDERBRACE-WIDE}{\underbrace{a+b+c+d+e}_{n}}
+\traceformula{BRACE-SPACING}{a\underbrace{b}c}
+\end{document}
