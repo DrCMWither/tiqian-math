@@ -60,6 +60,9 @@ class AndroidMathFontFace private constructor(
     private var nativeHandle = NativeMathBridge.createFace(nativeBytes)
     private val glyphPathCache = NativeGlyphPathCache(maximumEntries = 512)
     private val constructionPathCache = AndroidMathConstructionPathCache(this)
+    private val shapedRunCache = AndroidMeasuredRunCache<ShapeCacheKey>(MAX_SHAPED_RUN_CACHE_ENTRIES)
+    private val glyphMeasurementCache =
+        AndroidMeasuredRunCache<GlyphMeasurementCacheKey>(MAX_GLYPH_MEASUREMENT_CACHE_ENTRIES)
 
     override fun resolveSymbol(
         request: MathSymbolGlyphRequest,
@@ -137,10 +140,13 @@ class AndroidMathFontFace private constructor(
         sourceRange: SourceRange,
     ): MeasuredMathRun {
         if (text.isEmpty()) return MeasuredMathRun(emptyList(), 0f, 0f, 0f, false)
-        val packed = withNativeHandle { handle ->
-            NativeMathBridge.shape(handle, text, fontSizePx, style.nativeStyleLevel())
+        val key = ShapeCacheKey(text, fontSizePx.toRawBits(), style.level)
+        return shapedRunCache.getOrPut(key) {
+            val packed = withNativeHandle { handle ->
+                NativeMathBridge.shape(handle, text, fontSizePx, style.nativeStyleLevel())
+            }
+            decodeRun(packed, faceId, fontClass, requestedWeight, resolvedWeight)
         }
-        return decodeRun(packed, faceId, fontClass, requestedWeight, resolvedWeight)
     }
 
     override fun measureGlyph(
@@ -148,13 +154,18 @@ class AndroidMathFontFace private constructor(
         fontSizePx: Float,
         style: MathStyle,
         sourceRange: SourceRange,
-    ): MeasuredMathRun = decodeGlyphMeasurement(
-        nativeGlyphMeasurement(glyphId, fontSizePx),
-        faceId,
-        fontClass,
-        requestedWeight,
-        resolvedWeight,
-    )
+    ): MeasuredMathRun {
+        val key = GlyphMeasurementCacheKey(glyphId, fontSizePx.toRawBits())
+        return glyphMeasurementCache.getOrPut(key) {
+            decodeGlyphMeasurement(
+                nativeGlyphMeasurement(glyphId, fontSizePx),
+                faceId,
+                fontClass,
+                requestedWeight,
+                resolvedWeight,
+            )
+        }
+    }
 
     override fun measureGlyphOutlineBounds(
         glyphId: UShort,
@@ -204,6 +215,11 @@ class AndroidMathFontFace private constructor(
 
     fun constructionPathCacheStats(): AndroidMathConstructionPathCacheStats =
         constructionPathCache.stats()
+
+    internal fun measurementCacheStats(): AndroidMathMeasurementCacheStats = AndroidMathMeasurementCacheStats(
+        shapedRuns = shapedRunCache.stats(),
+        glyphMeasurements = glyphMeasurementCache.stats(),
+    )
 
     fun nativeVersions(): String = NativeMathBridge.nativeVersions()
 
@@ -265,6 +281,8 @@ class AndroidMathFontFace private constructor(
         }
         constructionPathCache.clear()
         synchronized(glyphPathCache) { glyphPathCache.clear() }
+        shapedRunCache.clear()
+        glyphMeasurementCache.clear()
         NativeMathBridge.destroyFace(handle)
     }
 
@@ -410,6 +428,58 @@ internal class NativeGlyphPathCache(private val maximumEntries: Int) {
 }
 
 private data class GlyphPathKey(val glyphId: UShort, val fontSizePx: Float)
+
+internal data class AndroidMathMeasurementCacheStats(
+    val shapedRuns: AndroidMeasuredRunCacheStats,
+    val glyphMeasurements: AndroidMeasuredRunCacheStats,
+)
+
+internal data class AndroidMeasuredRunCacheStats(
+    val entries: Int,
+    val hits: Long,
+    val misses: Long,
+)
+
+private data class ShapeCacheKey(
+    val text: String,
+    val fontSizeBits: Int,
+    val styleLevel: MathStyleLevel,
+)
+
+private data class GlyphMeasurementCacheKey(
+    val glyphId: UShort,
+    val fontSizeBits: Int,
+)
+
+private class AndroidMeasuredRunCache<K>(
+    private val maximumEntries: Int,
+) {
+    private val entries = object : LinkedHashMap<K, MeasuredMathRun>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, MeasuredMathRun>?): Boolean =
+            size > maximumEntries
+    }
+    private var hits = 0L
+    private var misses = 0L
+
+    @Synchronized
+    fun getOrPut(key: K, produce: () -> MeasuredMathRun): MeasuredMathRun {
+        entries[key]?.let {
+            hits += 1
+            return it
+        }
+        misses += 1
+        return produce().also { entries[key] = it }
+    }
+
+    @Synchronized
+    fun stats(): AndroidMeasuredRunCacheStats = AndroidMeasuredRunCacheStats(entries.size, hits, misses)
+
+    @Synchronized
+    fun clear() = entries.clear()
+}
+
+private const val MAX_SHAPED_RUN_CACHE_ENTRIES = 256
+private const val MAX_GLYPH_MEASUREMENT_CACHE_ENTRIES = 512
 
 private const val RunHeaderSize = 5
 private const val RunGlyphStride = 9

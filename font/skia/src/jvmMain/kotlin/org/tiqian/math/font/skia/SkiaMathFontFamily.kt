@@ -260,7 +260,10 @@ class SkiaMathFontFamily private constructor(
 private fun MeasuredMathRun.tag(
     requestedWeight: MathFontWeight,
     reason: MathFontFallbackReason,
-): MeasuredMathRun = copy(glyphs = glyphs.map { it.copy(requestedWeight = requestedWeight, fallbackReason = reason) })
+): MeasuredMathRun {
+    if (glyphs.all { it.requestedWeight == requestedWeight && it.fallbackReason == reason }) return this
+    return copy(glyphs = glyphs.map { it.copy(requestedWeight = requestedWeight, fallbackReason = reason) })
+}
 
 private fun MeasuredOutlineConstructionRun.tag(
     requestedWeight: MathFontWeight,

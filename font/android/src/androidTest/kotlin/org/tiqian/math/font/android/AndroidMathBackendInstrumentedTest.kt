@@ -14,6 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import org.junit.runner.RunWith
 import org.junit.Test
@@ -38,6 +39,28 @@ import org.tiqian.math.layout.MeasuredMathRun
 
 @RunWith(AndroidJUnit4::class)
 class AndroidMathBackendInstrumentedTest {
+    @Test
+    fun mathFaceCachesSourceIndependentNativeShapingAndGlyphMetrics() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AndroidMathFontFace.loadLete(context).use { face ->
+            val first = face.shape("x+y", 32f, MathStyle.Text, SourceRange(0, 3))
+            assertSame(first, face.shape("x+y", 32f, MathStyle.Text, SourceRange(20, 23)))
+            face.shape("x+y", 32f, MathStyle.Script, SourceRange(0, 3))
+
+            val glyphId = first.glyphs.first().glyphId
+            val measured = face.measureGlyph(glyphId, 32f, MathStyle.Text, SourceRange(0, 1))
+            assertSame(measured, face.measureGlyph(glyphId, 32f, MathStyle.Script, SourceRange(8, 9)))
+
+            val stats = face.measurementCacheStats()
+            assertEquals(2, stats.shapedRuns.entries)
+            assertEquals(1, stats.shapedRuns.hits)
+            assertEquals(2, stats.shapedRuns.misses)
+            assertEquals(1, stats.glyphMeasurements.entries)
+            assertEquals(1, stats.glyphMeasurements.hits)
+            assertEquals(1, stats.glyphMeasurements.misses)
+        }
+    }
+
     @Test
     fun remainingCorpusCommandsReplayGlyphsAndCancellationStrokeOnAndroid() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

@@ -34,6 +34,7 @@ import org.tiqian.math.layout.ResolvedMathSymbol
 import org.tiqian.math.layout.ResolvedMathSymbolRun
 import org.tiqian.math.layout.ResolvedMathOperator
 import org.tiqian.math.layout.resolveBackendScalar
+import java.util.LinkedHashMap
 import kotlin.math.max
 
 /**
@@ -66,6 +67,9 @@ class SkiaMathFontFace(
     val typeface: Typeface
     private val shaper = Shaper.makeShaperDrivenWrapper()
     private val constructionOutlineCache = MathConstructionOutlineCache(this)
+    private val shapedRunCache = BoundedMeasuredRunCache<ShapeCacheKey>(MAX_SHAPED_RUN_CACHE_ENTRIES)
+    private val glyphMeasurementCache =
+        BoundedMeasuredRunCache<GlyphMeasurementCacheKey>(MAX_GLYPH_MEASUREMENT_CACHE_ENTRIES)
 
     init {
         val data = Data.makeFromBytes(mathFont.bytes)
@@ -181,34 +185,37 @@ class SkiaMathFontFace(
         boundsSource: MathGlyphBoundsSource,
     ): MeasuredMathRun {
         if (text.isEmpty()) return MeasuredMathRun(emptyList(), 0f, 0f, 0f, false)
-        val font = font(fontSizePx)
-        return try {
-            val collector = GlyphCollector()
-            val features = when (style.level) {
-                MathStyleLevel.Script -> "ssty=1"
-                MathStyleLevel.ScriptScript -> "ssty=2"
-                MathStyleLevel.Display, MathStyleLevel.Text -> null
+        val key = ShapeCacheKey(text, fontSizePx.toRawBits(), style.level, boundsSource)
+        return shapedRunCache.getOrPut(key) {
+            val font = font(fontSizePx)
+            try {
+                val collector = GlyphCollector()
+                val features = when (style.level) {
+                    MathStyleLevel.Script -> "ssty=1"
+                    MathStyleLevel.ScriptScript -> "ssty=2"
+                    MathStyleLevel.Display, MathStyleLevel.Text -> null
+                }
+                shaper.shape(
+                    text,
+                    TrivialFontRunIterator(text, font),
+                    TrivialBidiRunIterator(text, 0),
+                    TrivialScriptRunIterator(text, "Zmth"),
+                    TrivialLanguageRunIterator(text, "und"),
+                    features?.let { ShapingOptions.DEFAULT.withFeatures(it) } ?: ShapingOptions.DEFAULT,
+                    Float.MAX_VALUE,
+                    collector,
+                )
+                measuredRun(
+                    font,
+                    collector.glyphIds.toShortArray(),
+                    collector.xPositions.toFloatArray(),
+                    collector.clusters.toIntArray(),
+                    collector.advance,
+                    boundsSource,
+                )
+            } finally {
+                font.close()
             }
-            shaper.shape(
-                text,
-                TrivialFontRunIterator(text, font),
-                TrivialBidiRunIterator(text, 0),
-                TrivialScriptRunIterator(text, "Zmth"),
-                TrivialLanguageRunIterator(text, "und"),
-                features?.let { ShapingOptions.DEFAULT.withFeatures(it) } ?: ShapingOptions.DEFAULT,
-                Float.MAX_VALUE,
-                collector,
-            )
-            measuredRun(
-                font,
-                collector.glyphIds.toShortArray(),
-                collector.xPositions.toFloatArray(),
-                collector.clusters.toIntArray(),
-                collector.advance,
-                boundsSource,
-            )
-        } finally {
-            font.close()
         }
     }
 
@@ -253,19 +260,22 @@ class SkiaMathFontFace(
         fontSizePx: Float,
         boundsSource: MathGlyphBoundsSource,
     ): MeasuredMathRun {
-        val font = font(fontSizePx)
-        return try {
-            val ids = shortArrayOf(glyphId.toShort())
-            measuredRun(
-                font,
-                ids,
-                floatArrayOf(0f),
-                intArrayOf(0),
-                font.getWidths(ids).single(),
-                boundsSource,
-            )
-        } finally {
-            font.close()
+        val key = GlyphMeasurementCacheKey(glyphId, fontSizePx.toRawBits(), boundsSource)
+        return glyphMeasurementCache.getOrPut(key) {
+            val font = font(fontSizePx)
+            try {
+                val ids = shortArrayOf(glyphId.toShort())
+                measuredRun(
+                    font,
+                    ids,
+                    floatArrayOf(0f),
+                    intArrayOf(0),
+                    font.getWidths(ids).single(),
+                    boundsSource,
+                )
+            } finally {
+                font.close()
+            }
         }
     }
 
@@ -295,6 +305,11 @@ class SkiaMathFontFace(
     ): MathConstructionOutlineResult = constructionOutlineCache.outline(box, group)
 
     fun constructionOutlineCacheStats(): MathConstructionOutlineCacheStats = constructionOutlineCache.stats()
+
+    internal fun measurementCacheStats(): SkiaMathMeasurementCacheStats = SkiaMathMeasurementCacheStats(
+        shapedRuns = shapedRunCache.stats(),
+        glyphMeasurements = glyphMeasurementCache.stats(),
+    )
 
     private fun measuredRun(
         font: Font,
@@ -461,6 +476,8 @@ class SkiaMathFontFace(
     }
 
     override fun close() {
+        shapedRunCache.clear()
+        glyphMeasurementCache.clear()
         constructionOutlineCache.close()
         shaper.close()
         typeface.close()
@@ -507,6 +524,60 @@ class SkiaMathFontFace(
     private fun List<MathSymbolGlyphRequest>.coveredRange(): SourceRange =
         SourceRange(first().sourceRange.start, last().sourceRange.endExclusive)
 }
+
+internal data class SkiaMathMeasurementCacheStats(
+    val shapedRuns: MathMeasuredRunCacheStats,
+    val glyphMeasurements: MathMeasuredRunCacheStats,
+)
+
+internal data class MathMeasuredRunCacheStats(
+    val entries: Int,
+    val hits: Long,
+    val misses: Long,
+)
+
+private data class ShapeCacheKey(
+    val text: String,
+    val fontSizeBits: Int,
+    val styleLevel: MathStyleLevel,
+    val boundsSource: MathGlyphBoundsSource,
+)
+
+private data class GlyphMeasurementCacheKey(
+    val glyphId: UShort,
+    val fontSizeBits: Int,
+    val boundsSource: MathGlyphBoundsSource,
+)
+
+private class BoundedMeasuredRunCache<K>(
+    private val maximumEntries: Int,
+) {
+    private val entries = object : LinkedHashMap<K, MeasuredMathRun>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, MeasuredMathRun>?): Boolean =
+            size > maximumEntries
+    }
+    private var hits = 0L
+    private var misses = 0L
+
+    @Synchronized
+    fun getOrPut(key: K, produce: () -> MeasuredMathRun): MeasuredMathRun {
+        entries[key]?.let {
+            hits += 1
+            return it
+        }
+        misses += 1
+        return produce().also { entries[key] = it }
+    }
+
+    @Synchronized
+    fun stats(): MathMeasuredRunCacheStats = MathMeasuredRunCacheStats(entries.size, hits, misses)
+
+    @Synchronized
+    fun clear() = entries.clear()
+}
+
+private const val MAX_SHAPED_RUN_CACHE_ENTRIES = 256
+private const val MAX_GLYPH_MEASUREMENT_CACHE_ENTRIES = 512
 
 /** MATH-rule-relative search zone for the radical's built-in horizontal top stroke. */
 private const val RADICAL_TOP_STROKE_ZONE_RULE_MULTIPLIER = 2f

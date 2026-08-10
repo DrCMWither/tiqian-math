@@ -203,7 +203,8 @@ class AndroidMathFontFamily private constructor(
 }
 
 private fun MeasuredMathRun.withFaceDecision(requested: MathFontWeight, reason: MathFontFallbackReason) =
-    copy(glyphs = glyphs.map { it.copy(requestedWeight = requested, fallbackReason = reason) })
+    if (glyphs.all { it.requestedWeight == requested && it.fallbackReason == reason }) this
+    else copy(glyphs = glyphs.map { it.copy(requestedWeight = requested, fallbackReason = reason) })
 
 private fun MeasuredOutlineConstructionRun.withFaceDecision(requested: MathFontWeight, reason: MathFontFallbackReason) =
     copy(run = run.withFaceDecision(requested, reason))
