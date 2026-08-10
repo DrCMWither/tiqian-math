@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toPixelMap
@@ -172,40 +173,50 @@ class AndroidTiqianMathDeviceTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         AndroidMathFontFace.loadLete(context).use { face ->
             var result: MathLayoutResult? = null
-            compose.setContent {
-                Box(Modifier.background(Color.White)) {
-                    TiqianMath(
-                        source = "{\\color{red}\\boxed{x}}+{\\color{blue}\\sqrt{\\frac{a}{b}}}",
-                        fontSizePx = 44f,
-                        color = Color.Black,
-                        fontFace = face,
-                        modifier = Modifier.testTag(ColorFormulaTag),
-                        onMathLayout = { result = it },
-                    )
-                }
-            }
-            compose.waitForIdle()
-            val layout = assertNotNull(result)
-            assertTrue(layout.box.glyphs.any { it.paintColor == MathPaintColor(255, 0, 0) })
-            assertTrue(layout.box.rules.any { it.paintColor == MathPaintColor(255, 0, 0) })
-            assertTrue(layout.box.constructionPaintGroups.all { it.paintColor == MathPaintColor(0, 0, 255) })
-            compose.onNodeWithTag(ColorFormulaTag).assertIsDisplayed()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val image = compose.onNodeWithTag(ColorFormulaTag).captureToImage().toPixelMap()
-                val redPixels = (0 until image.height).sumOf { y ->
-                    (0 until image.width).count { x ->
-                        val pixel = image[x, y]
-                        pixel.red > 0.65f && pixel.green < 0.35f && pixel.blue < 0.35f
+            val formulaMounted = mutableStateOf(true)
+            try {
+                compose.setContent {
+                    if (formulaMounted.value) {
+                        Box(Modifier.background(Color.White)) {
+                            TiqianMath(
+                                source = "{\\color{red}\\boxed{x}}+{\\color{blue}\\sqrt{\\frac{a}{b}}}",
+                                fontSizePx = 44f,
+                                color = Color.Black,
+                                fontFace = face,
+                                modifier = Modifier.testTag(ColorFormulaTag),
+                                onMathLayout = { result = it },
+                            )
+                        }
                     }
                 }
-                val bluePixels = (0 until image.height).sumOf { y ->
-                    (0 until image.width).count { x ->
-                        val pixel = image[x, y]
-                        pixel.blue > 0.65f && pixel.red < 0.35f && pixel.green < 0.35f
+                compose.waitForIdle()
+                val layout = assertNotNull(result)
+                assertTrue(layout.box.glyphs.any { it.paintColor == MathPaintColor(255, 0, 0) })
+                assertTrue(layout.box.rules.any { it.paintColor == MathPaintColor(255, 0, 0) })
+                assertTrue(layout.box.constructionPaintGroups.all { it.paintColor == MathPaintColor(0, 0, 255) })
+                compose.onNodeWithTag(ColorFormulaTag).assertIsDisplayed()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val image = compose.onNodeWithTag(ColorFormulaTag).captureToImage().toPixelMap()
+                    val redPixels = (0 until image.height).sumOf { y ->
+                        (0 until image.width).count { x ->
+                            val pixel = image[x, y]
+                            pixel.red > 0.65f && pixel.green < 0.35f && pixel.blue < 0.35f
+                        }
                     }
+                    val bluePixels = (0 until image.height).sumOf { y ->
+                        (0 until image.width).count { x ->
+                            val pixel = image[x, y]
+                            pixel.blue > 0.65f && pixel.red < 0.35f && pixel.green < 0.35f
+                        }
+                    }
+                    assertTrue(redPixels > 100, "Android fbox replays explicit red: $redPixels")
+                    assertTrue(bluePixels > 100, "Android radical construction replays explicit blue: $bluePixels")
                 }
-                assertTrue(redPixels > 100, "Android fbox replays explicit red")
-                assertTrue(bluePixels > 100, "Android radical construction replays explicit blue")
+            } finally {
+                // The caller owns explicit faces. Remove every draw consumer before closing the face;
+                // API 23 may record its display list after the semantics assertion has completed.
+                compose.runOnIdle { formulaMounted.value = false }
+                compose.waitForIdle()
             }
         }
     }
