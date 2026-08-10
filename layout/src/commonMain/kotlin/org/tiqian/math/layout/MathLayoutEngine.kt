@@ -305,6 +305,7 @@ private class MathLayoutPass(
         is MathList -> layoutList(node, style, alphabetOverride).laid
         is MathGroup -> layoutGroup(node, style, alphabetOverride)
         is MathBoxed -> layoutBoxed(node, style, alphabetOverride)
+        is MathBbox -> layoutBbox(node, style, alphabetOverride)
         is MathSymbol -> layoutSymbol(node, style, alphabetOverride)
         is MathOperator -> layoutOperator(node, style, alphabetOverride)
         is MathOperatorName -> layoutOperatorName(node, style, alphabetOverride)
@@ -1153,6 +1154,164 @@ private class MathLayoutPass(
             style = style,
             scriptBaseKind = ScriptBaseKind.CompoundBox,
         )
+    }
+
+    private fun layoutBbox(
+        node: MathBbox,
+        style: MathStyle,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val content = layoutNode(node.body, style, alphabetOverride).completedTeXMathField().box
+        val styleSizePx = fontSize(style)
+        val paddingPx = node.options.padding?.let { resolveBboxDimension(it, styleSizePx) } ?: 0f
+        val border = node.options.border
+        val borderWidthPx = if (border?.style == MathBboxBorderStyle.Solid) {
+            resolveBboxDimension(border.width, styleSizePx)
+        } else {
+            0f
+        }
+        val inset = paddingPx + borderWidthPx
+        val width = content.width + 2f * inset
+        val ascent = content.ascent + inset
+        val descent = content.descent + inset
+        val shiftedContent = content.translated(inset, 0f)
+        val decorations = buildList {
+            node.options.background?.let { background ->
+                add(
+                    MathRulePlacement(
+                        left = 0f,
+                        top = -ascent,
+                        right = width,
+                        bottom = descent,
+                        sourceRange = background.range,
+                        paintColor = background.color,
+                        paintLayer = MathPaintLayer.Background,
+                        paintRole = MathRulePaintRole.BackgroundFill,
+                    ),
+                )
+            }
+            if (borderWidthPx > 0f && border != null) {
+                val color = border.color?.color
+                add(
+                    MathRulePlacement(
+                        0f, -ascent, width, -ascent + borderWidthPx, border.range,
+                        paintColor = color,
+                        paintRole = MathRulePaintRole.Border,
+                    ),
+                )
+                add(
+                    MathRulePlacement(
+                        0f, descent - borderWidthPx, width, descent, border.range,
+                        paintColor = color,
+                        paintRole = MathRulePaintRole.Border,
+                    ),
+                )
+                add(
+                    MathRulePlacement(
+                        0f, -ascent, borderWidthPx, descent, border.range,
+                        paintColor = color,
+                        paintRole = MathRulePaintRole.Border,
+                    ),
+                )
+                add(
+                    MathRulePlacement(
+                        width - borderWidthPx, -ascent, width, descent, border.range,
+                        paintColor = color,
+                        paintRole = MathRulePaintRole.Border,
+                    ),
+                )
+            }
+        }
+        val painted = geometryExtents(
+            width = width,
+            glyphs = shiftedContent.glyphs,
+            rules = decorations + shiftedContent.rules,
+            range = node.range,
+            constructionPaintGroups = shiftedContent.constructionPaintGroups,
+        )
+        val extraEvidence = if (decorations.isEmpty()) emptySet() else setOf(MathTeXCleanBoxEvidence.RuleGeometry)
+        val box = painted.copy(
+            ascent = ascent,
+            descent = descent,
+            texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+                ascent = content.texCleanBoxMetrics.ascent + inset,
+                descent = content.texCleanBoxMetrics.descent + inset,
+                policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+                evidence = content.texCleanBoxMetrics.evidence +
+                    MathTeXCleanBoxEvidence.CompletedChildBox + extraEvidence,
+            ),
+        )
+        decision(
+            "MathJaxBboxExtension",
+            node.range,
+            "commandRange" to node.commandRange,
+            "optionsRange" to node.optionsRange,
+            "outerStyle" to style,
+            "styleFontSizePx" to styleSizePx,
+            "paddingSource" to node.options.padding?.sourceText,
+            "paddingPx" to paddingPx,
+            "backgroundSource" to node.options.background?.sourceName,
+            "backgroundArgb" to node.options.background?.color?.argb?.toUInt()?.toString(16),
+            "borderWidthSource" to border?.width?.sourceText,
+            "borderWidthPx" to borderWidthPx,
+            "borderStyle" to border?.style,
+            "borderColorSource" to border?.color?.sourceName,
+            "contentWidthPx" to content.width,
+            "contentAscentPx" to content.ascent,
+            "contentDescentPx" to content.descent,
+            "logicalWidthPx" to width,
+            "logicalAscentPx" to ascent,
+            "logicalDescentPx" to descent,
+            "paintOrder" to "BackgroundFillThenMathThenForegroundBorder",
+            "atomClass" to MathAtomClass.Ordinary,
+            "scriptBaseKind" to ScriptBaseKind.CompoundBox,
+            "policy" to "MathJaxBboxMpaddedAndSafeBorderSubset",
+        )
+        return LaidNode(
+            node = node,
+            box = box,
+            atomClass = MathAtomClass.Ordinary,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun resolveBboxDimension(dimension: MathBboxDimension, emSizePx: Float): Float {
+        val pixels = when (dimension.unit) {
+            MathBboxDimensionUnit.Point -> dimension.value * CSS_PIXELS_PER_INCH / 72f
+            MathBboxDimensionUnit.Em -> dimension.value * emSizePx
+            MathBboxDimensionUnit.Ex -> {
+                val xHeight = glyphSource.mathFont.xHeight
+                if (xHeight == null) {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.MissingBboxXHeight,
+                        "The selected math font has no OS/2 sxHeight required by bbox ex units",
+                        dimension.range,
+                    )
+                    0f
+                } else {
+                    dimension.value * glyphSource.mathFont.scaleDesignUnits(xHeight, emSizePx)
+                }
+            }
+            MathBboxDimensionUnit.Mu -> dimension.value * emSizePx / 18f
+            MathBboxDimensionUnit.Pixel -> dimension.value
+            MathBboxDimensionUnit.Inch -> dimension.value * CSS_PIXELS_PER_INCH
+            MathBboxDimensionUnit.Centimeter -> dimension.value * CSS_PIXELS_PER_INCH / CENTIMETERS_PER_INCH
+            MathBboxDimensionUnit.Millimeter -> dimension.value * CSS_PIXELS_PER_INCH / MILLIMETERS_PER_INCH
+        }
+        decision(
+            "MathJaxBboxDimension",
+            dimension.range,
+            "source" to dimension.sourceText,
+            "value" to dimension.value,
+            "unit" to dimension.unit,
+            "styleFontSizePx" to emSizePx,
+            "fontXHeightDesignUnits" to glyphSource.mathFont.xHeight,
+            "resolvedPx" to pixels,
+            "policy" to "MathJaxBboxCss96DpiEmMuAndOpenTypeOs2XHeight",
+        )
+        return pixels
     }
 
     private fun layoutDelimited(
@@ -5600,6 +5759,7 @@ private class MathLayoutPass(
         box.rules.forEachIndexed { index, rule ->
             appendLine(
                 "rule[$index] ${rule.left},${rule.top},${rule.right},${rule.bottom} " +
+                    "layer=${rule.paintLayer} role=${rule.paintRole} color=${rule.paintColor} " +
                     "constructionGroup=${rule.constructionGroupId}",
             )
         }

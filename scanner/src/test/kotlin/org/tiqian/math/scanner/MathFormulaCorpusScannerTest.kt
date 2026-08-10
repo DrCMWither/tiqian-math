@@ -115,6 +115,22 @@ class MathFormulaCorpusScannerTest {
         }
     }
 
+    @Test
+    fun mathJaxBboxIsCountedAsReadyRatherThanAnUnsupportedCommand() {
+        val input = Files.createTempFile("math-compose-bbox-corpus", ".txt")
+        val output = Files.createTempFile("math-compose-bbox-report", ".json")
+        try {
+            input.toFile().writeText("\\bbox[5px,border:1px solid red]{x^2}\n")
+            main(arrayOf(input.toString(), "--output=$output", "--font=lete", "--font-size=32"))
+            val report = Json.parseToJsonElement(output.readText()).jsonObject
+            assertEquals("1", report.getValue("ready").jsonPrimitive.content)
+            assertEquals(emptyMap(), report.getValue("byUnsupportedCommand").jsonObject)
+        } finally {
+            Files.deleteIfExists(input)
+            Files.deleteIfExists(output)
+        }
+    }
+
     private fun runScanner(input: Path, output: Path, font: String) {
         main(arrayOf(
             input.toString(),

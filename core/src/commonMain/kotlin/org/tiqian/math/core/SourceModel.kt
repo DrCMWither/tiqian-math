@@ -94,6 +94,11 @@ enum class DiagnosticCode {
     MisplacedEquationTag,
     MissingEquationTagDisplayWidth,
     EquationTagDoesNotFit,
+    UnclosedBboxOptions,
+    InvalidBboxOption,
+    DuplicateBboxOption,
+    UnsupportedBboxStyle,
+    MissingBboxXHeight,
 }
 
 data class MathDiagnostic(

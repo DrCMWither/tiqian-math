@@ -213,6 +213,8 @@ data class OpenTypeMathFont(
     val bytes: ByteArray,
     val unitsPerEm: Int,
     val lineMetrics: OpenTypeLineMetrics,
+    /** OS/2.sxHeight in design units when the font provides the version-2 metric. */
+    val xHeight: Int? = null,
     val constants: OpenTypeMathConstants,
     val italicCorrections: Map<UShort, Int>,
     val italicCorrectionDeviceAdjustments: Map<UShort, MathDeviceAdjustment> = emptyMap(),
@@ -682,6 +684,7 @@ class OpenTypeMathReader {
             bytes = bytes.copyOf(),
             unitsPerEm = unitsPerEm,
             lineMetrics = lineMetrics,
+            xHeight = readXHeight(reader, tables),
             constants = constants,
             italicCorrections = italicCorrections.values,
             italicCorrectionDeviceAdjustments = italicCorrections.deviceAdjustments,
@@ -716,6 +719,16 @@ class OpenTypeMathReader {
             typoDescender = reader.s16(hhea.offset + 6),
             typoLineGap = reader.s16(hhea.offset + 8),
         )
+    }
+
+    private fun readXHeight(
+        reader: BigEndianReader,
+        tables: Map<String, TableRecord>,
+    ): Int? {
+        val os2 = tables["OS/2"] ?: return null
+        if (os2.length < 88 || reader.u16(os2.offset) < 2) return null
+        val value = reader.s16(os2.offset + 86)
+        return value.takeIf { it > 0 }
     }
 
     private fun readConstants(reader: BigEndianReader, base: Int): OpenTypeMathConstants {

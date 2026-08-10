@@ -659,7 +659,7 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("common-extensions-oracle=${output.absolutePath} bytes=${output.length()}")
     }
-    ImageComposeScene(width = 1400, height = 980) { ColorBoxOracleScreen() }.use { scene ->
+    ImageComposeScene(width = 1400, height = 1420) { ColorBoxOracleScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/tiqian-color-box.png")
         output.parentFile.mkdirs()
@@ -740,9 +740,9 @@ private fun ColorBoxOracleScreen() {
     MaterialTheme {
         Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F5F1)) {
             Column(Modifier.padding(26.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-                Text("Tiqian · xcolor declarations / amsmath boxed · repository OTF · 32 px", fontSize = 17.sp)
+                Text("Tiqian · xcolor / amsmath boxed / MathJax bbox · repository OTF · 32 px", fontSize = 17.sp)
                 Text(
-                    "Tectonic 0.17.0: fboxsep=3pt · fboxrule=.4pt · explicit color owns glyph/rule/construction replay",
+                    "Tectonic boxed + MathJax bbox: padding/background/border are explicit LayoutResult paint layers",
                     fontSize = 11.sp,
                     color = Color(0xFF55504A),
                 )
@@ -1554,6 +1554,9 @@ private val COLOR_BOX_PREVIEW_CASES = listOf(
     "boxed x / display fraction" to "\\boxed{x}+\\boxed{\\frac{a}{b}}",
     "boxed ordinary spacing" to "a\\boxed{b}c",
     "color owns box rules" to "{\\color{violet}\\boxed{\\frac{a}{b}}}+x",
+    "MathJax padding + solid border" to "a+\\bbox[5px,border:1px solid red]{\\frac{x^2+1}{y}}+b",
+    "MathJax background + padding" to "\\bbox[#CAF,12px]{x+\\sqrt{y}}",
+    "nested bbox + construction" to "\\bbox[4px,border:2px solid blue]{\\sqrt{\\bbox[3px,yellow]{\\frac{a}{b}}}}",
 )
 
 private val DELIMITER_TALL_CONTENT =

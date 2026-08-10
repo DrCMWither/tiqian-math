@@ -57,6 +57,47 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalComposeUiApi::class)
 class TiqianMathRenderTest {
     @Test
+    fun mathJaxBboxBackgroundIsReplayedBeforeGlyphsAndForegroundBorder() {
+        var observed: MathLayoutResult? = null
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            ImageComposeScene(width = 180, height = 110, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    TiqianMath(
+                        source = "\\bbox[#CAF,10px,border:2px solid blue]{x}",
+                        fontSizePx = 32f,
+                        fontFace = face,
+                        softWrap = false,
+                        onMathLayout = { observed = it },
+                    )
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                val result = assertNotNull(observed)
+                assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+                val background = result.box.rules.single {
+                    it.paintRole == org.tiqian.math.core.MathRulePaintRole.BackgroundFill
+                }
+                assertEquals(org.tiqian.math.core.MathPaintLayer.Background, background.paintLayer)
+                assertEquals(4, result.box.rules.count {
+                    it.paintRole == org.tiqian.math.core.MathRulePaintRole.Border
+                })
+                var backgroundPixels = 0
+                var borderPixels = 0
+                var darkGlyphPixels = 0
+                for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                    val pixel = pixels[x, y]
+                    if (pixel.red > 0.65f && pixel.blue > 0.8f && pixel.green in 0.5f..0.8f) backgroundPixels += 1
+                    if (pixel.blue > 0.75f && pixel.red < 0.2f && pixel.green < 0.2f) borderPixels += 1
+                    if (pixel.red < 0.15f && pixel.green < 0.15f && pixel.blue < 0.15f) darkGlyphPixels += 1
+                }
+                assertTrue(backgroundPixels > 100, "background remains visible behind the glyph: $backgroundPixels")
+                assertTrue(borderPixels > 20, "foreground border is replayed: $borderPixels")
+                assertTrue(darkGlyphPixels > 5, "math glyph is not covered by the background: $darkGlyphPixels")
+            }
+        }
+    }
+
+    @Test
     fun displayEquationTagConsumesTheActualComposeConstraintBeforeLayoutAndPaint() {
         var observed: MathLayoutResult? = null
         SkiaMathFontFace(LeteSansMath.load()).use { face ->

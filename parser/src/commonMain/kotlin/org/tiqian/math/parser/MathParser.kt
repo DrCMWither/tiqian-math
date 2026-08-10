@@ -26,8 +26,13 @@ private class ParserState(
     private val tokens: List<MathToken>,
     private val diagnostics: MutableList<MathDiagnostic>,
 ) {
+    private data class ParsedBboxOptions(
+        val options: MathBboxOptions,
+        val totalRange: SourceRange?,
+    )
     private var index = 0
     private var structureDepth = 0
+    private val bboxDisplayContainerDepths = mutableListOf<Int>()
 
     fun parse(): MathParseResult {
         val parsedRoot = parseList(stopAtClosingGroup = false, opening = null)
@@ -460,6 +465,17 @@ private class ParserState(
                 range = token.range.cover(body.range),
             )
         }
+        if (token.text == "bbox") {
+            val parsedOptions = parseOptionalBboxOptions(token)
+            val body = parseBboxRequiredArgument(token)
+            return MathBbox(
+                body = body,
+                options = parsedOptions.options,
+                commandRange = token.range,
+                optionsRange = parsedOptions.totalRange,
+                range = token.range.cover(body.range),
+            )
+        }
         if (token.text == "operatorname") {
             skipIgnored()
             val starred = if (peek().kind == MathTokenKind.Symbol && peek().text == "*") advance() else null
@@ -635,7 +651,10 @@ private class ParserState(
             return MathErrorNode(sourceSlice(beginCommand.range), beginCommand.range)
         }
         val displayEnvironment = displayEnvironments[parsedName.name]
-        if (displayEnvironment != null && structureDepth > 0) {
+        if (
+            displayEnvironment != null && structureDepth > 0 &&
+            structureDepth !in bboxDisplayContainerDepths
+        ) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MisplacedDisplayEnvironment,
                 "Display environment ${parsedName.name} cannot be nested inside a math atom or another environment",
@@ -962,6 +981,161 @@ private class ParserState(
             sourceText = sourceText,
             contentRange = contentRange,
             range = totalRange,
+        )
+    }
+
+    private fun parseOptionalBboxOptions(command: MathToken): ParsedBboxOptions {
+        skipIgnored()
+        val opening = peek()
+        if (opening.kind != MathTokenKind.Symbol || opening.text != "[") {
+            return ParsedBboxOptions(MathBboxOptions(), null)
+        }
+        advance()
+        val contentStart = opening.range.endExclusive
+        var closing: MathToken? = null
+        while (peek().kind != MathTokenKind.End) {
+            val token = peek()
+            if (token.kind == MathTokenKind.Symbol && token.text == "]") {
+                closing = advance()
+                break
+            }
+            if (token.kind == MathTokenKind.OpenGroup) break
+            advance()
+        }
+        val contentEnd = closing?.range?.start ?: peek().range.start
+        val contentRange = SourceRange(contentStart, contentEnd.coerceAtLeast(contentStart))
+        val totalRange = closing?.range?.let(opening.range::cover) ?: opening.range.cover(contentRange)
+        if (closing == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.UnclosedBboxOptions,
+                "Optional bbox properties are not closed",
+                totalRange,
+            )
+        }
+
+        var padding: MathBboxDimension? = null
+        var background: MathBboxColor? = null
+        var border: MathBboxBorder? = null
+        splitBboxOptions(contentRange).forEach { (raw, range) ->
+            val part = raw.trim()
+            if (part.isEmpty()) return@forEach
+            val trimmedRange = trimSourceRange(range)
+            val dimension = parseBboxDimension(part, trimmedRange)
+            when {
+                dimension != null -> {
+                    if (padding != null) {
+                        duplicateBboxProperty("padding", trimmedRange)
+                    } else {
+                        padding = dimension
+                    }
+                }
+                part.contains(':') -> {
+                    val parsedBorder = parseBboxBorder(part, trimmedRange)
+                    if (parsedBorder == null) {
+                        diagnostics += MathDiagnostic(
+                            DiagnosticCode.UnsupportedBboxStyle,
+                            "Only the safe 'border: <dimension> [solid] [color]' bbox style is supported",
+                            trimmedRange,
+                        )
+                    } else if (border != null) {
+                        duplicateBboxProperty("border", trimmedRange)
+                    } else {
+                        border = parsedBorder
+                    }
+                }
+                else -> {
+                    val parsedColor = parseBboxColor(part, trimmedRange)
+                    if (parsedColor == null) {
+                        diagnostics += MathDiagnostic(
+                            DiagnosticCode.InvalidBboxOption,
+                            "'$part' is not a supported bbox color, padding dimension, or border",
+                            trimmedRange,
+                        )
+                    } else if (background != null) {
+                        duplicateBboxProperty("background", trimmedRange)
+                    } else {
+                        background = parsedColor
+                    }
+                }
+            }
+        }
+        return ParsedBboxOptions(MathBboxOptions(padding, background, border), totalRange)
+    }
+
+    private fun splitBboxOptions(range: SourceRange): List<Pair<String, SourceRange>> {
+        val result = mutableListOf<Pair<String, SourceRange>>()
+        var start = range.start
+        for (offset in range.start until range.endExclusive) {
+            if (source[offset] == ',') {
+                result += source.substring(start, offset) to SourceRange(start, offset)
+                start = offset + 1
+            }
+        }
+        result += source.substring(start, range.endExclusive) to SourceRange(start, range.endExclusive)
+        return result
+    }
+
+    private fun trimSourceRange(range: SourceRange): SourceRange {
+        var start = range.start
+        var end = range.endExclusive
+        while (start < end && source[start].isWhitespace()) start += 1
+        while (end > start && source[end - 1].isWhitespace()) end -= 1
+        return SourceRange(start, end)
+    }
+
+    private fun parseBboxDimension(text: String, range: SourceRange): MathBboxDimension? {
+        val match = bboxDimensionPattern.matchEntire(text) ?: return null
+        val value = match.groupValues[1].toFloatOrNull() ?: return null
+        val unit = bboxDimensionUnits[match.groupValues[2].lowercase()] ?: return null
+        if (!value.isFinite() || value < 0f) return null
+        return MathBboxDimension(value, unit, text, range)
+    }
+
+    private fun parseBboxColor(text: String, range: SourceRange): MathBboxColor? {
+        val color = when {
+            shortHexColorPattern.matches(text) -> {
+                val digits = text.drop(1)
+                MathPaintColor(
+                    digits[0].digitToInt(16) * 17,
+                    digits[1].digitToInt(16) * 17,
+                    digits[2].digitToInt(16) * 17,
+                )
+            }
+            longHexColorPattern.matches(text) -> MathPaintColor(
+                text.substring(1, 3).toInt(16),
+                text.substring(3, 5).toInt(16),
+                text.substring(5, 7).toInt(16),
+            )
+            else -> namedPaintColors[text.lowercase()]
+        } ?: return null
+        return MathBboxColor(text, color, range)
+    }
+
+    private fun parseBboxBorder(text: String, range: SourceRange): MathBboxBorder? {
+        val match = bboxBorderPattern.matchEntire(text) ?: return null
+        val widthText = match.groupValues[1]
+        val widthOffset = text.indexOf(widthText)
+        val widthRange = SourceRange(range.start + widthOffset, range.start + widthOffset + widthText.length)
+        val width = parseBboxDimension(widthText, widthRange) ?: return null
+        val style = if (match.groupValues[2].equals("solid", ignoreCase = true)) {
+            MathBboxBorderStyle.Solid
+        } else {
+            MathBboxBorderStyle.None
+        }
+        val colorText = match.groupValues[3].takeIf { it.isNotEmpty() }
+        val color = colorText?.let {
+            val offset = text.lastIndexOf(it)
+            parseBboxColor(it, SourceRange(range.start + offset, range.start + offset + it.length))
+                ?: return null
+        }
+        return MathBboxBorder(width, style, color, range)
+    }
+
+    private fun duplicateBboxProperty(name: String, range: SourceRange) {
+        diagnostics += MathDiagnostic(
+            DiagnosticCode.DuplicateBboxOption,
+            "Bbox $name is specified more than once",
+            range,
         )
     }
 
@@ -1367,6 +1541,17 @@ private class ParserState(
         return parsePrimary() ?: MathErrorNode("", next.range)
     }
 
+    private fun parseBboxRequiredArgument(command: MathToken): MathNode {
+        skipIgnored()
+        val displayContainerDepth = structureDepth + if (peek().kind == MathTokenKind.OpenGroup) 1 else 0
+        bboxDisplayContainerDepths += displayContainerDepth
+        return try {
+            parseRequiredArgument(command, "bbox math field")
+        } finally {
+            bboxDisplayContainerDepths.removeAt(bboxDisplayContainerDepths.lastIndex)
+        }
+    }
+
     private fun String.scalarValues(): List<Int> = buildList {
         var offset = 0
         while (offset < length) {
@@ -1710,6 +1895,18 @@ private class ParserState(
 
         val rowSpacingPattern = Regex("([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))\\s*([A-Za-z]+)")
         val rowSpacingUnits = MathTeXDimensionUnit.entries.associateBy { it.sourceName }
+        val bboxDimensionPattern = Regex(
+            "(\\.\\d+|\\d+(?:\\.\\d*)?)(pt|em|ex|mu|px|in|cm|mm)",
+            RegexOption.IGNORE_CASE,
+        )
+        val bboxDimensionUnits = MathBboxDimensionUnit.entries.associateBy { it.sourceName }
+        val bboxBorderPattern = Regex(
+            "border\\s*:\\s*((?:\\.\\d+|\\d+(?:\\.\\d*)?)(?:pt|em|ex|mu|px|in|cm|mm))" +
+                "(?:\\s+(solid))?(?:\\s+([A-Za-z0-9]+|#[0-9A-Fa-f]{3}|#[0-9A-Fa-f]{6}))?\\s*",
+            RegexOption.IGNORE_CASE,
+        )
+        val shortHexColorPattern = Regex("#[0-9A-Fa-f]{3}")
+        val longHexColorPattern = Regex("#[0-9A-Fa-f]{6}")
 
         val explicitMathSpaces = mapOf(
             "quad" to 18f,

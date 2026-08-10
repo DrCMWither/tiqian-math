@@ -32,6 +32,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.tiqian.math.core.MathLayoutResult
 import org.tiqian.math.core.MathPaintColor
+import org.tiqian.math.core.MathPaintLayer
+import org.tiqian.math.core.MathRulePaintRole
 import org.tiqian.math.font.android.AndroidMathFontFace
 import org.tiqian.math.font.android.AndroidMathFontFamily
 import org.tiqian.math.font.android.AndroidReplayCatalog
@@ -179,7 +181,8 @@ class AndroidTiqianMathDeviceTest {
                     if (formulaMounted.value) {
                         Box(Modifier.background(Color.White)) {
                             TiqianMath(
-                                source = "{\\color{red}\\boxed{x}}+{\\color{blue}\\sqrt{\\frac{a}{b}}}",
+                                source = "{\\color{red}\\boxed{x}}+{\\color{blue}\\sqrt{\\frac{a}{b}}}+" +
+                                    "\\bbox[#CAF,5px,border:1px solid green]{y}",
                                 fontSizePx = 44f,
                                 color = Color.Black,
                                 fontFace = face,
@@ -194,6 +197,12 @@ class AndroidTiqianMathDeviceTest {
                 assertTrue(layout.box.glyphs.any { it.paintColor == MathPaintColor(255, 0, 0) })
                 assertTrue(layout.box.rules.any { it.paintColor == MathPaintColor(255, 0, 0) })
                 assertTrue(layout.box.constructionPaintGroups.all { it.paintColor == MathPaintColor(0, 0, 255) })
+                assertTrue(layout.box.rules.any {
+                    it.paintRole == MathRulePaintRole.BackgroundFill &&
+                        it.paintLayer == MathPaintLayer.Background &&
+                        it.paintColor == MathPaintColor(204, 170, 255)
+                })
+                assertTrue(layout.box.rules.count { it.paintRole == MathRulePaintRole.Border } == 4)
                 compose.onNodeWithTag(ColorFormulaTag).assertIsDisplayed()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     val image = compose.onNodeWithTag(ColorFormulaTag).captureToImage().toPixelMap()

@@ -41,6 +41,55 @@ data class MathBoxed(
     override val range: SourceRange,
 ) : MathNode
 
+/** MathJax bbox extension: padding, background, and border are independent box properties. */
+data class MathBbox(
+    val body: MathNode,
+    val options: MathBboxOptions,
+    val commandRange: SourceRange,
+    val optionsRange: SourceRange?,
+    override val range: SourceRange,
+) : MathNode
+
+data class MathBboxOptions(
+    val padding: MathBboxDimension? = null,
+    val background: MathBboxColor? = null,
+    val border: MathBboxBorder? = null,
+)
+
+enum class MathBboxDimensionUnit(val sourceName: String) {
+    Point("pt"),
+    Em("em"),
+    Ex("ex"),
+    Mu("mu"),
+    Pixel("px"),
+    Inch("in"),
+    Centimeter("cm"),
+    Millimeter("mm"),
+}
+
+data class MathBboxDimension(
+    val value: Float,
+    val unit: MathBboxDimensionUnit,
+    val sourceText: String,
+    val range: SourceRange,
+)
+
+data class MathBboxColor(
+    val sourceName: String,
+    val color: MathPaintColor,
+    val range: SourceRange,
+)
+
+enum class MathBboxBorderStyle { None, Solid }
+
+data class MathBboxBorder(
+    val width: MathBboxDimension,
+    val style: MathBboxBorderStyle,
+    /** Null is CSS currentColor, replayed from the surrounding formula or color scope. */
+    val color: MathBboxColor?,
+    val range: SourceRange,
+)
+
 /** TeX math symbol families. These are semantic families, not fallback font names. */
 enum class MathFamily {
     Operators,

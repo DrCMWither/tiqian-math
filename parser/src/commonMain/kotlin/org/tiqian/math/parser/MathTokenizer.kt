@@ -35,9 +35,14 @@ class MathTokenizer {
         val tokens = mutableListOf<MathToken>()
         val diagnostics = mutableListOf<MathDiagnostic>()
         var index = 0
+        var awaitingBboxOptions = false
+        var insideBboxOptions = false
         while (index < source.length) {
             val start = index
             val char = source[index]
+            if (awaitingBboxOptions && !char.isWhitespace() && char != '[' && char != '%') {
+                awaitingBboxOptions = false
+            }
             when {
                 char == '\\' -> {
                     index++
@@ -52,11 +57,13 @@ class MathTokenizer {
                     } else if (source[index].isAsciiLetter()) {
                         val nameStart = index
                         while (index < source.length && source[index].isAsciiLetter()) index++
+                        val name = source.substring(nameStart, index)
                         tokens += MathToken(
                             MathTokenKind.ControlWord,
-                            source.substring(nameStart, index),
+                            name,
                             SourceRange(start, index),
                         )
+                        awaitingBboxOptions = name == "bbox"
                     } else {
                         index = source.nextCodePointIndex(index)
                         tokens += MathToken(
@@ -67,6 +74,10 @@ class MathTokenizer {
                     }
                 }
                 char == '{' -> {
+                    // The parser uses the body opener as the recovery boundary for an
+                    // unterminated bbox option list. Do not leak its relaxed '#' rule
+                    // into the following math field or later source.
+                    insideBboxOptions = false
                     index++
                     tokens += MathToken(MathTokenKind.OpenGroup, "{", SourceRange(start, index))
                 }
@@ -81,6 +92,10 @@ class MathTokenizer {
                 char == '_' -> {
                     index++
                     tokens += MathToken(MathTokenKind.Subscript, "_", SourceRange(start, index))
+                }
+                char == '#' && insideBboxOptions -> {
+                    index++
+                    tokens += MathToken(MathTokenKind.Symbol, "#", SourceRange(start, index))
                 }
                 char == '#' -> {
                     index++
@@ -128,6 +143,12 @@ class MathTokenizer {
                         source.substring(start, index),
                         SourceRange(start, index),
                     )
+                    if (char == '[' && awaitingBboxOptions) {
+                        insideBboxOptions = true
+                        awaitingBboxOptions = false
+                    } else if (char == ']' && insideBboxOptions) {
+                        insideBboxOptions = false
+                    }
                 }
             }
         }

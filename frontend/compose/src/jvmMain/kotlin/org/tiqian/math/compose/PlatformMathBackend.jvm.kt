@@ -19,6 +19,8 @@ import org.tiqian.math.core.MathFontFaceSpec
 import org.tiqian.math.core.MathFontFamilySpec
 import org.tiqian.math.core.MathFontWeight
 import org.tiqian.math.core.MathPaintColor
+import org.tiqian.math.core.MathPaintLayer
+import org.tiqian.math.core.MathRulePaintRole
 import org.tiqian.math.core.MathReplayFaceOwnership
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.skia.MathConstructionOutlineResult
@@ -93,6 +95,22 @@ private fun drawSkiaMathPlan(
     val paint = Paint().apply { this.color = color }
     val fonts = mutableMapOf<Pair<MathFaceId, Float>, Font>()
     try {
+        plan.boxes.forEach { positioned ->
+            positioned.box.rules.filter {
+                it.constructionGroupId == null && it.paintLayer == MathPaintLayer.Background
+            }.forEach { rule ->
+                paint.color = resolvedMathPaintArgb(rule.paintColor, color)
+                canvas.drawRect(
+                    Rect.makeLTRB(
+                        positioned.x + rule.left,
+                        positioned.baselineFromTop + rule.top,
+                        positioned.x + rule.right,
+                        positioned.baselineFromTop + rule.bottom,
+                    ),
+                    paint,
+                )
+            }
+        }
         val replayGlyphs = plan.boxes.flatMap { positioned ->
             positioned.box.glyphs.filter { it.constructionGroupId == null }.map { glyph ->
                 Triple(
@@ -144,7 +162,10 @@ private fun drawSkiaMathPlan(
         }
 
         plan.boxes.forEach { positioned ->
-            positioned.box.rules.filter { it.constructionGroupId == null }.forEach { rule ->
+            positioned.box.rules.filter {
+                it.constructionGroupId == null && it.paintLayer == MathPaintLayer.Foreground &&
+                    it.paintRole != MathRulePaintRole.Border
+            }.forEach { rule ->
                 paint.color = resolvedMathPaintArgb(rule.paintColor, color)
                 canvas.drawRect(
                     Rect.makeLTRB(
@@ -182,6 +203,21 @@ private fun drawSkiaMathPlan(
                     is MathConstructionOutlineResult.Unavailable ->
                         throw MathConstructionOutlineUnavailableException(outline)
                 }
+            }
+            positioned.box.rules.filter {
+                it.constructionGroupId == null && it.paintLayer == MathPaintLayer.Foreground &&
+                    it.paintRole == MathRulePaintRole.Border
+            }.forEach { rule ->
+                paint.color = resolvedMathPaintArgb(rule.paintColor, color)
+                canvas.drawRect(
+                    Rect.makeLTRB(
+                        positioned.x + rule.left,
+                        positioned.baselineFromTop + rule.top,
+                        positioned.x + rule.right,
+                        positioned.baselineFromTop + rule.bottom,
+                    ),
+                    paint,
+                )
             }
         }
     } finally {

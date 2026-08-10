@@ -160,6 +160,7 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.UnsupportedMathAlphabet,
         DiagnosticCode.UnsupportedDelimiter,
         DiagnosticCode.UnsupportedEnvironment,
+        DiagnosticCode.UnsupportedBboxStyle,
         -> MathFormulaCapabilityCategory.UnsupportedSyntax
 
         DiagnosticCode.TrailingEscape,
@@ -205,6 +206,9 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.MissingEquationTagArgument,
         DiagnosticCode.MultipleEquationTags,
         DiagnosticCode.MisplacedEquationTag,
+        DiagnosticCode.UnclosedBboxOptions,
+        DiagnosticCode.InvalidBboxOption,
+        DiagnosticCode.DuplicateBboxOption,
         -> MathFormulaCapabilityCategory.MalformedSource
 
         DiagnosticCode.MissingEquationTagDisplayWidth,
@@ -231,6 +235,7 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.MissingMathTable,
         DiagnosticCode.MalformedFont,
         DiagnosticCode.UnsupportedMathDeviceAdjustment,
+        DiagnosticCode.MissingBboxXHeight,
         -> MathFormulaCapabilityCategory.UnsupportedFontCapability
     }
 

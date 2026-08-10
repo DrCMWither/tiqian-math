@@ -72,7 +72,13 @@ data class MathRulePlacement(
     /** Non-null when this rule must be painted with its attached construction outline. */
     val constructionGroupId: Int? = null,
     val paintColor: MathPaintColor? = null,
+    val paintLayer: MathPaintLayer = MathPaintLayer.Foreground,
+    val paintRole: MathRulePaintRole = MathRulePaintRole.MathRule,
 )
+
+enum class MathPaintLayer { Background, Foreground }
+
+enum class MathRulePaintRole { MathRule, BackgroundFill, Border }
 
 enum class MathConstructionPaintKind {
     Radical,
