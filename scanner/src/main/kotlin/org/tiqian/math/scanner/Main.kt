@@ -34,6 +34,7 @@ fun main(args: Array<String>) {
                 options = MathLayoutOptions(
                     mode = arguments.mode,
                     fontSizePx = arguments.fontSizePx,
+                    displayWidthPx = arguments.displayWidthPx,
                 ),
                 maxSamplesPerCategory = arguments.maxSamples,
             ).scan(sources)
@@ -57,6 +58,7 @@ private data class ScannerArguments(
     val inputFormat: MathFormulaCorpusInputFormat,
     val textFont: Path?,
     val textFontWeight: MathFontWeight,
+    val displayWidthPx: Float?,
 ) {
     companion object {
         fun parse(args: Array<String>): ScannerArguments {
@@ -69,6 +71,7 @@ private data class ScannerArguments(
             var inputFormat = MathFormulaCorpusInputFormat.Auto
             var textFont: Path? = null
             var textFontWeight = MathFontWeight.Regular
+            var displayWidthPx: Float? = null
             var index = 0
             while (index < args.size) {
                 val argument = args[index]
@@ -87,6 +90,8 @@ private data class ScannerArguments(
                     }
                     argument.startsWith("--font-size=") ->
                         fontSizePx = argument.substringAfter('=').toFloat().also { require(it > 0f) }
+                    argument.startsWith("--display-width=") ->
+                        displayWidthPx = argument.substringAfter('=').toFloat().also { require(it > 0f) }
                     argument.startsWith("--max-samples=") ->
                         maxSamples = argument.substringAfter('=').toInt().also { require(it >= 0) }
                     argument.startsWith("--input-format=") -> inputFormat = when (argument.substringAfter('=').lowercase()) {
@@ -110,6 +115,7 @@ private data class ScannerArguments(
                     "Usage: math-formula-scanner <one-formula-per-line file> " +
                         "[--output=report.json] [--font=lete|stix] [--mode=inline|display] " +
                         "[--font-size=24] [--max-samples=3] " +
+                        "[--display-width=800] " +
                         "[--input-format=auto|lines|zhihu-json] " +
                         "[--text-font=/path/to/font.otf] [--text-font-weight=400]"
                 },
@@ -121,6 +127,7 @@ private data class ScannerArguments(
                 inputFormat = inputFormat,
                 textFont = textFont,
                 textFontWeight = textFontWeight,
+                displayWidthPx = displayWidthPx,
             )
         }
 

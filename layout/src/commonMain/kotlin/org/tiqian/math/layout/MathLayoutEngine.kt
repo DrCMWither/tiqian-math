@@ -47,6 +47,8 @@ data class MathLayoutOptions(
     val fboxSeparationPx: Float? = null,
     /** LaTeX `\fboxrule`; null is the standard 0.4pt converted to CSS pixels. */
     val fboxRuleThicknessPx: Float? = null,
+    /** Completed display-row width used to right-align explicit amsmath equation tags. */
+    val displayWidthPx: Float? = null,
 ) {
     init {
         require(fontSizePx > 0f) { "math font size must be positive" }
@@ -68,6 +70,9 @@ data class MathLayoutOptions(
         }
         require(fboxRuleThicknessPx == null || fboxRuleThicknessPx >= 0f) {
             "fbox rule thickness must not be negative"
+        }
+        require(displayWidthPx == null || displayWidthPx > 0f) {
+            "display width must be positive"
         }
     }
 }
@@ -131,6 +136,7 @@ private class MathLayoutPass(
     private var fboxSeparationPx: Float = DEFAULT_FBOX_SEPARATION_PT * TEX_POINT_TO_PX
     private var fboxRuleThicknessPx: Float = DEFAULT_FBOX_RULE_THICKNESS_PT * TEX_POINT_TO_PX
     private var formulaMode: MathMode = MathMode.Inline
+    private var displayWidthPx: Float? = null
     private var nextConstructionPaintGroupId: Int = 1
 
     /**
@@ -197,6 +203,7 @@ private class MathLayoutPass(
         val source = parsed.source
         baseFontSizePx = options.fontSizePx
         formulaMode = options.mode
+        displayWidthPx = options.displayWidthPx
         nextConstructionPaintGroupId = 1
         nullDelimiterSpacePx = options.nullDelimiterSpacePx
             ?: options.fontSizePx * DEFAULT_NULL_DELIMITER_SPACE_EM
@@ -312,6 +319,8 @@ private class MathLayoutPass(
         is MathTable -> layoutTable(node, style, alphabetOverride)
         is MathDisplayEnvironment -> layoutDisplayEnvironment(node, alphabetOverride)
         is MathDisplayRows -> layoutDisplayRows(node, alphabetOverride)
+        is MathTaggedEquation -> layoutTaggedEquation(node, alphabetOverride)
+        is MathEquationTag -> layoutMisplacedEquationTag(node, style)
         is MathExplicitRowBreak -> LaidNode(
             node,
             emptyBox(node.range),
@@ -461,6 +470,7 @@ private class MathLayoutPass(
                 }
             }
         }
+        val rowTagLayouts = node.rows.map { row -> row.tag?.let { layoutEquationTagBox(it, style) } }
         val columnCount = maxOf(
             node.columnAlignments.size,
             rowLayouts.maxOfOrNull { it.size } ?: 0,
@@ -486,14 +496,19 @@ private class MathLayoutPass(
         val rowAdditionalSpacingPx = node.rows.map { row ->
             row.additionalSpacing?.let { resolveTeXDimension(it, size) } ?: 0f
         }
-        val rowAscents = rowLayouts.map { row ->
-            maxOf(minimumRowAscent, row.maxOfOrNull { it.texCleanBoxMetrics.ascent } ?: 0f)
+        val rowAscents = rowLayouts.mapIndexed { rowIndex, row ->
+            maxOf(
+                minimumRowAscent,
+                row.maxOfOrNull { it.texCleanBoxMetrics.ascent } ?: 0f,
+                rowTagLayouts[rowIndex]?.texCleanBoxMetrics?.ascent ?: 0f,
+            )
         }
         val rowDescents = rowLayouts.mapIndexed { rowIndex, row ->
             val optionalStrutExtension = if (preservesEntryStyle) 0f else rowAdditionalSpacingPx[rowIndex]
             maxOf(
                 minimumRowDescent + optionalStrutExtension,
                 row.maxOfOrNull { it.texCleanBoxMetrics.descent } ?: 0f,
+                rowTagLayouts[rowIndex]?.texCleanBoxMetrics?.descent ?: 0f,
             )
         }
         val arrayColumnSeparation = explicitArrayColumnSeparationPx ?: TEX_ARRAY_COLUMN_SEPARATION_EM * size
@@ -539,8 +554,10 @@ private class MathLayoutPass(
         val rules = mutableListOf<MathRulePlacement>()
         val paintGroups = mutableListOf<MathConstructionPaintGroup>()
         val positionedChildren = mutableListOf<Pair<MathBox, Float>>()
+        val rowBaselines = mutableListOf<Float>()
         rowLayouts.forEachIndexed { rowIndex, row ->
             val baselineY = rowTop + rowAscents[rowIndex]
+            rowBaselines += baselineY
             var columnLeft = outerPadding
             row.forEachIndexed { column, cell ->
                 val offset = when (alignments[column]) {
@@ -578,6 +595,18 @@ private class MathLayoutPass(
             ),
         )
         val fenced = wrapTableDelimiters(node, bodyBox, style)
+        val completed = if (node.rows.any { it.tag != null }) {
+            completeTaggedRows(
+                body = fenced,
+                rows = node.rows,
+                tagBoxes = rowTagLayouts,
+                rowBaselines = rowBaselines,
+                range = node.range,
+                layoutRole = "AlignmentRows",
+            )
+        } else {
+            fenced
+        }
         decision(
             "TeXMathTable",
             node.range,
@@ -614,13 +643,13 @@ private class MathLayoutPass(
             "bodyWidthPx" to bodyWidth,
             "bodyAscentPx" to bodyBox.ascent,
             "bodyDescentPx" to bodyBox.descent,
-            "logicalAdvancePx" to fenced.width,
+            "logicalAdvancePx" to completed.width,
             "groupBreakPolicy" to "UnbreakableTeXTableInnerNoad",
             "policy" to "LaTeXEnvironmentSpecificStyleArrayStrutAndAxisCenteredVcenter",
         )
         return LaidNode(
             node,
-            fenced,
+            completed,
             MathAtomClass.Inner,
             0f,
             style,
@@ -634,7 +663,18 @@ private class MathLayoutPass(
     ): LaidNode {
         val displayStyle = MathStyle.Display
         val body = layoutNode(node.body, displayStyle, alphabetOverride)
-        val box = body.box.copy(range = node.range)
+        val explicitTag = node.tag
+        val box = if (explicitTag == null) {
+            body.box.copy(range = node.range)
+        } else {
+            completeTaggedEquationBox(
+                body = body.box,
+                tag = explicitTag,
+                style = displayStyle,
+                range = node.range,
+                layoutRole = "SingleDisplayEnvironment",
+            )
+        }
         decision(
             "MarkdownMathDisplayEnvironment",
             node.range,
@@ -643,6 +683,7 @@ private class MathLayoutPass(
             "entryStyle" to displayStyle,
             "sourceRequestsNumbering" to node.kind.sourceRequestsNumbering,
             "numberingPolicy" to "SuppressedByMarkdownFormulaHost",
+            "explicitTag" to (node.tag != null),
             "atomClass" to "NoneAtDocumentLevel",
             "groupBreakPolicy" to "ExplicitRowsOnly",
             "policy" to "AmsmathDisplayWrapperWithIntrinsicFormulaBox",
@@ -688,6 +729,7 @@ private class MathLayoutPass(
                 rowSeparatorRange = row.rowSeparatorRange,
                 additionalSpacing = row.additionalSpacing,
                 range = row.range,
+                tag = row.tag,
             )
         }
         val syntheticTable = MathTable(
@@ -723,6 +765,210 @@ private class MathLayoutPass(
             scriptBaseKind = ScriptBaseKind.CompoundBox,
         )
     }
+
+    private fun layoutTaggedEquation(
+        node: MathTaggedEquation,
+        alphabetOverride: MathAlphabetOverride?,
+    ): LaidNode {
+        val style = MathStyle.Display
+        val body = layoutList(node.body, style, alphabetOverride).laid.box
+        val box = completeTaggedEquationBox(
+            body = body,
+            tag = node.tag,
+            style = style,
+            range = node.range,
+            layoutRole = "TopLevelMarkdownDisplay",
+        )
+        return LaidNode(
+            node = node,
+            box = box,
+            atomClass = MathAtomClass.Ordinary,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun layoutMisplacedEquationTag(node: MathEquationTag, style: MathStyle): LaidNode {
+        diagnostics += MathDiagnostic(
+            DiagnosticCode.MisplacedEquationTag,
+            "Equation tag is only valid at the top level of a display row",
+            node.range,
+        )
+        return LaidNode(
+            node,
+            emptyBox(node.range),
+            MathAtomClass.Ordinary,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
+    }
+
+    private fun completeTaggedRows(
+        body: MathBox,
+        rows: List<MathTableRow>,
+        tagBoxes: List<MathBox?>,
+        rowBaselines: List<Float>,
+        range: SourceRange,
+        layoutRole: String,
+    ): MathBox {
+        val width = resolvedEquationTagDisplayWidth(range) ?: body.width
+        val bodyX = (width - body.width) / 2f
+        val shiftedBody = body.translated(bodyX, 0f)
+        val glyphs = shiftedBody.glyphs.toMutableList()
+        val rules = shiftedBody.rules.toMutableList()
+        val groups = shiftedBody.constructionPaintGroups.toMutableList()
+        val children = mutableListOf(body to 0f)
+        rows.forEachIndexed { index, row ->
+            val tag = row.tag ?: return@forEachIndexed
+            val tagBox = checkNotNull(tagBoxes[index])
+            val tagX = width - tagBox.width
+            val baselineY = rowBaselines.getOrElse(index) { 0f }
+            checkEquationTagFit(bodyX, body.width, tagX, tag, width, layoutRole)
+            val shifted = tagBox.translated(tagX, baselineY)
+            glyphs += shifted.glyphs
+            rules += shifted.rules
+            groups += shifted.constructionPaintGroups
+            children += tagBox to baselineY
+            equationTagDecision(tag, tagBox, body.width, width, bodyX, tagX, baselineY, layoutRole)
+        }
+        return geometryExtentsPreservingLogicalChildren(
+            width.coerceAtLeast(0f),
+            glyphs,
+            rules,
+            range,
+            children,
+            groups,
+        )
+    }
+
+    private fun completeTaggedEquationBox(
+        body: MathBox,
+        tag: MathEquationTag,
+        style: MathStyle,
+        range: SourceRange,
+        layoutRole: String,
+    ): MathBox {
+        if (formulaMode != MathMode.Display) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MisplacedEquationTag,
+                "Equation tag requires display math mode",
+                tag.range,
+            )
+        }
+        val tagBox = layoutEquationTagBox(tag, style)
+        val width = resolvedEquationTagDisplayWidth(tag.range)
+            ?: (body.width + tagBox.width + baseFontSizePx / 2f)
+        val bodyX = (width - body.width) / 2f
+        val tagX = width - tagBox.width
+        checkEquationTagFit(bodyX, body.width, tagX, tag, width, layoutRole)
+        val shiftedBody = body.translated(bodyX, 0f)
+        val shiftedTag = tagBox.translated(tagX, 0f)
+        equationTagDecision(tag, tagBox, body.width, width, bodyX, tagX, 0f, layoutRole)
+        return geometryExtentsPreservingLogicalChildren(
+            width,
+            shiftedBody.glyphs + shiftedTag.glyphs,
+            shiftedBody.rules + shiftedTag.rules,
+            range,
+            listOf(body to 0f, tagBox to 0f),
+            shiftedBody.constructionPaintGroups + shiftedTag.constructionPaintGroups,
+        )
+    }
+
+    private fun resolvedEquationTagDisplayWidth(range: SourceRange): Float? {
+        val width = displayWidthPx
+        if (width == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingEquationTagDisplayWidth,
+                "Equation tag layout requires an explicit completed display width",
+                range,
+            )
+        }
+        return width
+    }
+
+    private fun checkEquationTagFit(
+        bodyX: Float,
+        bodyWidth: Float,
+        tagX: Float,
+        tag: MathEquationTag,
+        width: Float,
+        layoutRole: String,
+    ) {
+        val minimumSeparation = baseFontSizePx / 2f
+        if (bodyX < 0f || bodyX + bodyWidth + minimumSeparation > tagX) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.EquationTagDoesNotFit,
+                "Equation body and tag do not fit the supplied display width",
+                tag.range,
+            )
+        }
+        decision(
+            "AmsmathEquationTagFit",
+            tag.range,
+            "displayWidthPx" to width,
+            "bodyLeftPx" to bodyX,
+            "bodyRightPx" to (bodyX + bodyWidth),
+            "tagLeftPx" to tagX,
+            "minimumSeparationPx" to minimumSeparation,
+            "fits" to (bodyX >= 0f && bodyX + bodyWidth + minimumSeparation <= tagX),
+            "layoutRole" to layoutRole,
+            "policy" to "AmsmathMinTagSeparationHalfEmOrFormulaFallback",
+        )
+    }
+
+    private fun layoutEquationTagBox(tag: MathEquationTag, style: MathStyle): MathBox {
+        val textStyle = styleForLevel(MathStyleLevel.Text)
+        val wrapperLeftRange = SourceRange(tag.commandRange.start, tag.commandRange.start + 1)
+        val wrapperRightRange = SourceRange(tag.commandRange.endExclusive - 1, tag.commandRange.endExclusive)
+        val segments = if (tag.starred) {
+            tag.segments
+        } else {
+            listOf(MathTextSegment("(", wrapperLeftRange)) + tag.segments +
+                MathTextSegment(")", wrapperRightRange)
+        }
+        return layoutTextSegments(
+            segments = segments,
+            style = textStyle,
+            range = tag.range,
+            origin = MathTextOrigin.EquationTag,
+        )
+    }
+
+    private fun equationTagDecision(
+        tag: MathEquationTag,
+        tagBox: MathBox,
+        bodyWidth: Float,
+        width: Float,
+        bodyX: Float,
+        tagX: Float,
+        tagBaselineY: Float,
+        layoutRole: String,
+    ) = decision(
+        "AmsmathEquationTag",
+        tag.range,
+        "text" to tag.text,
+        "starred" to tag.starred,
+        "commandRange" to tag.commandRange,
+        "contentRange" to tag.contentRange,
+        "argumentRange" to tag.argumentRange,
+        "displayWidthPx" to width,
+        "bodyWidthPx" to bodyWidth,
+        "bodyX" to bodyX,
+        "tagWidthPx" to tagBox.width,
+        "tagAscentPx" to tagBox.ascent,
+        "tagDescentPx" to tagBox.descent,
+        "tagInkTopPx" to tagBox.inkBounds.top,
+        "tagInkBottomPx" to tagBox.inkBounds.bottom,
+        "tagFaceIds" to tagBox.glyphs.map { it.faceId }.distinct().joinToString(","),
+        "tagX" to tagX,
+        "tagBaselineY" to tagBaselineY,
+        "tagTextStyle" to MathStyle.Text,
+        "wrapperPolicy" to if (tag.starred) "TagStarUnwrapped" else "TagParenthesesFromOperatorsFamily",
+        "layoutRole" to layoutRole,
+        "policy" to "AmsmathDisplayBodyCenteredTagRightAlignedAtHostDisplayWidth",
+    )
 
     private fun resolveTeXDimension(dimension: MathTeXDimension, emSizePx: Float): Float {
         val pixels = when (dimension.unit) {

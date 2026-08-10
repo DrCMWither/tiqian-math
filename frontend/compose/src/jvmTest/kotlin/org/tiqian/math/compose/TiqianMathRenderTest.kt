@@ -57,6 +57,43 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalComposeUiApi::class)
 class TiqianMathRenderTest {
     @Test
+    fun displayEquationTagConsumesTheActualComposeConstraintBeforeLayoutAndPaint() {
+        var observed: MathLayoutResult? = null
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            SkiaMathTextRunProvider.fromBytes(
+                MathFaceId("compose-equation-tag-text"),
+                LeteSansMath.loadBytes(),
+            ).use { text ->
+                ImageComposeScene(width = 440, height = 140, density = Density(1f)) {
+                    Box(Modifier.fillMaxSize().background(Color.White)) {
+                        TiqianMath(
+                            source = "x+y\\tag{1}",
+                            modifier = Modifier.width(400.dp),
+                            mode = MathMode.Display,
+                            fontSizePx = 32f,
+                            fontFace = face,
+                            textRunProvider = text,
+                            softWrap = false,
+                            onMathLayout = { observed = it },
+                        )
+                    }
+                }.use { scene ->
+                    val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                    val result = assertNotNull(observed)
+                    assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+                    assertEquals(400f, result.box.width, 0.01f)
+                    val tag = result.decisions.single { it.name == "AmsmathEquationTag" }
+                    assertEquals(400f, tag.details.getValue("displayWidthPx").toFloat(), 0.01f)
+                    val rightBandHasInk = (350 until 400).any { x ->
+                        (0 until pixels.height).any { y -> pixels[x, y].red < 0.5f }
+                    }
+                    assertTrue(rightBandHasInk, "right-aligned equation tag must be replayed inside the constraint")
+                }
+            }
+        }
+    }
+
+    @Test
     fun legacySingleFaceRememberApiPreservesTheSurroundingWeightRequest() {
         var observed: MathLayoutResult? = null
         ImageComposeScene(width = 180, height = 100, density = Density(1f)) {

@@ -1,0 +1,23 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=500
+\showboxdepth=500
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-TAG-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\vbox{\hsize=300bp\fontsize{24bp}{24bp}\selectfont#2}%
+  \showbox\oraclebox
+  \message{TIQIAN-TAG-ORACLE-#1-END}%
+}
+\begin{document}
+\setmainfont[Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/]{LeteSansMath-Regular.otf}
+\setmathfont[Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/]{LeteSansMath-Regular.otf}
+\traceformula{EQUATION}{\begin{equation*}x+y\tag{1}\end{equation*}}
+\traceformula{EQUATION-STAR}{\begin{equation*}x+y\tag*{1}\end{equation*}}
+\traceformula{ALIGN}{\begin{align*}a&=b\tag{1}\\c&=d\tag{2}\end{align*}}
+\end{document}

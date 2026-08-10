@@ -9,6 +9,7 @@ import org.tiqian.math.core.MathLayoutResult
 enum class MathFormulaCapabilityCategory {
     UnsupportedSyntax,
     MalformedSource,
+    MissingLayoutConstraint,
     MissingGlyph,
     MissingTextProvider,
     HostTextReplayUnavailable,
@@ -201,7 +202,14 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.UnexpectedAlignmentTab,
         DiagnosticCode.UnexpectedRowSeparator,
         DiagnosticCode.ExplicitMultilineRequiresDisplay,
+        DiagnosticCode.MissingEquationTagArgument,
+        DiagnosticCode.MultipleEquationTags,
+        DiagnosticCode.MisplacedEquationTag,
         -> MathFormulaCapabilityCategory.MalformedSource
+
+        DiagnosticCode.MissingEquationTagDisplayWidth,
+        DiagnosticCode.EquationTagDoesNotFit,
+        -> MathFormulaCapabilityCategory.MissingLayoutConstraint
 
         DiagnosticCode.MissingGlyph -> MathFormulaCapabilityCategory.MissingGlyph
         DiagnosticCode.MissingTextRunProvider -> MathFormulaCapabilityCategory.MissingTextProvider

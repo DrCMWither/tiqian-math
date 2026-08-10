@@ -89,6 +89,11 @@ enum class DiagnosticCode {
     UnexpectedAlignmentTab,
     UnexpectedRowSeparator,
     ExplicitMultilineRequiresDisplay,
+    MissingEquationTagArgument,
+    MultipleEquationTags,
+    MisplacedEquationTag,
+    MissingEquationTagDisplayWidth,
+    EquationTagDoesNotFit,
 }
 
 data class MathDiagnostic(

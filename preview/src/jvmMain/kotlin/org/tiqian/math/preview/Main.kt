@@ -666,7 +666,68 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("color-box-oracle=${output.absolutePath} bytes=${output.length()}")
     }
+    ImageComposeScene(width = 1000, height = 720) { EquationTagOracleScreen() }.use { scene ->
+        val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
+        val output = File("build/reports/tiqian-equation-tags.png")
+        output.parentFile.mkdirs()
+        output.writeBytes(data.bytes)
+        println("equation-tag-oracle=${output.absolutePath} bytes=${output.length()}")
+    }
     renderRadicalSeamReport()
+}
+
+@Composable
+private fun EquationTagOracleScreen() {
+    val lete = remember { SkiaMathFontFace(LeteSansMath.load()) }
+    val stix = remember { SkiaMathFontFace(StixTwoMath.load()) }
+    val leteText = remember {
+        SkiaMathTextRunProvider.fromBytes(MathFaceId("preview-tag-text-lete"), LeteSansMath.loadBytes())
+    }
+    val stixText = remember {
+        SkiaMathTextRunProvider.fromBytes(MathFaceId("preview-tag-text-stix"), StixTwoMath.loadBytes())
+    }
+    DisposableEffect(lete, stix, leteText, stixText) {
+        onDispose {
+            lete.close(); stix.close(); leteText.close(); stixText.close()
+        }
+    }
+    MaterialTheme {
+        Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F5F1)) {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("Tiqian · amsmath equation tags · same-font Tectonic oracle · 32 px", fontSize = 17.sp)
+                Text("Each formula consumes its actual 430 px Compose constraint", fontSize = 11.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    EquationTagFontColumn("Lete Sans Math", lete, leteText)
+                    EquationTagFontColumn("STIX Two Math", stix, stixText)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EquationTagFontColumn(
+    label: String,
+    face: SkiaMathFontFace,
+    textProvider: SkiaMathTextRunProvider,
+) {
+    Column(Modifier.width(430.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("$label · tag text face=${textProvider.faceId.value}", fontSize = 11.sp)
+        EQUATION_TAG_PREVIEW_CASES.forEach { (caseLabel, source) ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(caseLabel, fontSize = 9.sp, color = Color(0xFF6B655E))
+                TiqianMath(
+                    source = source,
+                    modifier = Modifier.width(430.dp).background(Color.White).padding(7.dp),
+                    mode = MathMode.Display,
+                    fontFace = face,
+                    textRunProvider = textProvider,
+                    style = TextStyle(fontSize = 32.sp, lineHeight = 72.sp),
+                    softWrap = false,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -1477,6 +1538,13 @@ private val commonExtensionPreviewCases = listOf(
         "\\overbrace{a+b+c+d+e}^{n}+\\underbrace{a+b+c+d+e}_{n}",
         lineHeightSp = 150,
     ),
+)
+
+private val EQUATION_TAG_PREVIEW_CASES = listOf(
+    "centered body / right tag" to "x+y\\tag{1}",
+    "unwrapped tag*" to "x+y\\tag*{A}",
+    "fraction body" to "\\frac{a+b}{c+d}=x\\tag{2}",
+    "two tagged align rows" to "\\begin{align*}a&=b\\tag{3}\\\\c&=\\frac{d}{e}\\tag{4}\\end{align*}",
 )
 
 private val COLOR_BOX_PREVIEW_CASES = listOf(

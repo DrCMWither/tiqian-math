@@ -350,7 +350,7 @@ data class MathText(
     val text: String get() = segments.joinToString("") { it.text }
 }
 
-enum class MathTextOrigin { TextCommand, ImplicitCjk }
+enum class MathTextOrigin { TextCommand, ImplicitCjk, EquationTag }
 
 data class MathOperatorName(
     val name: String,
@@ -501,6 +501,7 @@ data class MathTableRow(
     val rowSeparatorRange: SourceRange? = null,
     val additionalSpacing: MathTeXDimension? = null,
     val range: SourceRange,
+    val tag: MathEquationTag? = null,
 )
 
 enum class MathTeXDimensionUnit(val sourceName: String) {
@@ -562,6 +563,7 @@ data class MathDisplayEnvironment(
     val endCommandRange: SourceRange?,
     val endNameRange: SourceRange?,
     override val range: SourceRange,
+    val tag: MathEquationTag? = null,
 ) : MathNode
 
 /**
@@ -573,7 +575,28 @@ data class MathDisplayRow(
     val rowSeparatorRange: SourceRange?,
     val additionalSpacing: MathTeXDimension? = null,
     val range: SourceRange,
+    val tag: MathEquationTag? = null,
 )
+
+/** Amsmath equation tag content. It is text-mode material owned by one completed display row. */
+data class MathEquationTag(
+    val segments: List<MathTextSegment>,
+    val starred: Boolean,
+    val commandRange: SourceRange,
+    val starRange: SourceRange?,
+    val contentRange: SourceRange,
+    val argumentRange: SourceRange,
+    override val range: SourceRange,
+) : MathNode {
+    val text: String get() = segments.joinToString("") { it.text }
+}
+
+/** A top-level Markdown display equation carrying an explicit amsmath tag. */
+data class MathTaggedEquation(
+    val body: MathList,
+    val tag: MathEquationTag,
+    override val range: SourceRange,
+) : MathNode
 
 /**
  * Host-display extension for top-level `\\` rows outside a TeX alignment environment.

@@ -31,7 +31,7 @@ private class ParserState(
 
     fun parse(): MathParseResult {
         val parsedRoot = parseList(stopAtClosingGroup = false, opening = null)
-        val root = foldTopLevelDisplayRows(parsedRoot)
+        val root = foldTopLevelEquationTag(foldTopLevelDisplayRows(parsedRoot))
         val completeDisplay = root.children.singleOrNull().let { only ->
             when (only) {
                 is MathDisplayEnvironment -> only
@@ -71,11 +71,15 @@ private class ParserState(
             } else {
                 pending.first().range.cover(pending.last().range)
             }
+            val (bodyChildren, tag) = extractEquationTag(pending)
+            val cleanBodyRange = bodyChildren.firstOrNull()?.range?.cover(bodyChildren.last().range)
+                ?: SourceRange(bodyRange.start, bodyRange.start)
             rows += MathDisplayRow(
-                body = MathList(pending.toList(), bodyRange),
+                body = MathList(bodyChildren, cleanBodyRange),
                 rowSeparatorRange = separator?.separatorRange,
                 additionalSpacing = separator?.additionalSpacing,
                 range = bodyRange,
+                tag = tag,
             )
             pending = mutableListOf()
             rowStart = separator?.additionalSpacing?.range?.endExclusive
@@ -95,6 +99,36 @@ private class ParserState(
             children = listOf(MathDisplayRows(rows, root.range)),
             range = root.range,
         )
+    }
+
+    private fun foldTopLevelEquationTag(root: MathList): MathList {
+        if (root.children.none { it is MathEquationTag }) return root
+        val (bodyChildren, tag) = extractEquationTag(root.children)
+        val selected = tag ?: return root
+        val bodyRange = bodyChildren.firstOrNull()?.range?.cover(bodyChildren.last().range)
+            ?: SourceRange(root.range.start, root.range.start)
+        return MathList(
+            children = listOf(
+                MathTaggedEquation(
+                    body = MathList(bodyChildren, bodyRange),
+                    tag = selected,
+                    range = root.range,
+                ),
+            ),
+            range = root.range,
+        )
+    }
+
+    private fun extractEquationTag(nodes: List<MathNode>): Pair<List<MathNode>, MathEquationTag?> {
+        val tags = nodes.filterIsInstance<MathEquationTag>()
+        tags.drop(1).forEach { duplicate ->
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MultipleEquationTags,
+                "A display row may contain only one equation tag",
+                duplicate.range,
+            )
+        }
+        return nodes.filterNot { it is MathEquationTag } to tags.firstOrNull()
     }
 
     private fun parseList(
@@ -154,7 +188,10 @@ private class ParserState(
         }
 
         var base = parsePrimary() ?: return null
-        if (base is MathStyleDeclaration || base is MathAlphabetDeclaration || base is MathExplicitRowBreak) {
+        if (
+            base is MathStyleDeclaration || base is MathAlphabetDeclaration ||
+            base is MathExplicitRowBreak || base is MathEquationTag
+        ) {
             return base
         }
         var superscript: MathNode? = null
@@ -359,6 +396,7 @@ private class ParserState(
         if (token.text == "left") return parseDelimited(token)
         if (token.text == "right") return parseStrayDelimiterCommand(token, MathDelimiterSide.Right)
         if (token.text == "middle") return parseStrayDelimiterCommand(token, MathDelimiterSide.Middle)
+        if (token.text == "tag") return parseEquationTag(token)
         fixedDelimiterCommands[token.text]?.let { command ->
             return parseFixedDelimiter(token, command)
         }
@@ -652,15 +690,30 @@ private class ParserState(
             allowEmpty: Boolean,
         ) {
             finishCell(null)
-            val hasContent = currentCells.any { it.body.children.isNotEmpty() }
+            val tags = currentCells.flatMap { it.body.children.filterIsInstance<MathEquationTag>() }
+            tags.drop(1).forEach { duplicate ->
+                diagnostics += MathDiagnostic(
+                    DiagnosticCode.MultipleEquationTags,
+                    "An alignment row may contain only one equation tag",
+                    duplicate.range,
+                )
+            }
+            val cleanCells = currentCells.map { cell ->
+                val children = cell.body.children.filterNot { it is MathEquationTag }
+                val range = children.firstOrNull()?.range?.cover(children.last().range)
+                    ?: SourceRange(cell.range.start, cell.range.start)
+                cell.copy(body = MathList(children, range), range = range)
+            }
+            val hasContent = cleanCells.any { it.body.children.isNotEmpty() }
             if (hasContent || allowEmpty) {
                 val range = currentCells.firstOrNull()?.range?.cover(currentCells.last().range)
                     ?: SourceRange(currentRowStart, currentRowStart)
                 rows += MathTableRow(
-                    cells = currentCells.toList(),
+                    cells = cleanCells,
                     rowSeparatorRange = separatorRange,
                     additionalSpacing = additionalSpacing,
                     range = range,
+                    tag = tags.firstOrNull(),
                 )
             }
             currentCells = mutableListOf()
@@ -789,22 +842,64 @@ private class ParserState(
         } finally {
             structureDepth -= 1
         }
-        val bodyRange = if (children.isEmpty()) {
+        val (bodyChildren, tag) = extractEquationTag(children)
+        val bodyRange = if (bodyChildren.isEmpty()) {
             SourceRange(parsedName.totalRange.endExclusive, parsedName.totalRange.endExclusive)
         } else {
-            children.first().range.cover(children.last().range)
+            bodyChildren.first().range.cover(bodyChildren.last().range)
         }
         val finalRange = endName?.totalRange?.let(beginCommand.range::cover)
             ?: children.lastOrNull()?.range?.let(beginCommand.range::cover)
             ?: beginCommand.range.cover(parsedName.totalRange)
         return MathDisplayEnvironment(
             kind = kind,
-            body = MathList(children, bodyRange),
+            body = MathList(bodyChildren, bodyRange),
             beginCommandRange = beginCommand.range,
             beginNameRange = parsedName.contentRange,
             endCommandRange = endCommand?.range,
             endNameRange = endName?.contentRange,
             range = finalRange,
+            tag = tag,
+        )
+    }
+
+    private fun parseEquationTag(command: MathToken): MathEquationTag {
+        skipIgnored()
+        val star = peek().takeIf { it.kind == MathTokenKind.Symbol && it.text == "*" }?.also { advance() }
+        skipIgnored()
+        val next = peek()
+        if (next.kind in setOf(
+                MathTokenKind.End,
+                MathTokenKind.CloseGroup,
+                MathTokenKind.Superscript,
+                MathTokenKind.Subscript,
+            )
+        ) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingEquationTagArgument,
+                "Command \\tag requires a text token or braced tag",
+                command.range,
+            )
+            val insertion = SourceRange((star?.range ?: command.range).endExclusive, (star?.range ?: command.range).endExclusive)
+            return MathEquationTag(
+                segments = emptyList(),
+                starred = star != null,
+                commandRange = command.range,
+                starRange = star?.range,
+                contentRange = insertion,
+                argumentRange = insertion,
+                range = command.range.cover(star?.range ?: command.range),
+            )
+        }
+        val argument = parseTextArgument(command, "equation tag")
+        return MathEquationTag(
+            segments = argument.segments,
+            starred = star != null,
+            commandRange = command.range,
+            starRange = star?.range,
+            contentRange = argument.contentRange,
+            argumentRange = argument.totalRange,
+            range = command.range.cover(argument.totalRange),
         )
     }
 

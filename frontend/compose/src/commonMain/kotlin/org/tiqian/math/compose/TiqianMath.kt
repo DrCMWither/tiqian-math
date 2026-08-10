@@ -2,6 +2,7 @@ package org.tiqian.math.compose
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
@@ -110,6 +111,8 @@ fun rememberTiqianMathFormula(
     fontFace: MathComposeFontFace? = null,
     textRunProvider: MathTextRunProvider? = null,
     textLocale: String? = null,
+    /** Required by explicit equation tags when measuring outside a constrained Compose layout. */
+    displayWidthPx: Float? = null,
 ): TiqianMathFormula = TiqianMathFormula(
     rememberResolvedFormulaCapability(
         source = source,
@@ -124,6 +127,7 @@ fun rememberTiqianMathFormula(
         fontFace = fontFace,
         textRunProvider = textRunProvider,
         textLocale = textLocale,
+        displayWidthPx = displayWidthPx,
     ),
 )
 
@@ -199,30 +203,34 @@ fun TiqianMath(
     onMathLayout: (MathLayoutResult) -> Unit = {},
     onMathError: (MathFormulaCapabilityResult.FallbackRequired) -> Unit = {},
 ) {
-    val resolved = rememberResolvedFormulaCapability(
-        source,
-        mode,
-        style,
-        fontSizePx,
-        nullDelimiterSpacePx,
-        scriptSpacePx,
-        delimiterFactor,
-        delimiterShortfallPx,
-        color,
-        fontFace,
-        textRunProvider,
-        textLocale,
-    )
-    FormulaCapabilityContent(
-        resolved = resolved,
-        modifier = modifier,
-        softWrap = softWrap,
-        onMathLayout = onMathLayout,
-        fallback = { failure ->
-            LaunchedEffect(failure) { onMathError(failure) }
-            TiqianMathError(failure, modifier, style)
-        },
-    )
+    BoxWithConstraints(modifier = modifier) {
+        val resolved = rememberResolvedFormulaCapability(
+            source,
+            mode,
+            style,
+            fontSizePx,
+            nullDelimiterSpacePx,
+            scriptSpacePx,
+            delimiterFactor,
+            delimiterShortfallPx,
+            color,
+            fontFace,
+            textRunProvider,
+            textLocale,
+            displayWidthPx = constraints.takeIf { mode == MathMode.Display && it.hasBoundedWidth }
+                ?.maxWidth?.toFloat(),
+        )
+        FormulaCapabilityContent(
+            resolved = resolved,
+            modifier = Modifier,
+            softWrap = softWrap,
+            onMathLayout = onMathLayout,
+            fallback = { failure ->
+                LaunchedEffect(failure) { onMathError(failure) }
+                TiqianMathError(failure, Modifier, style)
+            },
+        )
+    }
 }
 
 /** Strict dogfood/CI entry: capability failures are deterministic before measure or draw. */
@@ -240,21 +248,25 @@ fun StrictTiqianMath(
     textLocale: String? = null,
     onMathLayout: (MathLayoutResult) -> Unit = {},
 ) {
-    val resolved = rememberResolvedFormulaCapability(
-        source,
-        mode,
-        style,
-        fontSizePx,
-        null,
-        null,
-        901,
-        null,
-        color,
-        fontFace,
-        textRunProvider,
-        textLocale,
-    )
-    FormulaCapabilityContent(resolved, modifier, softWrap, onMathLayout, fallback = null)
+    BoxWithConstraints(modifier = modifier) {
+        val resolved = rememberResolvedFormulaCapability(
+            source,
+            mode,
+            style,
+            fontSizePx,
+            null,
+            null,
+            901,
+            null,
+            color,
+            fontFace,
+            textRunProvider,
+            textLocale,
+            displayWidthPx = constraints.takeIf { mode == MathMode.Display && it.hasBoundedWidth }
+                ?.maxWidth?.toFloat(),
+        )
+        FormulaCapabilityContent(resolved, Modifier, softWrap, onMathLayout, fallback = null)
+    }
 }
 
 /**
@@ -280,21 +292,25 @@ fun TiqianMathOrFallback(
     onMathLayout: (MathLayoutResult) -> Unit = {},
     fallback: @Composable (MathFormulaCapabilityResult.FallbackRequired) -> Unit,
 ) {
-    val resolved = rememberResolvedFormulaCapability(
-        source,
-        mode,
-        style,
-        fontSizePx,
-        nullDelimiterSpacePx,
-        scriptSpacePx,
-        delimiterFactor,
-        delimiterShortfallPx,
-        color,
-        fontFace,
-        textRunProvider,
-        textLocale,
-    )
-    FormulaCapabilityContent(resolved, modifier, softWrap, onMathLayout, fallback)
+    BoxWithConstraints(modifier = modifier) {
+        val resolved = rememberResolvedFormulaCapability(
+            source,
+            mode,
+            style,
+            fontSizePx,
+            nullDelimiterSpacePx,
+            scriptSpacePx,
+            delimiterFactor,
+            delimiterShortfallPx,
+            color,
+            fontFace,
+            textRunProvider,
+            textLocale,
+            displayWidthPx = constraints.takeIf { mode == MathMode.Display && it.hasBoundedWidth }
+                ?.maxWidth?.toFloat(),
+        )
+        FormulaCapabilityContent(resolved, Modifier, softWrap, onMathLayout, fallback)
+    }
 }
 
 /** Test seam: injects layout corruption before the real production preflight and branch. */
@@ -323,6 +339,7 @@ internal fun TiqianMathCapabilityBoundaryForTest(
         null,
         null,
         capabilityEngine,
+        null,
     )
     FormulaCapabilityContent(
         resolved,
@@ -408,6 +425,7 @@ private fun rememberResolvedFormulaCapability(
     textRunProvider: MathTextRunProvider?,
     textLocale: String?,
     capabilityEngineOverride: MathFormulaCapabilityEngine? = null,
+    displayWidthPx: Float? = null,
 ): ResolvedFormulaCapability {
     val density = LocalDensity.current
     val resolvedFontSizePx = fontSizePx ?: with(density) {
@@ -443,6 +461,7 @@ private fun rememberResolvedFormulaCapability(
         delimiterFactor,
         delimiterShortfallPx,
         textLocale,
+        displayWidthPx,
         capabilityEngine,
     ) {
         capabilityEngine.evaluate(
@@ -455,6 +474,7 @@ private fun rememberResolvedFormulaCapability(
                 delimiterFactor = delimiterFactor,
                 delimiterShortfallPx = delimiterShortfallPx,
                 textLocale = textLocale,
+                displayWidthPx = displayWidthPx,
             ),
         )
     }
