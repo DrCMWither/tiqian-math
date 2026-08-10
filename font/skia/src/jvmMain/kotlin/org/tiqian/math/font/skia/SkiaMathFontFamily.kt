@@ -39,32 +39,35 @@ class SkiaMathFontFamily private constructor(
     override fun mathFontForOrNull(faceId: MathFaceId) = owner.mathFaces[faceId]?.mathFont
 
     override fun resolveSymbol(request: MathSymbolGlyphRequest, fontSizePx: Float): ResolvedMathSymbol {
-        val (face, reason) = owner.firstSuccessfulMathFace(requestedWeight) {
-            it.resolveSymbol(request, fontSizePx).run
-        }
-        val resolved = face.resolveSymbol(request, fontSizePx)
-        return resolved.copy(run = resolved.run.tag(requestedWeight, reason))
+        val selected = owner.firstSuccessfulMathFace(
+            requestedWeight,
+            resolve = { it.resolveSymbol(request, fontSizePx) },
+            run = { it.run },
+        )
+        return selected.value.copy(run = selected.value.run.tag(requestedWeight, selected.reason))
     }
 
     override fun resolveOperator(request: MathOperatorGlyphRequest, fontSizePx: Float): ResolvedMathOperator {
-        val face = owner.mathFallbackOrder(requestedWeight).firstOrNull {
-            it.operatorConstructionAvailable(request, fontSizePx)
-        } ?: owner.mathFace(requestedWeight)
-        val reason = if (face.resolvedWeight == requestedWeight) MathFontFallbackReason.RequestedFace
+        val selected = owner.firstSuccessfulMathFace(
+            requestedWeight,
+            resolve = { it.resolveOperator(request, fontSizePx) },
+            run = { it.run },
+        )
+        val reason = if (selected.face.resolvedWeight == requestedWeight) MathFontFallbackReason.RequestedFace
             else MathFontFallbackReason.MissingMathConstructionInRequestedWeight
-        val resolved = face.resolveOperator(request, fontSizePx)
-        return resolved.copy(run = resolved.run.tag(requestedWeight, reason))
+        return selected.value.copy(run = selected.value.run.tag(requestedWeight, reason))
     }
 
     override fun resolveSymbols(
         requests: List<MathSymbolGlyphRequest>,
         fontSizePx: Float,
     ): ResolvedMathSymbolRun {
-        val (face, reason) = owner.firstSuccessfulMathFace(requestedWeight) {
-            it.resolveSymbols(requests, fontSizePx).run
-        }
-        val resolved = face.resolveSymbols(requests, fontSizePx)
-        return resolved.copy(run = resolved.run.tag(requestedWeight, reason))
+        val selected = owner.firstSuccessfulMathFace(
+            requestedWeight,
+            resolve = { it.resolveSymbols(requests, fontSizePx) },
+            run = { it.run },
+        )
+        return selected.value.copy(run = selected.value.run.tag(requestedWeight, selected.reason))
     }
 
     override fun shape(
@@ -73,10 +76,12 @@ class SkiaMathFontFamily private constructor(
         style: MathStyle,
         sourceRange: SourceRange,
     ): MeasuredMathRun {
-        val (face, reason) = owner.firstSuccessfulMathFace(requestedWeight) {
-            it.shape(text, fontSizePx, style, sourceRange)
-        }
-        return face.shape(text, fontSizePx, style, sourceRange).tag(requestedWeight, reason)
+        val selected = owner.firstSuccessfulMathFace(
+            requestedWeight,
+            resolve = { it.shape(text, fontSizePx, style, sourceRange) },
+            run = { it },
+        )
+        return selected.value.tag(requestedWeight, selected.reason)
     }
 
     override fun measureGlyph(glyphId: UShort, fontSizePx: Float, style: MathStyle, sourceRange: SourceRange) =
@@ -124,20 +129,23 @@ class SkiaMathFontFamily private constructor(
         .tag(requestedWeight, fallbackReason(owner.mathFaces.getValue(faceId)))
 
     override fun shapeConstructionBase(text: String, fontSizePx: Float, sourceRange: SourceRange): MeasuredMathRun {
-        val (face, reason) = owner.firstSuccessfulMathFace(requestedWeight) {
-            it.shapeConstructionBase(text, fontSizePx, sourceRange)
-        }
-        return face.shapeConstructionBase(text, fontSizePx, sourceRange).tag(requestedWeight, reason)
+        val selected = owner.firstSuccessfulMathFace(
+            requestedWeight,
+            resolve = { it.shapeConstructionBase(text, fontSizePx, sourceRange) },
+            run = { it },
+        )
+        return selected.value.tag(requestedWeight, selected.reason)
     }
 
     override fun shapeOutlineConstructionBase(
         text: String, fontSizePx: Float, sourceRange: SourceRange,
     ): MeasuredOutlineConstructionRun {
-        val (face, reason) = owner.firstSuccessfulMathFace(requestedWeight) {
-            it.shapeOutlineConstructionBase(text, fontSizePx, sourceRange).run
-        }
-        return face.shapeOutlineConstructionBase(text, fontSizePx, sourceRange)
-            .tag(requestedWeight, reason)
+        val selected = owner.firstSuccessfulMathFace(
+            requestedWeight,
+            resolve = { it.shapeOutlineConstructionBase(text, fontSizePx, sourceRange) },
+            run = { it.run },
+        )
+        return selected.value.tag(requestedWeight, selected.reason)
     }
 
     override fun shapeOutlineConstructionBaseCandidates(
@@ -179,31 +187,38 @@ class SkiaMathFontFamily private constructor(
         fun mathFallbackOrder(weight: MathFontWeight): List<SkiaMathFontFace> =
             mathFaces.values.sortedBy { kotlin.math.abs(it.resolvedWeight.cssWeight - weight.cssWeight) }
 
-        fun firstSuccessfulMathFace(
+        fun <T> firstSuccessfulMathFace(
             weight: MathFontWeight,
-            measure: (SkiaMathFontFace) -> MeasuredMathRun,
-        ): Pair<SkiaMathFontFace, MathFontFallbackReason> {
+            resolve: (SkiaMathFontFace) -> T,
+            run: (T) -> MeasuredMathRun,
+        ): SelectedMathFace<T> {
             val ordered = mathFallbackOrder(weight)
+            var first: SelectedMathFace<T>? = null
             ordered.forEach { face ->
-                if (!measure(face).missingGlyph) {
-                    return face to when {
-                        face.resolvedWeight == weight -> MathFontFallbackReason.RequestedFace
-                        hasMathWeight(weight) -> MathFontFallbackReason.MissingGlyphInRequestedWeight
-                        else -> MathFontFallbackReason.RequestedWeightUnavailable
-                    }
-                }
+                val resolved = resolve(face)
+                val selected = SelectedMathFace(face, resolved, reason(face, weight))
+                if (first == null) first = selected
+                if (!run(resolved).missingGlyph) return selected
             }
-            return ordered.first() to if (hasMathWeight(weight)) {
-                MathFontFallbackReason.RequestedFace
-            } else {
-                MathFontFallbackReason.RequestedWeightUnavailable
-            }
+            return checkNotNull(first)
+        }
+
+        fun reason(face: SkiaMathFontFace, weight: MathFontWeight): MathFontFallbackReason = when {
+            face.resolvedWeight == weight -> MathFontFallbackReason.RequestedFace
+            hasMathWeight(weight) -> MathFontFallbackReason.MissingGlyphInRequestedWeight
+            else -> MathFontFallbackReason.RequestedWeightUnavailable
         }
 
         override fun close() {
             mathFaces.values.forEach(SkiaMathFontFace::close)
         }
     }
+
+    private data class SelectedMathFace<T>(
+        val face: SkiaMathFontFace,
+        val value: T,
+        val reason: MathFontFallbackReason,
+    )
 
     companion object {
         fun fromSpec(spec: MathFontFamilySpec): SkiaMathFontFamily {
@@ -251,14 +266,3 @@ private fun MeasuredOutlineConstructionRun.tag(
     requestedWeight: MathFontWeight,
     reason: MathFontFallbackReason,
 ): MeasuredOutlineConstructionRun = copy(run = run.tag(requestedWeight, reason))
-
-private fun SkiaMathFontFace.operatorConstructionAvailable(
-    request: MathOperatorGlyphRequest,
-    fontSizePx: Float,
-): Boolean {
-    val resolved = resolveOperator(request, fontSizePx)
-    // XeTeX make_op always completes with the normal or largest available operator glyph when
-    // a display target exhausts the font's variant ladder. Coverage of the suggested minimum is
-    // therefore not a reason to cross to another formula-wide MATH face.
-    return !resolved.run.missingGlyph
-}

@@ -27,31 +27,50 @@ class AndroidMathFontFamily private constructor(
     override fun mathFontForOrNull(faceId: MathFaceId) = owner.mathFaces[faceId]?.mathFont
 
     override fun resolveSymbol(request: MathSymbolGlyphRequest, fontSizePx: Float): ResolvedMathSymbol {
-        val selected = owner.firstSuccessful(requestedWeight) { it.resolveSymbol(request, fontSizePx).run }
-        val resolved = selected.face.resolveSymbol(request, fontSizePx)
-        return resolved.copy(run = resolved.run.withFaceDecision(requestedWeight, selected.reason))
+        val selected = owner.firstSuccessful(
+            requestedWeight,
+            resolve = { it.resolveSymbol(request, fontSizePx) },
+            run = { it.run },
+        )
+        return selected.value.copy(
+            run = selected.value.run.withFaceDecision(requestedWeight, selected.reason),
+        )
     }
 
     override fun resolveOperator(request: MathOperatorGlyphRequest, fontSizePx: Float): ResolvedMathOperator {
-        val face = owner.ordered(requestedWeight).firstOrNull {
-            it.operatorConstructionAvailable(request, fontSizePx)
-        } ?: owner.mathFace(requestedWeight)
-        val reason = if (face.resolvedWeight == requestedWeight) MathFontFallbackReason.RequestedFace
+        val selected = owner.firstSuccessful(
+            requestedWeight,
+            resolve = { it.resolveOperator(request, fontSizePx) },
+            run = { it.run },
+            accept = { face, resolved ->
+                face.operatorConstructionAvailable(resolved, request, fontSizePx)
+            },
+        )
+        val reason = if (selected.face.resolvedWeight == requestedWeight) MathFontFallbackReason.RequestedFace
             else MathFontFallbackReason.MissingMathConstructionInRequestedWeight
-        val resolved = face.resolveOperator(request, fontSizePx)
-        return resolved.copy(run = resolved.run.withFaceDecision(requestedWeight, reason))
+        return selected.value.copy(
+            run = selected.value.run.withFaceDecision(requestedWeight, reason),
+        )
     }
 
     override fun resolveSymbols(requests: List<MathSymbolGlyphRequest>, fontSizePx: Float): ResolvedMathSymbolRun {
-        val selected = owner.firstSuccessful(requestedWeight) { it.resolveSymbols(requests, fontSizePx).run }
-        val resolved = selected.face.resolveSymbols(requests, fontSizePx)
-        return resolved.copy(run = resolved.run.withFaceDecision(requestedWeight, selected.reason))
+        val selected = owner.firstSuccessful(
+            requestedWeight,
+            resolve = { it.resolveSymbols(requests, fontSizePx) },
+            run = { it.run },
+        )
+        return selected.value.copy(
+            run = selected.value.run.withFaceDecision(requestedWeight, selected.reason),
+        )
     }
 
     override fun shape(text: String, fontSizePx: Float, style: MathStyle, sourceRange: SourceRange): MeasuredMathRun {
-        val selected = owner.firstSuccessful(requestedWeight) { it.shape(text, fontSizePx, style, sourceRange) }
-        return selected.face.shape(text, fontSizePx, style, sourceRange)
-            .withFaceDecision(requestedWeight, selected.reason)
+        val selected = owner.firstSuccessful(
+            requestedWeight,
+            resolve = { it.shape(text, fontSizePx, style, sourceRange) },
+            run = { it },
+        )
+        return selected.value.withFaceDecision(requestedWeight, selected.reason)
     }
 
     override fun measureGlyph(glyphId: UShort, fontSizePx: Float, style: MathStyle, sourceRange: SourceRange) =
@@ -79,17 +98,21 @@ class AndroidMathFontFamily private constructor(
             .withFaceDecision(requestedWeight, owner.reason(owner.mathFaces.getValue(faceId), requestedWeight))
 
     override fun shapeConstructionBase(text: String, fontSizePx: Float, sourceRange: SourceRange): MeasuredMathRun {
-        val selected = owner.firstSuccessful(requestedWeight) { it.shapeConstructionBase(text, fontSizePx, sourceRange) }
-        return selected.face.shapeConstructionBase(text, fontSizePx, sourceRange)
-            .withFaceDecision(requestedWeight, selected.reason)
+        val selected = owner.firstSuccessful(
+            requestedWeight,
+            resolve = { it.shapeConstructionBase(text, fontSizePx, sourceRange) },
+            run = { it },
+        )
+        return selected.value.withFaceDecision(requestedWeight, selected.reason)
     }
 
     override fun shapeOutlineConstructionBase(text: String, fontSizePx: Float, sourceRange: SourceRange): MeasuredOutlineConstructionRun {
-        val selected = owner.firstSuccessful(requestedWeight) {
-            it.shapeOutlineConstructionBase(text, fontSizePx, sourceRange).run
-        }
-        return selected.face.shapeOutlineConstructionBase(text, fontSizePx, sourceRange)
-            .withFaceDecision(requestedWeight, selected.reason)
+        val selected = owner.firstSuccessful(
+            requestedWeight,
+            resolve = { it.shapeOutlineConstructionBase(text, fontSizePx, sourceRange) },
+            run = { it.run },
+        )
+        return selected.value.withFaceDecision(requestedWeight, selected.reason)
     }
 
     override fun shapeOutlineConstructionBaseCandidates(
@@ -123,17 +146,32 @@ class AndroidMathFontFamily private constructor(
             hasWeight(requested) -> MathFontFallbackReason.MissingGlyphInRequestedWeight
             else -> MathFontFallbackReason.RequestedWeightUnavailable
         }
-        fun firstSuccessful(weight: MathFontWeight, measure: (AndroidMathFontFace) -> MeasuredMathRun): Selected {
+        fun <T> firstSuccessful(
+            weight: MathFontWeight,
+            resolve: (AndroidMathFontFace) -> T,
+            run: (T) -> MeasuredMathRun,
+            accept: (AndroidMathFontFace, T) -> Boolean = { _, value -> !run(value).missingGlyph },
+        ): Selected<T> {
             val ordered = ordered(weight)
-            ordered.forEach { if (!measure(it).missingGlyph) return Selected(it, reason(it, weight)) }
-            return Selected(ordered.first(), reason(ordered.first(), weight))
+            var first: Selected<T>? = null
+            ordered.forEach { face ->
+                val resolved = resolve(face)
+                val selected = Selected(face, resolved, reason(face, weight))
+                if (first == null) first = selected
+                if (accept(face, resolved)) return selected
+            }
+            return checkNotNull(first)
         }
         override fun close() {
             mathFaces.values.forEach(AndroidMathFontFace::close)
         }
     }
 
-    private data class Selected(val face: AndroidMathFontFace, val reason: MathFontFallbackReason)
+    private data class Selected<T>(
+        val face: AndroidMathFontFace,
+        val value: T,
+        val reason: MathFontFallbackReason,
+    )
 
     companion object {
         const val LeteRegularAsset = "org/tiqian/math/fonts/LeteSansMath-Regular.otf"
@@ -171,10 +209,10 @@ private fun MeasuredOutlineConstructionRun.withFaceDecision(requested: MathFontW
     copy(run = run.withFaceDecision(requested, reason))
 
 private fun AndroidMathFontFace.operatorConstructionAvailable(
+    resolved: ResolvedMathOperator,
     request: MathOperatorGlyphRequest,
     fontSizePx: Float,
 ): Boolean {
-    val resolved = resolveOperator(request, fontSizePx)
     if (resolved.run.missingGlyph) return false
     if (request.style.level != MathStyleLevel.Display) return true
     val glyphId = resolved.constructionBaseGlyphId ?: return false
