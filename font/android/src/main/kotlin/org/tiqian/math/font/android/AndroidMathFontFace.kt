@@ -14,6 +14,7 @@ import org.tiqian.math.core.SourceRange
 import org.tiqian.math.core.unicodeScalarString
 import org.tiqian.math.font.opentype.OpenTypeMathFont
 import org.tiqian.math.font.opentype.OpenTypeMathReader
+import org.tiqian.math.font.opentype.VerifiedOpenTypeMathSnapshotLoader
 import org.tiqian.math.layout.MathConstructionOutlineCapability
 import org.tiqian.math.layout.MathConstructionOutlineEvidence
 import org.tiqian.math.layout.MathConstructionOutlineUnavailableReason
@@ -307,6 +308,30 @@ class AndroidMathFontFace private constructor(
             )
         }
 
+        internal fun fromPrebakedBytes(
+            fontBytes: ByteArray,
+            snapshotBytes: ByteArray,
+            expectedSha256: String,
+            faceId: MathFaceId,
+            fontClass: MathFontClass,
+            weight: MathFontWeight,
+        ): AndroidMathFontFace {
+            val immutableBytes = fontBytes.copyOf()
+            val mathFont = VerifiedOpenTypeMathSnapshotLoader.load(
+                immutableBytes,
+                snapshotBytes,
+                expectedSha256,
+            )
+            return AndroidMathFontFace(
+                mathFont,
+                immutableBytes,
+                faceId,
+                fontClass,
+                weight,
+                weight,
+            )
+        }
+
         fun fromAsset(context: Context, assetPath: String): AndroidMathFontFace =
             fromBytes(context.applicationContext.assets.open(assetPath).use { it.readBytes() })
 
@@ -314,10 +339,13 @@ class AndroidMathFontFace private constructor(
             fromBytes(context.applicationContext.resources.openRawResource(resourceId).use { it.readBytes() })
 
         fun loadLete(context: Context): AndroidMathFontFace =
-            fromBytes(
+            fromPrebakedBytes(
                 context.applicationContext.assets.open(LeteAssetPath).use { it.readBytes() },
+                context.applicationContext.assets.open(AndroidMathFontFamily.LeteRegularSnapshotAsset).use { it.readBytes() },
+                AndroidMathFontFamily.LeteRegularSha256,
                 faceId = MathFaceId("lete-sans-math-regular"),
                 fontClass = MathFontClass.SansSerif,
+                weight = MathFontWeight.Regular,
             )
     }
 }

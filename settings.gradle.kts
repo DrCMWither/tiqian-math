@@ -42,6 +42,7 @@ include(
     ":core",
     ":parser",
     ":font:opentype",
+    ":font:metadata-generator",
     ":font:android",
     ":font:stix",
     ":font:skia",

@@ -8,6 +8,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import org.tiqian.math.font.opentype.MathVerticalAssemblyPolicy
 import org.tiqian.math.font.opentype.MathVerticalConstructionRequest
+import org.tiqian.math.font.opentype.LeteSansMathPrebakedData
 
 /** API 23+ HarfBuzz/FreeType family: every placement keeps the native face that produced it. */
 class AndroidMathFontFamily private constructor(
@@ -174,8 +175,12 @@ class AndroidMathFontFamily private constructor(
     )
 
     companion object {
-        const val LeteRegularAsset = "org/tiqian/math/fonts/LeteSansMath-Regular.otf"
-        const val LeteBoldAsset = "org/tiqian/math/fonts/LeteSansMath-Bold.otf"
+        const val LeteRegularAsset = "org/tiqian/math/fonts/${LeteSansMathPrebakedData.RegularFileStem}.otf"
+        const val LeteBoldAsset = "org/tiqian/math/fonts/${LeteSansMathPrebakedData.BoldFileStem}.otf"
+        const val LeteRegularSnapshotAsset = "org/tiqian/math/fonts/${LeteSansMathPrebakedData.RegularFileStem}.tqmath"
+        const val LeteBoldSnapshotAsset = "org/tiqian/math/fonts/${LeteSansMathPrebakedData.BoldFileStem}.tqmath"
+        const val LeteRegularSha256 = LeteSansMathPrebakedData.RegularSha256
+        const val LeteBoldSha256 = LeteSansMathPrebakedData.BoldSha256
         fun fromSpec(spec: MathFontFamilySpec): AndroidMathFontFamily {
             val mathFaces = spec.faces.associate { face ->
                 face.faceId to AndroidMathFontFace.fromBytes(
@@ -188,16 +193,16 @@ class AndroidMathFontFamily private constructor(
         fun loadBundledLete(context: Context): AndroidMathFontFamily {
             val assets = context.applicationContext.assets
             fun bytes(path: String) = assets.open(path).use { it.readBytes() }
-            return fromSpec(
-                MathFontFamilySpec(
-                    "lete-sans-math",
-                    MathFontClass.SansSerif,
-                    listOf(
-                        MathFontFaceSpec(MathFaceId("lete-sans-math-regular"), bytes(LeteRegularAsset), MathFontClass.SansSerif, MathFontWeight.Regular),
-                        MathFontFaceSpec(MathFaceId("lete-sans-math-bold"), bytes(LeteBoldAsset), MathFontClass.SansSerif, MathFontWeight.Bold),
-                    ),
-                ),
+            val regular = AndroidMathFontFace.fromPrebakedBytes(
+                bytes(LeteRegularAsset), bytes(LeteRegularSnapshotAsset), LeteRegularSha256,
+                MathFaceId("lete-sans-math-regular"), MathFontClass.SansSerif, MathFontWeight.Regular,
             )
+            val bold = AndroidMathFontFace.fromPrebakedBytes(
+                bytes(LeteBoldAsset), bytes(LeteBoldSnapshotAsset), LeteBoldSha256,
+                MathFaceId("lete-sans-math-bold"), MathFontClass.SansSerif, MathFontWeight.Bold,
+            )
+            val faces = listOf(regular, bold).associateBy { it.faceId }
+            return AndroidMathFontFamily(Owner(MathFontClass.SansSerif, faces), MathFontWeight.Regular)
         }
     }
 }

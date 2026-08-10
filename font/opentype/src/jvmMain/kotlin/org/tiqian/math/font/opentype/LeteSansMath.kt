@@ -1,18 +1,32 @@
 package org.tiqian.math.font.opentype
 
 object LeteSansMath {
-    const val ResourcePath: String = "/org/tiqian/math/fonts/LeteSansMath-Regular.otf"
-    const val BoldResourcePath: String = "/org/tiqian/math/fonts/LeteSansMath-Bold.otf"
+    const val ResourcePath: String = "/org/tiqian/math/fonts/${LeteSansMathPrebakedData.RegularFileStem}.otf"
+    const val BoldResourcePath: String = "/org/tiqian/math/fonts/${LeteSansMathPrebakedData.BoldFileStem}.otf"
+    const val SnapshotResourcePath: String = "/org/tiqian/math/fonts/${LeteSansMathPrebakedData.RegularFileStem}.tqmath"
+    const val BoldSnapshotResourcePath: String = "/org/tiqian/math/fonts/${LeteSansMathPrebakedData.BoldFileStem}.tqmath"
+    const val Sha256: String = LeteSansMathPrebakedData.RegularSha256
+    const val BoldSha256: String = LeteSansMathPrebakedData.BoldSha256
 
-    fun loadBytes(): ByteArray = checkNotNull(LeteSansMath::class.java.getResourceAsStream(ResourcePath)) {
-        "Bundled Lete Sans Math resource is missing at $ResourcePath"
-    }.use { it.readBytes() }
+    private val regularSnapshot: VerifiedOpenTypeMathSnapshot by lazy {
+        VerifiedOpenTypeMathSnapshotLoader.prepare(readResource(SnapshotResourcePath), Sha256)
+    }
+    private val boldSnapshot: VerifiedOpenTypeMathSnapshot by lazy {
+        VerifiedOpenTypeMathSnapshotLoader.prepare(readResource(BoldSnapshotResourcePath), BoldSha256)
+    }
 
-    fun load(): OpenTypeMathFont = OpenTypeMathReader().read(loadBytes())
+    fun loadBytes(): ByteArray = readResource(ResourcePath)
 
-    fun loadBoldBytes(): ByteArray = checkNotNull(LeteSansMath::class.java.getResourceAsStream(BoldResourcePath)) {
-        "Bundled Lete Sans Math Bold resource is missing at $BoldResourcePath"
-    }.use { it.readBytes() }
+    /** The returned font owns its bytes while sharing immutable, detached prebaked metadata. */
+    fun load(): OpenTypeMathFont = regularSnapshot.attach(loadBytes())
 
-    fun loadBold(): OpenTypeMathFont = OpenTypeMathReader().read(loadBoldBytes())
+    fun loadBoldBytes(): ByteArray = readResource(BoldResourcePath)
+
+    fun loadBold(): OpenTypeMathFont = boldSnapshot.attach(loadBoldBytes())
+
+    private fun readResource(path: String): ByteArray =
+        checkNotNull(LeteSansMath::class.java.getResourceAsStream(path)) {
+            "Bundled Lete Sans Math resource is missing at $path"
+        }.use { it.readBytes() }
+
 }

@@ -3,7 +3,10 @@ package org.tiqian.math.font.opentype
 import org.tiqian.math.core.DiagnosticCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertContentEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotSame
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import java.security.MessageDigest
 
@@ -69,6 +72,53 @@ class LeteSansMathTest {
     }
 
     @Test
+    fun prebakedRegularAndBoldMetadataExactlyMatchTheAuthoritativeReader() {
+        listOf(
+            PrebakedCase(
+                LeteSansMath.loadBytes(),
+                LeteSansMath.load(),
+            ),
+            PrebakedCase(
+                LeteSansMath.loadBoldBytes(),
+                LeteSansMath.loadBold(),
+            ),
+        ).forEach { case ->
+            val authoritative = OpenTypeMathReader().read(case.fontBytes)
+            val sharedByteMarker = ByteArray(0)
+            assertEquals(
+                authoritative.copy(bytes = sharedByteMarker),
+                case.prebaked.copy(bytes = sharedByteMarker),
+            )
+        }
+    }
+
+    @Test
+    fun preparedSnapshotRejectsMismatchedBytesBeforeAttachingMetadata() {
+        val snapshot = checkNotNull(javaClass.getResourceAsStream(LeteSansMath.SnapshotResourcePath))
+            .use { it.readBytes() }
+        val prepared = VerifiedOpenTypeMathSnapshotLoader.prepare(snapshot, LeteSansMath.Sha256)
+        val bytes = LeteSansMath.loadBytes()
+        bytes[bytes.lastIndex] = (bytes.last().toInt() xor 1).toByte()
+
+        val failure = assertFailsWith<IllegalStateException> { prepared.attach(bytes) }
+        assertTrue(failure.message.orEmpty().contains("SHA-256 mismatch"))
+    }
+
+    @Test
+    fun repeatedLoadsShareImmutableMetadataButNotMutableFontBytes() {
+        val first = LeteSansMath.load()
+        val second = LeteSansMath.load()
+
+        assertNotSame(first.bytes, second.bytes)
+        assertContentEquals(first.bytes, second.bytes)
+        assertSame(first.constants, second.constants)
+        assertSame(first.italicCorrections, second.italicCorrections)
+        assertSame(first.mathKernInfo, second.mathKernInfo)
+        assertSame(first.verticalConstructions, second.verticalConstructions)
+        assertSame(first.horizontalConstructions, second.horizontalConstructions)
+    }
+
+    @Test
     fun radicalMathValueDeviceAdjustmentIsRejectedExplicitly() {
         val bytes = LeteSansMath.loadBytes().copyOf()
         val constants = bytes.mathConstantsOffset()
@@ -81,6 +131,11 @@ class LeteSansMathTest {
         assertTrue(failure.message.orEmpty().contains("MathConstants[45]"))
     }
 }
+
+private data class PrebakedCase(
+    val fontBytes: ByteArray,
+    val prebaked: OpenTypeMathFont,
+)
 
 private fun OpenTypeMathConstants.radicalValues(): List<Int> = listOf(
     radicalVerticalGap,

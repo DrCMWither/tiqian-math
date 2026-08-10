@@ -234,26 +234,19 @@ class SkiaMathFontFamily private constructor(
             return SkiaMathFontFamily(Owner(spec.fontClass, mathFaces), MathFontWeight.Regular)
         }
 
-        fun loadBundledLete(): SkiaMathFontFamily = fromSpec(
-            MathFontFamilySpec(
-                familyId = "lete-sans-math",
-                fontClass = MathFontClass.SansSerif,
-                faces = listOf(
-                    MathFontFaceSpec(
-                        MathFaceId("lete-sans-math-regular"),
-                        LeteSansMath.loadBytes(),
-                        MathFontClass.SansSerif,
-                        MathFontWeight.Regular,
-                    ),
-                    MathFontFaceSpec(
-                        MathFaceId("lete-sans-math-bold"),
-                        LeteSansMath.loadBoldBytes(),
-                        MathFontClass.SansSerif,
-                        MathFontWeight.Bold,
-                    ),
+        fun loadBundledLete(): SkiaMathFontFamily {
+            val faces = listOf(
+                SkiaMathFontFace(
+                    LeteSansMath.load(), MathFaceId("lete-sans-math-regular"),
+                    MathFontClass.SansSerif, MathFontWeight.Regular, MathFontWeight.Regular,
                 ),
-            ),
-        )
+                SkiaMathFontFace(
+                    LeteSansMath.loadBold(), MathFaceId("lete-sans-math-bold"),
+                    MathFontClass.SansSerif, MathFontWeight.Bold, MathFontWeight.Bold,
+                ),
+            ).associateBy { it.faceId }
+            return SkiaMathFontFamily(Owner(MathFontClass.SansSerif, faces), MathFontWeight.Regular)
+        }
     }
 }
 

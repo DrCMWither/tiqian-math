@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.RectF
+import android.os.SystemClock
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.util.concurrent.Callable
@@ -36,9 +38,114 @@ import org.tiqian.math.layout.MathTextRunProvider
 import org.tiqian.math.layout.MathTextRunRequest
 import org.tiqian.math.layout.MathTextRunProviderResult
 import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.font.opentype.OpenTypeMathReader
+import org.tiqian.math.font.opentype.VerifiedOpenTypeMathSnapshotLoader
 
 @RunWith(AndroidJUnit4::class)
 class AndroidMathBackendInstrumentedTest {
+    @Test
+    fun reportBundledPrebakedVersusDynamicFamilyInitialization() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val assets = context.assets
+        fun dynamicFamily(): AndroidMathFontFamily = AndroidMathFontFamily.fromSpec(
+            org.tiqian.math.core.MathFontFamilySpec(
+                "lete-dynamic-benchmark",
+                org.tiqian.math.core.MathFontClass.SansSerif,
+                listOf(
+                    org.tiqian.math.core.MathFontFaceSpec(
+                        MathFaceId("lete-dynamic-regular"),
+                        assets.open(AndroidMathFontFamily.LeteRegularAsset).use { it.readBytes() },
+                        org.tiqian.math.core.MathFontClass.SansSerif,
+                        MathFontWeight.Regular,
+                    ),
+                    org.tiqian.math.core.MathFontFaceSpec(
+                        MathFaceId("lete-dynamic-bold"),
+                        assets.open(AndroidMathFontFamily.LeteBoldAsset).use { it.readBytes() },
+                        org.tiqian.math.core.MathFontClass.SansSerif,
+                        MathFontWeight.Bold,
+                    ),
+                ),
+            ),
+        )
+        fun measure(factory: () -> AndroidMathFontFamily): Long {
+            val start = SystemClock.elapsedRealtimeNanos()
+            factory().close()
+            return SystemClock.elapsedRealtimeNanos() - start
+        }
+
+        repeat(3) {
+            dynamicFamily().close()
+            AndroidMathFontFamily.loadBundledLete(context).close()
+        }
+        val dynamicNs = LongArray(15)
+        val prebakedNs = LongArray(15)
+        repeat(15) { index ->
+            if (index % 2 == 0) {
+                dynamicNs[index] = measure(::dynamicFamily)
+                prebakedNs[index] = measure { AndroidMathFontFamily.loadBundledLete(context) }
+            } else {
+                prebakedNs[index] = measure { AndroidMathFontFamily.loadBundledLete(context) }
+                dynamicNs[index] = measure(::dynamicFamily)
+            }
+        }
+        val dynamicMedian = dynamicNs.sorted()[dynamicNs.size / 2]
+        val prebakedMedian = prebakedNs.sorted()[prebakedNs.size / 2]
+        Log.i(
+            "TiqianMathPrebake",
+            "family-init dynamicMedianNs=" + dynamicMedian +
+                " prebakedMedianNs=" + prebakedMedian +
+                " dynamicSamples=" + dynamicNs.joinToString() +
+                " prebakedSamples=" + prebakedNs.joinToString(),
+        )
+        assertTrue(dynamicMedian > 0)
+        assertTrue(prebakedMedian > 0)
+    }
+
+    @Test
+    fun bundledAndroidSnapshotMatchesDynamicOpenTypeReader() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val assets = context.assets
+        listOf(
+            AndroidMathFontFamily.LeteRegularAsset to AndroidMathFontFamily.LeteRegularSnapshotAsset,
+            AndroidMathFontFamily.LeteBoldAsset to AndroidMathFontFamily.LeteBoldSnapshotAsset,
+        ).forEach { (fontPath, snapshotPath) ->
+            val bytes = assets.open(fontPath).use { it.readBytes() }
+            val dynamic = OpenTypeMathReader().read(bytes)
+            val expectedSha256 = if (fontPath == AndroidMathFontFamily.LeteRegularAsset) {
+                AndroidMathFontFamily.LeteRegularSha256
+            } else {
+                AndroidMathFontFamily.LeteBoldSha256
+            }
+            val prebaked = VerifiedOpenTypeMathSnapshotLoader.load(
+                bytes,
+                assets.open(snapshotPath).use { it.readBytes() },
+                expectedSha256,
+            )
+            val sharedByteMarker = ByteArray(0)
+            assertEquals(dynamic.copy(bytes = sharedByteMarker), prebaked.copy(bytes = sharedByteMarker))
+        }
+    }
+
+    @Test
+    fun bundledAndroidSnapshotRejectsMismatchedFontBytesBeforeNativeFaceCreation() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val assets = context.assets
+        val bytes = assets.open(AndroidMathFontFamily.LeteRegularAsset).use { it.readBytes() }
+        bytes[bytes.lastIndex] = (bytes.last().toInt() xor 1).toByte()
+
+        val failure = assertFailsWith<IllegalStateException> {
+            AndroidMathFontFace.fromPrebakedBytes(
+                bytes,
+                assets.open(AndroidMathFontFamily.LeteRegularSnapshotAsset).use { it.readBytes() },
+                AndroidMathFontFamily.LeteRegularSha256,
+                MathFaceId("mismatched-bundled-face"),
+                org.tiqian.math.core.MathFontClass.SansSerif,
+                MathFontWeight.Regular,
+            )
+        }
+        assertTrue(failure.message.orEmpty().contains("SHA-256 mismatch"))
+    }
+
     @Test
     fun mathFaceCachesSourceIndependentNativeShapingAndGlyphMetrics() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
