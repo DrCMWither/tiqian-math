@@ -9,12 +9,81 @@ import org.tiqian.math.core.MathDelimited
 import org.tiqian.math.core.MathDelimiterIdentity
 import org.tiqian.math.core.MathDelimiterSide
 import org.tiqian.math.core.MathFraction
+import org.tiqian.math.core.MathFixedDelimiter
+import org.tiqian.math.core.MathFixedDelimiterRole
+import org.tiqian.math.core.MathFixedDelimiterSize
 import org.tiqian.math.core.MathMiddleDelimiter
 import org.tiqian.math.core.MathScripts
 import org.tiqian.math.core.MathSymbol
 import org.tiqian.math.core.SourceRange
 
 class MathDelimiterParserTest {
+    @Test
+    fun parsesAllAmsmathFixedSizeAndNoadRoleCommandsAsIndependentSemanticAxes() {
+        val sizes = listOf(
+            "big" to MathFixedDelimiterSize.Big,
+            "Big" to MathFixedDelimiterSize.BigCapital,
+            "bigg" to MathFixedDelimiterSize.Bigg,
+            "Bigg" to MathFixedDelimiterSize.BiggCapital,
+        )
+        val roles = listOf(
+            "" to MathFixedDelimiterRole.Ordinary,
+            "l" to MathFixedDelimiterRole.Opening,
+            "m" to MathFixedDelimiterRole.Relation,
+            "r" to MathFixedDelimiterRole.Closing,
+        )
+        sizes.forEach { (command, size) ->
+            roles.forEach { (suffix, role) ->
+                val source = "\\$command$suffix("
+                val result = MathParser().parse(source)
+                assertTrue(result.diagnostics.isEmpty(), "$source: ${result.diagnostics}")
+                val fixed = assertIs<MathFixedDelimiter>(result.root.children.single())
+                assertEquals(size, fixed.size, source)
+                assertEquals(role, fixed.role, source)
+                assertEquals(role.atomClass, fixed.atomClass, source)
+                assertEquals(MathDelimiterIdentity.LeftParenthesis, fixed.delimiter.identity, source)
+                assertEquals(source, fixed.range.let { source.substring(it.start, it.endExclusive) }, source)
+                assertEquals(SourceRange(0, source.length - 1), fixed.delimiter.commandRange, source)
+                assertEquals(SourceRange(source.length - 1, source.length), fixed.delimiter.delimiterRange, source)
+            }
+        }
+    }
+
+    @Test
+    fun fixedSizeDelimiterVocabularyScriptsAndRecoveryPreserveSource() {
+        val source = "\\bigl\\{_0^1+\\Bigm\\Vert+\\bigg\\langle+\\Bigg."
+        val result = MathParser().parse(source)
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val scripted = assertIs<MathScripts>(result.root.children.first())
+        val brace = assertIs<MathFixedDelimiter>(scripted.base)
+        assertEquals(MathDelimiterIdentity.LeftBrace, brace.delimiter.identity)
+        val fixed = result.root.children.flatMap { node ->
+            if (node is MathScripts) listOf(node.base) else listOf(node)
+        }.filterIsInstance<MathFixedDelimiter>()
+        assertEquals(
+            listOf(
+                MathDelimiterIdentity.LeftBrace,
+                MathDelimiterIdentity.DoubleVerticalBar,
+                MathDelimiterIdentity.LeftAngleBracket,
+                MathDelimiterIdentity.Invisible,
+            ),
+            fixed.map { it.delimiter.identity },
+        )
+
+        val missing = MathParser().parse("a+\\Big")
+        assertTrue(missing.diagnostics.any {
+            it.code == DiagnosticCode.MissingDelimiterAfterFixedSizeCommand &&
+                it.range == SourceRange(2, 6)
+        })
+        assertIs<MathFixedDelimiter>(missing.root.children.last())
+
+        val unsupported = MathParser().parse("\\big\\foo+x")
+        assertTrue(unsupported.diagnostics.any {
+            it.code == DiagnosticCode.UnsupportedDelimiter && it.range == SourceRange(4, 8)
+        })
+        assertTrue(unsupported.root.children.filterIsInstance<MathSymbol>().any { it.sourceText == "x" })
+    }
+
     @Test
     fun parsesPairedMiddleInvisibleNestedAndScriptsWithoutRewritingSource() {
         val source = "\\left\\langle a\\middle|\\left.\\frac{b}{c}\\right]\\right\\rangle_0^1"

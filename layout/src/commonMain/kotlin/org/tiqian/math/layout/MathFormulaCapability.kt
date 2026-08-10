@@ -184,6 +184,7 @@ object MathFormulaCapabilityClassifier {
         DiagnosticCode.MissingDelimiterAfterLeft,
         DiagnosticCode.MissingDelimiterAfterMiddle,
         DiagnosticCode.MissingDelimiterAfterRight,
+        DiagnosticCode.MissingDelimiterAfterFixedSizeCommand,
         DiagnosticCode.UnexpectedRightDelimiter,
         DiagnosticCode.MiddleOutsideDelimitedGroup,
         DiagnosticCode.MissingRightDelimiter,

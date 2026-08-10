@@ -611,7 +611,7 @@ private fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("operator-side-script-oracle=${output.absolutePath} bytes=${output.length()}")
     }
-    ImageComposeScene(width = 1400, height = 1900) { DelimiterNoadOracleScreen() }.use { scene ->
+    ImageComposeScene(width = 1400, height = 2300) { DelimiterNoadOracleScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/tiqian-delimiter-noad.png")
         output.parentFile.mkdirs()
@@ -1330,6 +1330,10 @@ private val DELIMITER_TALL_CONTENT =
     (1..8).fold("x") { content, _ -> "\\frac{$content}{y}" }
 
 private val DELIMITER_NOAD_PREVIEW_CASES = listOf(
+    DelimiterNoadPreviewCase("fixed tiers", "\\bigl(x\\bigr)+\\Bigl[x\\Bigr]+\\biggl\\{x\\biggr\\}+\\Bigg\\langle x\\Bigg\\rangle", lineHeightSp = 96),
+    DelimiterNoadPreviewCase("fixed content independence", "\\bigl(x\\bigr)\\quad\\bigl(\\frac{a}{b}\\bigr)", lineHeightSp = 76),
+    DelimiterNoadPreviewCase("fixed fresh textstyle in script", "A_{\\bigl(x\\bigr)}+{\\scriptstyle\\Bigl[x\\Bigr]}", lineHeightSp = 90),
+    DelimiterNoadPreviewCase("fixed assembly + invisible", "a\\big.b+\\Bigg\\uparrow x\\Bigg\\Downarrow", lineHeightSp = 120),
     DelimiterNoadPreviewCase("normal", "\\left(x\\right)"),
     DelimiterNoadPreviewCase("fraction", "\\left(\\frac{a}{b}\\right)"),
     DelimiterNoadPreviewCase("tall assembly", "\\left($DELIMITER_TALL_CONTENT\\right)", MathMode.Inline, 32, 180),

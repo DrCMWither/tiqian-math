@@ -70,6 +70,7 @@ enum class DiagnosticCode {
     MissingDelimiterAfterLeft,
     MissingDelimiterAfterMiddle,
     MissingDelimiterAfterRight,
+    MissingDelimiterAfterFixedSizeCommand,
     UnexpectedRightDelimiter,
     MiddleOutsideDelimitedGroup,
     MissingRightDelimiter,

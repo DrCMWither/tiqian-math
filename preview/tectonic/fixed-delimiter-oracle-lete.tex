@@ -1,0 +1,41 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=500
+\showboxdepth=500
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-FIXED-DELIMITER-ORACLE-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-FIXED-DELIMITER-ORACLE-#1-END}%
+}
+\begin{document}
+\fontsize{24bp}{24bp}\selectfont
+\setmathfont[Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/]{LeteSansMath-Regular.otf}
+\setbox0=\hbox{$x$}
+\makeatletter
+\typeout{TIQIAN-FIXED-DELIMITER-MATHSTRUT-HT=\the\ht\Mathstrutbox@}
+\typeout{TIQIAN-FIXED-DELIMITER-MATHSTRUT-DP=\the\dp\Mathstrutbox@}
+\typeout{TIQIAN-FIXED-DELIMITER-BIG-SIZE=\the\big@size}
+\makeatother
+\traceformula{BIG}{\big(}
+\traceformula{BIG-CAPITAL}{\Big(}
+\traceformula{BIGG}{\bigg(}
+\traceformula{BIGG-CAPITAL}{\Bigg(}
+\traceformula{DIRECTIONAL}{a\bigl(b\bigm|c\bigr)d}
+\traceformula{CONTENT-INDEPENDENT}{\bigl(\frac{a}{b}\bigr)}
+\traceformula{SCRIPT-SCOPE}{A_{\bigl(x\bigr)}}
+\traceformula{SCRIPT-DECLARATION}{{\scriptstyle\Bigl[x\Bigr]}}
+\traceformula{SCRIPTS}{\bigl(_0^1}
+\traceformula{BRACE}{\biggl\{x\biggr\}}
+\traceformula{ANGLE}{\Bigl\langle x\Bigr\rangle}
+\traceformula{FLOOR}{\bigl\lfloor x\bigr\rfloor}
+\traceformula{DOUBLE-BAR}{\Bigl\|x\Bigr\Vert}
+\traceformula{SLASH}{\biggl/x\biggr\backslash}
+\traceformula{ARROW}{\Bigg\uparrow x\Bigg\Downarrow}
+\traceformula{INVISIBLE}{a\big.b}
+\end{document}

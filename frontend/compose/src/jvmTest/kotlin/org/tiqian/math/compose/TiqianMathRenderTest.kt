@@ -293,6 +293,52 @@ class TiqianMathRenderTest {
     }
 
     @Test
+    fun actualRendererReplaysFixedSizeDelimiterVariantsAndAssembliesFromLayoutOwnership() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            var observed: MathLayoutResult? = null
+            val source = "\\bigl(x\\bigr)+\\Bigl[x\\Bigr]+\\biggl\\{x\\biggr\\}+\\Bigg\\uparrow x\\Bigg\\Downarrow"
+            ImageComposeScene(width = 760, height = 260, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    TiqianMath(
+                        source = source,
+                        modifier = Modifier.padding(16.dp),
+                        fontSizePx = 32f,
+                        delimiterFactor = 901,
+                        delimiterShortfallPx = 5f * 96f / 72.27f,
+                        fontFace = face,
+                        color = Color.Black.copy(alpha = 0.5f),
+                        onMathLayout = { observed = it },
+                    )
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                val layout = assertNotNull(observed)
+                assertEquals(8, layout.decisions.count { it.name == "TeXFixedSizeDelimiter" })
+                assertEquals(8, layout.box.constructionPaintGroups.count {
+                    it.kind == org.tiqian.math.core.MathConstructionPaintKind.Delimiter
+                })
+                assertTrue(layout.decisions.filter { it.name == "TeXFixedSizeDelimiter" }.any {
+                    it.details["construction"] == "Assembly"
+                })
+                var maximumAlpha = 0f
+                var darkPixels = 0
+                for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                    val pixel = pixels[x, y]
+                    if (pixel.red < 0.8f) darkPixels++
+                    maximumAlpha = maxOf(maximumAlpha, 1f - pixel.red)
+                }
+                assertTrue(darkPixels > 350, "fixed delimiters were actually rasterized")
+                assertTrue(maximumAlpha in 0.45f..0.53f, "construction overlap is union-painted once")
+                val stats = face.constructionOutlineCacheStats()
+                assertTrue(stats.builds >= layout.box.constructionPaintGroups.size)
+                val hitsBeforeReplay = stats.hits
+                layout.box.constructionPaintGroups.forEach { face.constructionOutline(layout.box, it) }
+                assertTrue(face.constructionOutlineCacheStats().hits >= hitsBeforeReplay + 8)
+            }
+        }
+    }
+
+    @Test
     fun actualRendererReplaysTextOperatorAccentsAndRuleDecorationsFromOneLayoutResult() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             SkiaMathTextRunProvider.fromBytes(

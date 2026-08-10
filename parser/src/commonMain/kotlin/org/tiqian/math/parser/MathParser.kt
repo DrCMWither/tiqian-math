@@ -349,6 +349,9 @@ private class ParserState(
         if (token.text == "left") return parseDelimited(token)
         if (token.text == "right") return parseStrayDelimiterCommand(token, MathDelimiterSide.Right)
         if (token.text == "middle") return parseStrayDelimiterCommand(token, MathDelimiterSide.Middle)
+        fixedDelimiterCommands[token.text]?.let { command ->
+            return parseFixedDelimiter(token, command)
+        }
         explicitMathSpaces[token.text]?.let { mu ->
             return MathExplicitSpace(sourceSlice(token.range), mu, token.range)
         }
@@ -938,6 +941,66 @@ private class ParserState(
         return MathErrorNode(sourceSlice(delimiter.range), delimiter.range)
     }
 
+    private fun parseFixedDelimiter(
+        command: MathToken,
+        fixed: FixedDelimiterCommand,
+    ): MathFixedDelimiter {
+        skipIgnored()
+        val token = peek()
+        if (token.kind in delimiterMissingKinds ||
+            (token.kind == MathTokenKind.ControlWord && token.text in delimiterBoundaryCommands)
+        ) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingDelimiterAfterFixedSizeCommand,
+                "Command \\${command.text} must be followed by a delimiter token",
+                command.range,
+            )
+            val insertion = SourceRange(command.range.endExclusive, command.range.endExclusive)
+            return MathFixedDelimiter(
+                delimiter = syntheticInvisibleDelimiter(
+                    side = fixed.role.asDelimiterSide(),
+                    insertion = insertion,
+                    commandRange = command.range,
+                ),
+                size = fixed.size,
+                role = fixed.role,
+                range = command.range,
+            )
+        }
+
+        advance()
+        val identity = delimiterIdentity(token)
+        val totalRange = command.range.cover(token.range)
+        if (identity == null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.UnsupportedDelimiter,
+                "${sourceSlice(token.range)} is not a supported delimiter after \\${command.text}",
+                token.range,
+            )
+        }
+        return MathFixedDelimiter(
+            delimiter = MathDelimiterSpec(
+                sourceText = sourceSlice(token.range),
+                identity = identity,
+                side = fixed.role.asDelimiterSide(),
+                commandRange = command.range,
+                delimiterRange = token.range,
+                range = totalRange,
+            ),
+            size = fixed.size,
+            role = fixed.role,
+            range = totalRange,
+        )
+    }
+
+    private fun MathFixedDelimiterRole.asDelimiterSide(): MathDelimiterSide = when (this) {
+        MathFixedDelimiterRole.Opening -> MathDelimiterSide.Left
+        MathFixedDelimiterRole.Closing -> MathDelimiterSide.Right
+        MathFixedDelimiterRole.Ordinary,
+        MathFixedDelimiterRole.Relation,
+        -> MathDelimiterSide.Middle
+    }
+
     private fun parseDelimiterSpec(
         command: MathToken,
         side: MathDelimiterSide,
@@ -1473,6 +1536,14 @@ private class ParserState(
             "Updownarrow" to MathDelimiterIdentity.DoubleUpDownArrow,
         )
 
+        val fixedDelimiterCommands = buildMap {
+            MathFixedDelimiterSize.entries.forEach { size ->
+                put(size.commandStem, FixedDelimiterCommand(size, MathFixedDelimiterRole.Ordinary))
+                put("${size.commandStem}l", FixedDelimiterCommand(size, MathFixedDelimiterRole.Opening))
+                put("${size.commandStem}m", FixedDelimiterCommand(size, MathFixedDelimiterRole.Relation))
+                put("${size.commandStem}r", FixedDelimiterCommand(size, MathFixedDelimiterRole.Closing))
+            }
+        }
     }
 
     private data class ParsedTextArgument(
@@ -1489,6 +1560,11 @@ private class ParserState(
     private data class ParsedOptionalMathList(
         val node: MathNode,
         val range: SourceRange,
+    )
+
+    private data class FixedDelimiterCommand(
+        val size: MathFixedDelimiterSize,
+        val role: MathFixedDelimiterRole,
     )
 
     private data class ParsedEnvironmentName(

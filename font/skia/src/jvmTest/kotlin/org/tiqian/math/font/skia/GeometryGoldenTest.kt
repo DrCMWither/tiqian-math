@@ -70,6 +70,12 @@ class GeometryGoldenTest {
                     40f,
                 ),
                 GoldenCase(
+                    "fixed-delimiters",
+                    "\\bigl(x\\bigr)+\\Bigl[x\\Bigr]+\\Bigg\\uparrow x\\Bigg\\Downarrow",
+                    MathMode.Inline,
+                    40f,
+                ),
+                GoldenCase(
                     "extensible-arrow",
                     "X\\xrightarrow[k-1]{p_k}Y",
                     MathMode.Inline,
@@ -285,6 +291,25 @@ class GeometryGoldenTest {
                                         "${delimiter.details["logicalAdvancePx"]}/" +
                                         "${delimiter.details["capability"]}"
                                 },
+                        )
+                    }
+                    "fixed-delimiters" -> {
+                        val delimiters = result.decisions.filter { it.name == "TeXFixedSizeDelimiter" }
+                        val noads = result.decisions.filter { it.name == "AmsmathFixedDelimiterNoad" }
+                        appendLine(
+                            "  evidence=" + delimiters.joinToString(",") { delimiter ->
+                                "${delimiter.details["role"]}:${delimiter.details["sourceSpelling"]}/" +
+                                    "${delimiter.details["fixedSize"]}/${delimiter.details["construction"]}/" +
+                                    "${delimiter.details["glyphIds"]}@${delimiter.details["componentBaselineOriginsPx"]}/" +
+                                    "${delimiter.details["requestedExtentPx"]}->${delimiter.details["targetPx"]}/" +
+                                    "${delimiter.details["logicalAdvancePx"]}/${delimiter.details["capability"]}"
+                            } + " noads=" + noads.joinToString(",") { noad ->
+                                "${noad.details["measurementStyle"]}:" +
+                                    "${noad.details["mathStrutAscentPx"]}+${noad.details["mathStrutDescentPx"]}/" +
+                                    "${noad.details["bigSizePx"]}*${noad.details["amsmathFactor"]}/" +
+                                    "${noad.details["vcenterAscentPx"]}+${noad.details["vcenterDescentPx"]}/" +
+                                    noad.details["targetPolicy"]
+                            },
                         )
                     }
                     "extensible-arrow" -> {

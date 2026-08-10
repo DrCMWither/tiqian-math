@@ -628,6 +628,38 @@ data class MathDelimiterSpec(
     val visible: Boolean get() = identity != null && identity != MathDelimiterIdentity.Invisible
 }
 
+/** The four amsmath fixed delimiter requests, expressed as multiples of `\big@size`. */
+enum class MathFixedDelimiterSize(
+    val commandStem: String,
+    val amsmathFactor: Float,
+) {
+    Big("big", 1f),
+    BigCapital("Big", 1.5f),
+    Bigg("bigg", 2f),
+    BiggCapital("Bigg", 2.5f),
+}
+
+/** The wrapper noad applied by `\big`, `\bigl`, `\bigm`, and `\bigr`. */
+enum class MathFixedDelimiterRole(val atomClass: MathAtomClass) {
+    Ordinary(MathAtomClass.Ordinary),
+    Opening(MathAtomClass.Opening),
+    Relation(MathAtomClass.Relation),
+    Closing(MathAtomClass.Closing),
+}
+
+/**
+ * One amsmath fixed-size delimiter macro invocation. The requested size and noad role are
+ * independent of the delimiter identity and of the surrounding math style.
+ */
+data class MathFixedDelimiter(
+    val delimiter: MathDelimiterSpec,
+    val size: MathFixedDelimiterSize,
+    val role: MathFixedDelimiterRole,
+    override val range: SourceRange = delimiter.range,
+) : MathNode {
+    val atomClass: MathAtomClass get() = role.atomClass
+}
+
 /** Marker inside [MathDelimited.body]; it is sized together with both outer delimiters. */
 data class MathMiddleDelimiter(
     val delimiter: MathDelimiterSpec,
