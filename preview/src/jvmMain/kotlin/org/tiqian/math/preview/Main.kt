@@ -101,6 +101,9 @@ private fun PreviewScreen() {
                 Text("Embedded text, declared operators, accents and rule decorations", fontSize = 13.sp)
                 ExtendedStructureSample("Lete Sans Math", lete, textProvider)
                 ExtendedStructureSample("STIX Two Math", stix, textProvider)
+                Text("Embedded text baseline · Row alignByBaseline · same nominal 24 px", fontSize = 13.sp)
+                EmbeddedTextBaselineSample("Lete Sans Math", lete, textProvider)
+                EmbeddedTextBaselineSample("STIX Two Math", stix, textProvider)
                 Text("Indexed, nested, fraction and stretched radicals", fontSize = 13.sp)
                 RadicalSample("Lete Sans Math", lete)
                 RadicalSample("STIX Two Math", stix)
@@ -128,6 +131,26 @@ private fun PreviewScreen() {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun EmbeddedTextBaselineSample(
+    label: String,
+    face: SkiaMathFontFace,
+    textProvider: MathTextRunProvider,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("$label · ABCxyz —", modifier = Modifier.alignByBaseline(), fontSize = 24.sp)
+        TiqianMath(
+            source = "x+\\text{rank}+x",
+            modifier = Modifier.alignByBaseline().background(Color.White).padding(horizontal = 5.dp),
+            mode = MathMode.Inline,
+            fontFace = face,
+            textRunProvider = textProvider,
+            style = TextStyle(fontSize = 24.sp, lineHeight = 32.sp),
+            softWrap = false,
+        )
     }
 }
 
@@ -562,7 +585,7 @@ private class PreviewHostTextRunProvider(
 @OptIn(ExperimentalComposeUiApi::class)
 private fun renderSnapshot() {
     auditRadicalPreviewTiers()
-    ImageComposeScene(width = 900, height = 5200) { PreviewScreen() }.use { scene ->
+    ImageComposeScene(width = 900, height = 5650) { PreviewScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/math-preview.png")
         output.parentFile.mkdirs()

@@ -77,6 +77,7 @@ class SkiaMathTextRunProvider private constructor(
                     MeasuredMathGlyph(
                         glyphId = ids[index].toUShort(),
                         x = collector.x[index],
+                        baselineOffsetPx = collector.y[index],
                         advance = widths[index],
                         inkBounds = MathRect(bounds.left, bounds.top, bounds.right, bounds.bottom),
                         textCluster = cluster,
@@ -102,8 +103,12 @@ class SkiaMathTextRunProvider private constructor(
                 MeasuredMathRun(
                     glyphs,
                     max(collector.advance, glyphs.maxOfOrNull { it.x + it.advance } ?: 0f),
-                    glyphs.maxOfOrNull { (-it.inkBounds.top).coerceAtLeast(0f) } ?: 0f,
-                    glyphs.maxOfOrNull { it.inkBounds.bottom.coerceAtLeast(0f) } ?: 0f,
+                    glyphs.maxOfOrNull {
+                        -(it.inkBounds.top + it.baselineOffsetPx)
+                    }?.coerceAtLeast(0f) ?: 0f,
+                    glyphs.maxOfOrNull {
+                        it.inkBounds.bottom + it.baselineOffsetPx
+                    }?.coerceAtLeast(0f) ?: 0f,
                     ids.any { it.toInt() == 0 },
                     MathGlyphBoundsSource.Outline,
                 )
@@ -123,6 +128,7 @@ class SkiaMathTextRunProvider private constructor(
         private class Collector : RunHandler {
             val ids = mutableListOf<Short>()
             val x = mutableListOf<Float>()
+            val y = mutableListOf<Float>()
             val clusters = mutableListOf<Int>()
             var advance = 0f
             private var pen = 0f
@@ -135,6 +141,7 @@ class SkiaMathTextRunProvider private constructor(
                 glyphs.forEachIndexed { index, glyph ->
                     ids += glyph
                     x += positions[index]?.x ?: pen
+                    y += positions[index]?.y ?: 0f
                     this.clusters += clusters?.getOrElse(index) { 0 } ?: 0
                 }
                 pen += info.advanceX

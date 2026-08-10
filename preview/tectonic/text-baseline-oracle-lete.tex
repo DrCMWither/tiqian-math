@@ -1,0 +1,18 @@
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\usepackage{amsmath}
+\setmainfont[
+  Path=/Users/duo3/Code/math-compose/font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/,
+]{LeteSansMath-Regular.otf}
+\setmathfont[
+  Path=/Users/duo3/Code/math-compose/font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/,
+]{LeteSansMath-Regular.otf}
+\begin{document}
+\tracingonline=1
+\showboxbreadth=1000
+\showboxdepth=1000
+\fontsize{24bp}{24bp}\selectfont
+\setbox0=\hbox{$x+\text{rank}+x$}\showbox0
+\setbox1=\hbox{$x^{\text{rank}}+x_{\text{rank}}$}\showbox1
+\end{document}

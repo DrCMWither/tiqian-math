@@ -13,8 +13,87 @@ import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathFontFace
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathTextRunProvider
+import org.tiqian.math.layout.MathTextRunProviderResult
 
 class MathTextAccentDecorationTest {
+    @Test
+    fun embeddedTextBaselineMatchesSameFontXeTeXTraceInTextAndScriptStyles() = withFaces { label, face ->
+        SkiaMathTextRunProvider.fromBytes(
+            MathFaceId("tectonic-text-oracle-lete"),
+            LeteSansMath.loadBytes(),
+        ).use { textProvider ->
+            val inline = MathLayoutEngine(face, textRunProvider = textProvider).layout(
+                "x+\\text{rank}+x",
+                MathLayoutOptions(fontSizePx = 32f),
+            )
+            val scripts = MathLayoutEngine(face, textRunProvider = textProvider).layout(
+                "x^{\\text{rank}}+x_{\\text{rank}}",
+                MathLayoutOptions(fontSizePx = 32f),
+            )
+            val expected = if (label == "Lete") {
+                TextBaselineOracle(171.263f, 158.412f, -13.4414f, 8.00086f)
+            } else {
+                TextBaselineOracle(173.375f, 162.092f, -11.5212f, 6.7207f)
+            }
+            assertNear(expected.inlineWidthPx, inline.box.width, "$label inline XeTeX width")
+            assertNear(expected.scriptFormulaWidthPx, scripts.box.width, "$label script XeTeX width")
+            val inlineText = inline.box.glyphs.filter { it.faceId == textProvider.faceId }
+            assertTrue(inlineText.isNotEmpty())
+            assertTrue(inlineText.all { abs(it.baselineY) <= 0.001f }, "$label text hbox stays on the math baseline")
+            val scriptText = scripts.box.glyphs.filter { it.faceId == textProvider.faceId }
+            assertEquals(8, scriptText.size)
+            assertNear(expected.superscriptBaselinePx, scriptText.take(4).map { it.baselineY }.distinct().single(), "$label XeTeX superscript baseline")
+            assertNear(expected.subscriptBaselinePx, scriptText.takeLast(4).map { it.baselineY }.distinct().single(), "$label XeTeX subscript baseline")
+            inline.decisions.single { it.name == "TeXEmbeddedText" }.let { decision ->
+                assertEquals("HostRunBaselineWithPerGlyphShapingOffsets", decision.details["baselinePolicy"])
+                assertEquals("0.0,0.0,0.0,0.0", decision.details["glyphBaselineOffsetsPx"])
+            }
+        }
+    }
+
+    @Test
+    fun embeddedTextReplaysHostPerGlyphVerticalShapingOffsetsWithoutChangingTheMathBaseline() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            SkiaMathTextRunProvider.fromBytes(
+                MathFaceId("host-shaped-offset-fixture"),
+                LeteSansMath.loadBytes(),
+            ).use { delegate ->
+                val offsetPx = 4.25f
+                val provider = MathTextRunProvider { request ->
+                    val ready = assertIs<MathTextRunProviderResult.Ready>(delegate.shapeTextAtom(request))
+                    val glyphs = ready.run.glyphs.map { it.copy(baselineOffsetPx = it.baselineOffsetPx + offsetPx) }
+                    MathTextRunProviderResult.Ready(ready.run.copy(
+                        glyphs = glyphs,
+                        ascent = glyphs.maxOf { -(it.inkBounds.top + it.baselineOffsetPx) }.coerceAtLeast(0f),
+                        descent = glyphs.maxOf { it.inkBounds.bottom + it.baselineOffsetPx }.coerceAtLeast(0f),
+                    ))
+                }
+                val result = MathLayoutEngine(face, textRunProvider = provider).layout(
+                    "\\text{rank}",
+                    MathLayoutOptions(fontSizePx = 32f),
+                )
+                assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+                assertTrue(result.box.glyphs.all { abs(it.baselineY - offsetPx) <= 0.001f })
+                val first = result.box.glyphs.first()
+                val raw = assertIs<MathTextRunProviderResult.Ready>(delegate.shapeTextAtom(
+                    org.tiqian.math.layout.MathTextRunRequest(
+                        text = "rank",
+                        sourceRange = SourceRange(6, 10),
+                        fontSizePx = 32f,
+                        requestedWeight = MathFontWeight.Regular,
+                        origin = MathTextOrigin.TextCommand,
+                    ),
+                )).run.glyphs.first()
+                assertNear(raw.inkBounds.top + offsetPx, first.inkBounds.top, "translated host ink top")
+                assertNear(raw.inkBounds.bottom + offsetPx, first.inkBounds.bottom, "translated host ink bottom")
+                val decision = result.decisions.single { it.name == "TeXEmbeddedText" }
+                assertEquals("4.25,4.25,4.25,4.25", decision.details["glyphBaselineOffsetsPx"])
+                assertTrue(result.debugDump.contains("baselinePolicy=HostRunBaselineWithPerGlyphShapingOffsets"))
+            }
+        }
+    }
+
     @Test
     fun embeddedTextIsOneTextShapingDomainAndPreservesSpaceAdvanceInAllStyles() = withFaces { label, face ->
         SkiaMathTextRunProvider.fromBytes(
@@ -197,6 +276,13 @@ class MathTextAccentDecorationTest {
         delegate: MathFontFace,
         override val mathFont: org.tiqian.math.font.opentype.OpenTypeMathFont,
     ) : MathFontFace by delegate
+
+    private data class TextBaselineOracle(
+        val inlineWidthPx: Float,
+        val scriptFormulaWidthPx: Float,
+        val superscriptBaselinePx: Float,
+        val subscriptBaselinePx: Float,
+    )
 
     private fun assertNear(expected: Float, actual: Float, message: String, tolerance: Float = 0.04f) {
         assertTrue(abs(expected - actual) <= tolerance, "$message expected=$expected actual=$actual")

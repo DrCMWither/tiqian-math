@@ -1574,6 +1574,12 @@ private class MathLayoutPass(
             "hostSelectionReasons" to box.glyphs.mapNotNull { it.hostTextDecision?.selectionReason }.distinct().joinToString(","),
             "hostSubstitutionReasons" to box.glyphs.mapNotNull { it.hostTextDecision?.substitutionReason }.distinct().joinToString(","),
             "hostCapabilityIssues" to box.glyphs.mapNotNull { it.hostTextDecision?.capabilityIssue?.code }.distinct().joinToString(","),
+            "baselinePolicy" to "HostRunBaselineWithPerGlyphShapingOffsets",
+            "glyphBaselineOffsetsPx" to box.glyphs.joinToString(",") { it.baselineY.toString() },
+            "logicalAscentPx" to box.ascent,
+            "logicalDescentPx" to box.descent,
+            "inkTopPx" to box.inkBounds.top,
+            "inkBottomPx" to box.inkBounds.bottom,
         )
         return LaidNode(
             node = node,
