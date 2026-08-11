@@ -1,3 +1,5 @@
+val tiqianSampleRepository = providers.gradleProperty("tiqianSampleRepository").orNull
+
 pluginManagement {
     repositories {
         google()
@@ -11,6 +13,13 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        tiqianSampleRepository?.let { repositoryPath ->
+            maven {
+                name = "tiqianSample"
+                url = uri(repositoryPath)
+                content { includeGroup("org.tiqian") }
+            }
+        }
         exclusiveContent {
             forRepository {
                 ivy("https://nodejs.org/dist/") {
@@ -53,3 +62,9 @@ include(
 )
 
 project(":frontend:math-compose").projectDir = file("frontend/compose")
+
+// README artwork is an explicit cross-repository integration check. Keep it out of the normal
+// build graph; readme-sample/generate.sh publishes one Tiqian checkout to an isolated repository.
+if (tiqianSampleRepository != null) {
+    include(":readme-sample")
+}
