@@ -18,6 +18,7 @@ class AndroidMathRenderer(
         originX: Float,
         baselineFromTop: Float,
         color: Int,
+        drawHostText: (() -> Unit)? = null,
     ) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color
@@ -50,6 +51,7 @@ class AndroidMathRenderer(
             paint.color = resolvedMathPaintArgb(glyph.paintColor, color)
             canvas.drawPath(path, paint)
         }
+        drawHostText?.invoke()
         box.rules.filter {
             it.constructionGroupId == null && it.paintLayer == MathPaintLayer.Foreground &&
                 it.paintRole != MathRulePaintRole.Border && it.lineSegment == null

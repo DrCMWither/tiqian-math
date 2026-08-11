@@ -436,6 +436,8 @@ private fun rememberResolvedFormulaCapability(
     } else {
         null
     }
+    val composeTextRunProvider = rememberComposeMathTextRunProvider(style, density)
+    val resolvedTextRunProvider = textRunProvider ?: composeTextRunProvider
     val resolvedColor = when {
         color != Color.Unspecified -> color
         style.color != Color.Unspecified -> style.color
@@ -448,8 +450,8 @@ private fun rememberResolvedFormulaCapability(
         familyFace.selectWeight(requestedWeight) as? MathComposeFontFace
             ?: error("Selected math weight is not Compose-replayable")
     }
-    val defaultCapabilityEngine = remember(resolvedFace, textRunProvider) {
-        platformFormulaCapabilityEngine(resolvedFace, textRunProvider)
+    val defaultCapabilityEngine = remember(resolvedFace, resolvedTextRunProvider) {
+        platformFormulaCapabilityEngine(resolvedFace, resolvedTextRunProvider)
     }
     val capabilityEngine = capabilityEngineOverride ?: defaultCapabilityEngine
     val capability = remember(
@@ -480,7 +482,7 @@ private fun rememberResolvedFormulaCapability(
     }
     return ResolvedFormulaCapability(
         resolvedFace,
-        textRunProvider,
+        resolvedTextRunProvider,
         capability,
         requestedLineHeightPx,
         resolvedFontSizePx,

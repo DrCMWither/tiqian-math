@@ -56,6 +56,29 @@ class AndroidTiqianMathDeviceTest {
     val compose = createComposeRule()
 
     @Test
+    fun composeTextBackendMeasuresAndReplaysHostTextWithoutAnInjectedProvider() {
+        var result: MathLayoutResult? = null
+        compose.setContent {
+            Box(Modifier.background(Color.White)) {
+                TiqianMath(
+                    source = "x+\\text{中文 العربية}+原文+y^{\\text{上标}}",
+                    style = TextStyle(fontSize = 28.sp, color = Color.Black),
+                    textLocale = "zh-CN",
+                    modifier = Modifier.testTag(DefaultHostTextFormulaTag),
+                    onMathLayout = { result = it },
+                )
+            }
+        }
+        compose.waitForIdle()
+
+        val layout = assertNotNull(result)
+        assertTrue(layout.diagnostics.isEmpty(), layout.diagnostics.toString())
+        assertTrue(layout.box.hostTextRuns.size == 4)
+        assertTrue(layout.box.hostTextRuns.any { it.baselineY < 0f })
+        compose.onNodeWithTag(DefaultHostTextFormulaTag).assertIsDisplayed()
+    }
+
+    @Test
     fun surroundingBoldStyleSelectsNativeBoldAndExplicitHostTextReplayAtApi23Boundary() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         AndroidMathFontFamily.loadBundledLete(context).use { family ->
@@ -231,6 +254,7 @@ class AndroidTiqianMathDeviceTest {
     }
 }
 
+private const val DefaultHostTextFormulaTag = "android-default-host-text-formula"
 private const val FormulaTag = "android-tiqian-math"
 private const val WeightedFormulaTag = "android-weighted-tiqian-math"
 private const val ColorFormulaTag = "android-colored-tiqian-math"

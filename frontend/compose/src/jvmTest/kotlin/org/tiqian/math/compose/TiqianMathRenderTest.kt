@@ -57,6 +57,36 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalComposeUiApi::class)
 class TiqianMathRenderTest {
     @Test
+    fun composeTextBackendReplaysNestedHostTextWithoutAnInjectedProvider() {
+        var observed: MathLayoutResult? = null
+        ImageComposeScene(width = 520, height = 180, density = Density(1f)) {
+            Box(Modifier.fillMaxSize().background(Color.White)) {
+                TiqianMath(
+                    source = "x+\\text{中文 العربية}+原文+\\frac{1}{\\text{段落}}+y^{\\text{上标}}",
+                    style = TextStyle(fontSize = 32.sp),
+                    softWrap = false,
+                    onMathLayout = { observed = it },
+                )
+            }
+        }.use { scene ->
+            val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+            val result = assertNotNull(observed)
+            assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+            assertEquals(5, result.box.hostTextRuns.size)
+            assertTrue(result.box.hostTextRuns.any { it.baselineY > 0f }, "fraction text keeps its shifted baseline")
+            assertTrue(result.box.hostTextRuns.any { it.baselineY < 0f }, "script text keeps its shifted baseline")
+            assertTrue(result.box.glyphs.none { it.hostTextDecision != null })
+            val darkPixels = (0 until pixels.height).sumOf { y ->
+                (0 until pixels.width).count { x ->
+                    val pixel = pixels[x, y]
+                    pixel.red < 0.3f && pixel.green < 0.3f && pixel.blue < 0.3f
+                }
+            }
+            assertTrue(darkPixels > 300, "opaque Compose text and math glyphs must both be visible: $darkPixels")
+        }
+    }
+
+    @Test
     fun cancellationNegationAndBoldTextReplayFromTheSharedLayoutPlan() {
         var observed: MathLayoutResult? = null
         SkiaMathFontFamily.loadBundledLete().use { family ->

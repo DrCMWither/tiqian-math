@@ -81,6 +81,13 @@ internal actual fun DrawScope.drawPlatformMathPlan(
                 positioned.x,
                 positioned.baselineFromTop,
                 color.toArgb(),
+                drawHostText = {
+                    canvas.drawComposeMathTextRuns(
+                        textRunProvider,
+                        listOf(positioned),
+                        color,
+                    )
+                },
             )
         }
     }

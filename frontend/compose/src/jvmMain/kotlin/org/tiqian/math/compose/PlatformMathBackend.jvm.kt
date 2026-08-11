@@ -83,7 +83,13 @@ internal actual fun DrawScope.drawPlatformMathPlan(
     val textCatalog = textRunProvider as? SkiaReplayCatalog
     val skiaFace = combineSkiaReplayCatalogs(mathCatalog, textCatalog)
     drawIntoCanvas { canvas ->
-        drawSkiaMathPlan(canvas.skiaCanvas, skiaFace, plan, color.toArgb())
+        drawSkiaMathPlan(
+            canvas.skiaCanvas,
+            skiaFace,
+            plan,
+            color.toArgb(),
+            afterGlyphs = { canvas.drawComposeMathTextRuns(textRunProvider, plan.boxes, color) },
+        )
     }
 }
 
@@ -92,6 +98,7 @@ private fun drawSkiaMathPlan(
     face: SkiaReplayCatalog,
     plan: RenderPlan,
     color: Int,
+    afterGlyphs: () -> Unit = {},
 ) {
     val paint = Paint().apply { this.color = color }
     val fonts = mutableMapOf<Pair<MathFaceId, Float>, Font>()
@@ -161,6 +168,8 @@ private fun drawSkiaMathPlan(
             }
             glyphIndex = groupEnd
         }
+
+        afterGlyphs()
 
         plan.boxes.forEach { positioned ->
             positioned.box.rules.filter {
