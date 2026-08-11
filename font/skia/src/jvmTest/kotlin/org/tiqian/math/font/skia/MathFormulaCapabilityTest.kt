@@ -8,6 +8,8 @@ import org.tiqian.math.core.MathConstructionPaintKind
 import org.tiqian.math.core.MathConstructionShapeKind
 import org.tiqian.math.core.MathDiagnostic
 import org.tiqian.math.core.MathMode
+import org.tiqian.math.core.MathHostTextRunId
+import org.tiqian.math.core.MathRect
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.LeteSansMath
@@ -22,6 +24,9 @@ import org.tiqian.math.layout.MathFormulaStrictException
 import org.tiqian.math.layout.MathOperatorGlyphRequest
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathHostTextBox
+import org.tiqian.math.layout.MathTextRunProvider
+import org.tiqian.math.layout.MathTextRunProviderResult
 import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MeasuredMathRun
 import org.tiqian.math.layout.ResolvedMathOperator
@@ -36,6 +41,27 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class MathFormulaCapabilityTest {
+    @Test
+    fun opaqueHostTextBoxRequiresTheMatchingReplayCatalog() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            val provider = MathTextRunProvider {
+                MathTextRunProviderResult.ReadyBox(
+                    MathHostTextBox(
+                        runId = MathHostTextRunId("unowned-box"),
+                        width = 20f,
+                        ascent = 12f,
+                        descent = 4f,
+                        inkBounds = MathRect(0f, -12f, 20f, 4f),
+                    ),
+                )
+            }
+            val fallback = assertIs<MathFormulaCapabilityResult.FallbackRequired>(
+                face.formulaCapabilityEngine(provider).evaluate("\\text{host}"),
+            )
+            assertTrue(fallback.diagnostics.any { it.code == DiagnosticCode.NonReplayableHostTextRun })
+        }
+    }
+
     @Test
     fun supportedFormulaPreservesTheLowLevelLayoutResult() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->

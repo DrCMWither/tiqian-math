@@ -535,6 +535,7 @@ private class PreviewHostTextRunProvider(
             )
             when (val shaped = owned.provider.shapeTextAtom(childRequest)) {
                 is MathTextRunProviderResult.CapabilityIssue -> return shaped
+                is MathTextRunProviderResult.ReadyBox -> return shaped
                 is MathTextRunProviderResult.Ready -> {
                     val run = shaped.run
                     run.glyphs.forEach { glyph ->

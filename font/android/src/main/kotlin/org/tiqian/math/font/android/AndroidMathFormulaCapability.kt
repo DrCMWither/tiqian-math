@@ -10,12 +10,14 @@ import org.tiqian.math.layout.MathFormulaCapabilityEngine
 import org.tiqian.math.layout.MathFormulaRenderPreflight
 import org.tiqian.math.layout.MathComposeFontFace
 import org.tiqian.math.layout.MathTextRunProvider
+import org.tiqian.math.layout.MathHostTextBoxReplayCatalog
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.constructionPaintOwnershipDiagnostics
 
 /** Closes every Android glyph and construction Path before the result can enter Compose draw. */
 class AndroidMathFormulaRenderPreflight(
     private val faces: AndroidReplayCatalog,
+    private val hostTextBoxes: MathHostTextBoxReplayCatalog? = null,
 ) : MathFormulaRenderPreflight {
     override fun inspect(layoutResult: MathLayoutResult): List<MathDiagnostic> {
         val boxes = buildList {
@@ -35,6 +37,15 @@ class AndroidMathFormulaRenderPreflight(
     private fun inspectBox(box: MathBox): List<MathDiagnostic> {
         val ownershipDiagnostics = box.constructionPaintOwnershipDiagnostics()
         if (ownershipDiagnostics.isNotEmpty()) return ownershipDiagnostics
+
+        val missingHostText = box.hostTextRuns.firstOrNull {
+            hostTextBoxes?.canReplayHostTextBox(it.runId) != true
+        }
+        if (missingHostText != null) return listOf(MathDiagnostic(
+            DiagnosticCode.NonReplayableHostTextRun,
+            "No host text replay catalog owns host text box ${missingHostText.runId}",
+            missingHostText.sourceRange,
+        ))
 
         val conflictingReplay = box.glyphs.firstOrNull {
             faces.replayFaceOwnership(it.faceId) == MathReplayFaceOwnership.Conflict
@@ -132,7 +143,10 @@ fun MathComposeFontFace.androidFormulaCapabilityEngine(
     val catalog = combineAndroidReplayCatalogs(mathCatalog, textCatalog)
     return MathFormulaCapabilityEngine(
         pipeline = MathLayoutEngine(this, textRunProvider = textRunProvider),
-        renderPreflight = AndroidMathFormulaRenderPreflight(catalog),
+        renderPreflight = AndroidMathFormulaRenderPreflight(
+            catalog,
+            textRunProvider as? MathHostTextBoxReplayCatalog,
+        ),
     )
 }
 

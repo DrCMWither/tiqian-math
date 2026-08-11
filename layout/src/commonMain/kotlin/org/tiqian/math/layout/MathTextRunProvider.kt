@@ -1,6 +1,8 @@
 package org.tiqian.math.layout
 
 import org.tiqian.math.core.MathFontWeight
+import org.tiqian.math.core.MathHostTextRunId
+import org.tiqian.math.core.MathRect
 import org.tiqian.math.core.MathTextOrigin
 import org.tiqian.math.core.SourceRange
 
@@ -14,22 +16,40 @@ data class MathTextRunRequest(
 )
 
 /**
- * Narrow host-owned shaping boundary for one already-classified upright text atom.
- * The provider owns grapheme/face fallback and returns UTF-16 clusters, logical advance and
- * ascent/descent, ink bounds, and placements that its platform replay catalog can draw by stable
- * face id. One result may contain multiple contiguous face runs. TeX style selection and script
- * placement stay in layout.
+ * Advanced host-text boundary for one already-classified upright text atom. A provider may return
+ * either a glyph-level [MathTextRunProviderResult.Ready] result or an opaque replayable
+ * [MathTextRunProviderResult.ReadyBox]. TeX style selection and placement stay in layout.
+ * Compose applications normally use the frontend's automatic text-box provider.
  */
 fun interface MathTextRunProvider {
     fun shapeTextAtom(request: MathTextRunRequest): MathTextRunProviderResult
 }
 
+/** Replay availability for providers that return opaque [MathHostTextBox] results. */
+interface MathHostTextBoxReplayCatalog {
+    fun canReplayHostTextBox(runId: MathHostTextRunId): Boolean
+}
+
 sealed interface MathTextRunProviderResult {
     data class Ready(val run: MeasuredMathRun) : MathTextRunProviderResult
+    data class ReadyBox(val box: MathHostTextBox) : MathTextRunProviderResult
     data class CapabilityIssue(
         val issue: org.tiqian.math.core.MathHostTextCapabilityIssue,
     ) : MathTextRunProviderResult
 }
+
+/**
+ * Host-owned single-line text layout retained by an opaque replay id. The same host backend that
+ * measured this box must replay that id; the math core never needs its internal glyph list.
+ */
+data class MathHostTextBox(
+    val runId: MathHostTextRunId,
+    val width: Float,
+    val ascent: Float,
+    val descent: Float,
+    /** Bounds relative to the run baseline. */
+    val inkBounds: MathRect,
+)
 
 /**
  * Conservative capability gate shared by the explicit standalone adapters. A real host adapter

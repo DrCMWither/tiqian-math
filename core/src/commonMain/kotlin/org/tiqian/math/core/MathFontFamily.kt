@@ -16,6 +16,16 @@ value class MathFaceId(val value: String) {
     }
 }
 
+/** Stable identity for one host-owned text layout replayed as an indivisible TeX box. */
+@JvmInline
+value class MathHostTextRunId(val value: String) {
+    init {
+        require(value.isNotBlank()) { "host text run id must not be blank" }
+    }
+
+    override fun toString(): String = value
+}
+
 enum class MathFontClass { Serif, SansSerif }
 
 enum class MathFontWeight(val cssWeight: Int) {

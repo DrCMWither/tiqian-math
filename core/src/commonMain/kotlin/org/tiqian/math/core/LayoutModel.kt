@@ -63,6 +63,24 @@ data class MathGlyphPlacement(
     val paintColor: MathPaintColor? = null,
 )
 
+/**
+ * One host-shaped text box. Its internal bidi, fallback and glyph ownership stay with the host;
+ * math layout owns only the TeX box geometry and the placement of the replayed result.
+ */
+data class MathHostTextPlacement(
+    val runId: MathHostTextRunId,
+    val x: Float,
+    /** Baseline position relative to the formula baseline; down is positive. */
+    val baselineY: Float,
+    val width: Float,
+    val ascent: Float,
+    val descent: Float,
+    val inkBounds: MathRect,
+    val sourceRange: SourceRange,
+    val requestedWeight: MathFontWeight,
+    val paintColor: MathPaintColor? = null,
+)
+
 data class MathRulePlacement(
     val left: Float,
     val top: Float,
@@ -173,6 +191,7 @@ data class MathBox(
         policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
         evidence = setOf(MathTeXCleanBoxEvidence.FontReportedGlyphBounds),
     ),
+    val hostTextRuns: List<MathHostTextPlacement> = emptyList(),
 ) {
     init {
         require(width >= 0f) { "box width must not be negative" }

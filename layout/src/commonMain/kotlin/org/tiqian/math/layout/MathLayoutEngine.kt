@@ -528,6 +528,7 @@ private class MathLayoutPass(
             rules = content.rules + stroke,
             range = node.range,
             constructionPaintGroups = content.constructionPaintGroups,
+            hostTextRuns = content.hostTextRuns,
         )
         val strokeTop = minOf(geometry.startY, geometry.endY) - cancelLineThicknessPx / 2f
         val strokeBottom = maxOf(geometry.startY, geometry.endY) + cancelLineThicknessPx / 2f
@@ -744,6 +745,7 @@ private class MathLayoutPass(
         val bodyTop = -axisHeight - bodyHeight / 2f
         var rowTop = bodyTop
         val glyphs = mutableListOf<MathGlyphPlacement>()
+        val hostTextRuns = mutableListOf<MathHostTextPlacement>()
         val rules = mutableListOf<MathRulePlacement>()
         val paintGroups = mutableListOf<MathConstructionPaintGroup>()
         val positionedChildren = mutableListOf<Pair<MathBox, Float>>()
@@ -786,6 +788,7 @@ private class MathLayoutPass(
                 }
                 val shifted = cell.translated(columnLeft + offset, baselineY)
                 glyphs += shifted.glyphs
+                hostTextRuns += shifted.hostTextRuns
                 rules += shifted.rules
                 paintGroups += shifted.constructionPaintGroups
                 positionedChildren += cell to baselineY
@@ -802,6 +805,7 @@ private class MathLayoutPass(
             rules,
             node.range,
             paintGroups,
+            hostTextRuns,
         )
         val bodyBox = paintedBody.copy(
             ascent = (-bodyTop).coerceAtLeast(0f),
@@ -1041,6 +1045,7 @@ private class MathLayoutPass(
         val bodyX = (width - body.width) / 2f
         val shiftedBody = body.translated(bodyX, 0f)
         val glyphs = shiftedBody.glyphs.toMutableList()
+        val hostTextRuns = shiftedBody.hostTextRuns.toMutableList()
         val rules = shiftedBody.rules.toMutableList()
         val groups = shiftedBody.constructionPaintGroups.toMutableList()
         val children = mutableListOf(body to 0f)
@@ -1052,6 +1057,7 @@ private class MathLayoutPass(
             checkEquationTagFit(bodyX, body.width, tagX, tag, width, layoutRole)
             val shifted = tagBox.translated(tagX, baselineY)
             glyphs += shifted.glyphs
+            hostTextRuns += shifted.hostTextRuns
             rules += shifted.rules
             groups += shifted.constructionPaintGroups
             children += tagBox to baselineY
@@ -1064,6 +1070,7 @@ private class MathLayoutPass(
             range,
             children,
             groups,
+            hostTextRuns,
         )
     }
 
@@ -1097,6 +1104,7 @@ private class MathLayoutPass(
             range,
             listOf(body to 0f, tagBox to 0f),
             shiftedBody.constructionPaintGroups + shiftedTag.constructionPaintGroups,
+            shiftedBody.hostTextRuns + shiftedTag.hostTextRuns,
         )
     }
 
@@ -1262,12 +1270,14 @@ private class MathLayoutPass(
         val right = rightIdentity?.let { layoutDelimiter(spec(it, MathDelimiterSide.Right), style, target) }
         var x = 0f
         val glyphs = mutableListOf<MathGlyphPlacement>()
+        val hostTextRuns = mutableListOf<MathHostTextPlacement>()
         val rules = mutableListOf<MathRulePlacement>()
         val groups = mutableListOf<MathConstructionPaintGroup>()
         fun append(box: MathBox?) {
             if (box == null) return
             val shifted = box.translated(x, 0f)
             glyphs += shifted.glyphs
+            hostTextRuns += shifted.hostTextRuns
             rules += shifted.rules
             groups += shifted.constructionPaintGroups
             x += box.width
@@ -1275,7 +1285,7 @@ private class MathLayoutPass(
         append(left)
         append(body)
         append(right)
-        val painted = geometryExtents(x, glyphs, rules, node.range, groups)
+        val painted = geometryExtents(x, glyphs, rules, node.range, groups, hostTextRuns)
         val children = listOfNotNull(left, body, right)
         return painted.copy(
             ascent = children.maxOfOrNull { it.ascent } ?: 0f,
@@ -1339,6 +1349,7 @@ private class MathLayoutPass(
             rules = shiftedContent.rules + rules,
             range = node.range,
             constructionPaintGroups = shiftedContent.constructionPaintGroups,
+            hostTextRuns = shiftedContent.hostTextRuns,
         )
         val box = painted.copy(
             ascent = ascent,
@@ -1451,6 +1462,7 @@ private class MathLayoutPass(
             rules = decorations + shiftedContent.rules,
             range = node.range,
             constructionPaintGroups = shiftedContent.constructionPaintGroups,
+            hostTextRuns = shiftedContent.hostTextRuns,
         )
         val extraEvidence = if (decorations.isEmpty()) emptySet() else setOf(MathTeXCleanBoxEvidence.RuleGeometry)
         val box = painted.copy(
@@ -1615,11 +1627,13 @@ private class MathLayoutPass(
         )
         var x = 0f
         val glyphs = mutableListOf<MathGlyphPlacement>()
+        val hostTextRuns = mutableListOf<MathHostTextPlacement>()
         val rules = mutableListOf<MathRulePlacement>()
         val paintGroups = mutableListOf<MathConstructionPaintGroup>()
         fun append(box: MathBox) {
             val shifted = box.translated(x, 0f)
             glyphs += shifted.glyphs
+            hostTextRuns += shifted.hostTextRuns
             rules += shifted.rules
             paintGroups += shifted.constructionPaintGroups
             x += box.width
@@ -1636,6 +1650,7 @@ private class MathLayoutPass(
             rules = rules,
             range = node.range,
             constructionPaintGroups = paintGroups,
+            hostTextRuns = hostTextRuns,
         )
         val box = paintedGeometry.copy(
             ascent = completedAscent,
@@ -2299,7 +2314,11 @@ private class MathLayoutPass(
             "style" to style,
             "fontSizePx" to fontSize(style),
             "shaping" to "TextRunNotMathNoadSequence",
-            "measurementPaintSource" to "HostMathTextRunProvider",
+            "measurementPaintSource" to if (box.hostTextRuns.isEmpty()) {
+                "HostGlyphTextRunProvider"
+            } else {
+                "HostOpaqueTextBoxReplay"
+            },
             "textLocale" to textLocale,
             "faceIds" to box.glyphs.map { it.faceId }.distinct().joinToString(","),
             "requestedWeights" to box.glyphs.map { it.requestedWeight }.distinct().joinToString(","),
@@ -2310,7 +2329,12 @@ private class MathLayoutPass(
             "hostSelectionReasons" to box.glyphs.mapNotNull { it.hostTextDecision?.selectionReason }.distinct().joinToString(","),
             "hostSubstitutionReasons" to box.glyphs.mapNotNull { it.hostTextDecision?.substitutionReason }.distinct().joinToString(","),
             "hostCapabilityIssues" to box.glyphs.mapNotNull { it.hostTextDecision?.capabilityIssue?.code }.distinct().joinToString(","),
-            "baselinePolicy" to "HostRunBaselineWithPerGlyphShapingOffsets",
+            "hostTextBoxIds" to box.hostTextRuns.joinToString(",") { it.runId.value },
+            "baselinePolicy" to if (box.hostTextRuns.isEmpty()) {
+                "HostRunBaselineWithPerGlyphShapingOffsets"
+            } else {
+                "HostTextBoxBaseline"
+            },
             "glyphBaselineOffsetsPx" to box.glyphs.joinToString(",") { it.baselineY.toString() },
             "logicalAscentPx" to box.ascent,
             "logicalDescentPx" to box.descent,
@@ -2338,6 +2362,7 @@ private class MathLayoutPass(
         var hostLogicalAscent = 0f
         var hostLogicalDescent = 0f
         val placements = mutableListOf<MathGlyphPlacement>()
+        val hostTextRuns = mutableListOf<MathHostTextPlacement>()
         segments.forEach { segment ->
             val run = if (origin == null) {
                 // Declared operator names remain an operators-family math run, not host prose.
@@ -2363,6 +2388,28 @@ private class MathLayoutPass(
                     ),
                 )) {
                     is MathTextRunProviderResult.Ready -> result.run
+                    is MathTextRunProviderResult.ReadyBox -> {
+                        validateHostTextBox(segment, result.box)?.let { invalid ->
+                            diagnostics += invalid
+                            return@forEach
+                        }
+                        val box = result.box
+                        hostLogicalAscent = max(hostLogicalAscent, box.ascent)
+                        hostLogicalDescent = max(hostLogicalDescent, box.descent)
+                        hostTextRuns += MathHostTextPlacement(
+                            runId = box.runId,
+                            x = x,
+                            baselineY = 0f,
+                            width = box.width,
+                            ascent = box.ascent,
+                            descent = box.descent,
+                            inkBounds = box.inkBounds.translated(x, 0f),
+                            sourceRange = segment.range,
+                            requestedWeight = segment.requestedWeight ?: glyphSource.requestedWeight,
+                        )
+                        x += box.width
+                        return@forEach
+                    }
                     is MathTextRunProviderResult.CapabilityIssue -> {
                         diagnostics += result.issue.asDiagnostic()
                         return@forEach
@@ -2428,7 +2475,13 @@ private class MathLayoutPass(
             }
             x += run.width
         }
-        val geometry = geometryExtents(x, placements, emptyList(), range)
+        val geometry = geometryExtents(
+            width = x,
+            glyphs = placements,
+            rules = emptyList(),
+            range = range,
+            hostTextRuns = hostTextRuns,
+        )
         return if (origin == null) {
             geometry
         } else {
@@ -2443,6 +2496,28 @@ private class MathLayoutPass(
                 ),
             )
         }
+    }
+
+    private fun validateHostTextBox(
+        segment: MathTextSegment,
+        box: MathHostTextBox,
+    ): MathDiagnostic? {
+        fun invalid(message: String) = MathDiagnostic(
+            DiagnosticCode.InvalidHostTextRunEvidence,
+            message,
+            segment.range,
+        )
+        val bounds = box.inkBounds
+        if (!box.width.isFinite() || box.width < 0f ||
+            !box.ascent.isFinite() || box.ascent < 0f ||
+            !box.descent.isFinite() || box.descent < 0f ||
+            !bounds.left.isFinite() || !bounds.top.isFinite() ||
+            !bounds.right.isFinite() || !bounds.bottom.isFinite() ||
+            bounds.right < bounds.left || bounds.bottom < bounds.top
+        ) {
+            return invalid("Host text box has invalid logical or ink geometry")
+        }
+        return null
     }
 
     private fun validateHostTextRun(
@@ -2726,6 +2801,7 @@ private class MathLayoutPass(
             rules = base.box.rules,
             range = node.range,
             constructionPaintGroups = groups,
+            hostTextRuns = base.box.hostTextRuns,
         )
         val accentTop = positionedAccent.minOfOrNull { it.inkBounds.top } ?: 0f
         val accentBottom = positionedAccent.maxOfOrNull { it.inkBounds.bottom } ?: 0f
@@ -2821,6 +2897,7 @@ private class MathLayoutPass(
             base.box.rules + rule,
             node.range,
             base.box.constructionPaintGroups,
+            base.box.hostTextRuns,
         )
         val logicalAscent = if (isOver) max(base.box.ascent, -rule.top + extra) else base.box.ascent
         val logicalDescent = if (isOver) base.box.descent else max(base.box.descent, rule.bottom + extra)
@@ -3405,6 +3482,7 @@ private class MathLayoutPass(
             box.rules,
             box.range,
             box.constructionPaintGroups,
+            box.hostTextRuns,
         )
         val refined = painted.copy(
             ascent = clean.ascent,
@@ -3723,6 +3801,7 @@ private class MathLayoutPass(
             range = node.range,
             constructionPaintGroups =
                 groupedRadicalInB.constructionPaintGroups + radicandInB.constructionPaintGroups,
+            hostTextRuns = groupedRadicalInB.hostTextRuns + radicandInB.hostTextRuns,
         )
         val unindexedBox = unindexedGeometry.copy(
             ascent = unindexedAscent,
@@ -3793,6 +3872,7 @@ private class MathLayoutPass(
                 add(unindexedBox to 0f)
                 degree?.let { add(it to degreeBaselineY!!) }
             },
+            hostTextRuns = shiftedUnindexed.hostTextRuns + shiftedDegree?.hostTextRuns.orEmpty(),
         )
         val box = inkBox
         val rule = shiftedUnindexed.rules.last()
@@ -4584,6 +4664,8 @@ private class MathLayoutPass(
                 upper?.let { add(it.box to -upperShift!!) }
                 lower?.let { add(it.box to lowerShift!!) }
             },
+            hostTextRuns = shiftedBase.hostTextRuns + shiftedUpper?.hostTextRuns.orEmpty() +
+                shiftedLower?.hostTextRuns.orEmpty(),
         )
         val box = unpaddedBox.copy(
             ascent = unpaddedBox.ascent + upperOuterPadding,
@@ -4695,6 +4777,15 @@ private class MathLayoutPass(
             superscript?.let { addAll(it.box.translated(checkNotNull(superscriptX), -superscriptShift).rules) }
             subscript?.let { addAll(it.box.translated(checkNotNull(subscriptX), subscriptShift).rules) }
         }
+        val hostTextRuns = buildList {
+            addAll(base.box.hostTextRuns)
+            superscript?.let {
+                addAll(it.box.translated(checkNotNull(superscriptX), -superscriptShift).hostTextRuns)
+            }
+            subscript?.let {
+                addAll(it.box.translated(checkNotNull(subscriptX), subscriptShift).hostTextRuns)
+            }
+        }
         val width = horizontalPlacement.logicalWidthPx
         decision(
             "OpenTypeMathScriptPlacement",
@@ -4792,6 +4883,7 @@ private class MathLayoutPass(
                 superscript?.let { add(it.box to -superscriptShift) }
                 subscript?.let { add(it.box to subscriptShift) }
             },
+            hostTextRuns = hostTextRuns,
         )
         return LaidNode(
             node = node,
@@ -5113,6 +5205,7 @@ private class MathLayoutPass(
             rules = shiftedStack.rules,
             range = node.range,
             children = listOf(stack to 0f),
+            hostTextRuns = shiftedStack.hostTextRuns,
         )
     }
 
@@ -5232,6 +5325,7 @@ private class MathLayoutPass(
                 numerator to -numeratorShift,
                 denominator to denominatorShift,
             ),
+            hostTextRuns = shiftedNumerator.hostTextRuns + shiftedDenominator.hostTextRuns,
         )
     }
 
@@ -5457,6 +5551,7 @@ private class MathLayoutPass(
                 fractionNoad to 0f,
                 rightBox to 0f,
             ),
+            hostTextRuns = leftBox.hostTextRuns + shiftedFractionNoad.hostTextRuns + shiftedRight.hostTextRuns,
         )
     }
 
@@ -5543,12 +5638,14 @@ private class MathLayoutPass(
         }
         var x = 0f
         val glyphs = mutableListOf<MathGlyphPlacement>()
+        val hostTextRuns = mutableListOf<MathHostTextPlacement>()
         val rules = mutableListOf<MathRulePlacement>()
         items.forEach { item ->
             x += item.leadingKernPx
             x += item.glueBefore.naturalPx
             val shifted = item.laid.box.translated(x, 0f)
             glyphs += shifted.glyphs
+            hostTextRuns += shifted.hostTextRuns
             rules += shifted.rules
             x += item.laid.box.width + item.trailingItalicCorrectionPx
         }
@@ -5558,6 +5655,7 @@ private class MathLayoutPass(
             rules,
             list.range,
             items.map { it.laid.box to 0f },
+            hostTextRuns = hostTextRuns,
         )
         val atomClass = items.singleOrNull()?.atomClass ?: MathAtomClass.Ordinary
         return HorizontalLayout(
@@ -5833,6 +5931,7 @@ private class MathLayoutPass(
         rules: List<MathRulePlacement>,
         range: SourceRange,
         constructionPaintGroups: List<MathConstructionPaintGroup> = emptyList(),
+        hostTextRuns: List<MathHostTextPlacement> = emptyList(),
     ): MathBox {
         val cleanEvidence = mutableSetOf<MathTeXCleanBoxEvidence>()
         var hasGlyph = false
@@ -5884,6 +5983,26 @@ private class MathLayoutPass(
                 cleanGlyphBottom = maxOf(cleanGlyphBottom, cleanBounds.bottom)
             }
         }
+        var hasHostText = false
+        var hostTextLeft = 0f
+        var hostTextTop = 0f
+        var hostTextRight = 0f
+        var hostTextBottom = 0f
+        hostTextRuns.forEach { placement ->
+            if (!hasHostText) {
+                hostTextLeft = placement.inkBounds.left
+                hostTextTop = placement.inkBounds.top
+                hostTextRight = placement.inkBounds.right
+                hostTextBottom = placement.inkBounds.bottom
+                hasHostText = true
+            } else {
+                hostTextLeft = minOf(hostTextLeft, placement.inkBounds.left)
+                hostTextTop = minOf(hostTextTop, placement.inkBounds.top)
+                hostTextRight = maxOf(hostTextRight, placement.inkBounds.right)
+                hostTextBottom = maxOf(hostTextBottom, placement.inkBounds.bottom)
+            }
+        }
+        if (hostTextRuns.isNotEmpty()) cleanEvidence += MathTeXCleanBoxEvidence.HostTextRunMetrics
         var hasRule = false
         var ruleLeft = 0f
         var ruleTop = 0f
@@ -5904,13 +6023,32 @@ private class MathLayoutPass(
             }
         }
         if (rules.isNotEmpty()) cleanEvidence += MathTeXCleanBoxEvidence.RuleGeometry
-        if (glyphs.isEmpty() && rules.isEmpty()) cleanEvidence += MathTeXCleanBoxEvidence.Empty
-        val left = minOf(if (hasGlyph) glyphLeft else 0f, if (hasRule) ruleLeft else 0f)
-        val top = minOf(if (hasGlyph) glyphTop else 0f, if (hasRule) ruleTop else 0f)
-        val right = maxOf(if (hasGlyph) glyphRight else 0f, if (hasRule) ruleRight else 0f)
-        val bottom = maxOf(if (hasGlyph) glyphBottom else 0f, if (hasRule) ruleBottom else 0f)
-        val cleanTop = minOf(if (hasGlyph) cleanGlyphTop else 0f, if (hasRule) ruleTop else 0f)
-        val cleanBottom = maxOf(if (hasGlyph) cleanGlyphBottom else 0f, if (hasRule) ruleBottom else 0f)
+        if (glyphs.isEmpty() && rules.isEmpty() && hostTextRuns.isEmpty()) {
+            cleanEvidence += MathTeXCleanBoxEvidence.Empty
+        }
+        var left = minOf(if (hasGlyph) glyphLeft else 0f, if (hasRule) ruleLeft else 0f)
+        var top = minOf(if (hasGlyph) glyphTop else 0f, if (hasRule) ruleTop else 0f)
+        var right = maxOf(if (hasGlyph) glyphRight else 0f, if (hasRule) ruleRight else 0f)
+        var bottom = maxOf(if (hasGlyph) glyphBottom else 0f, if (hasRule) ruleBottom else 0f)
+        var cleanTop = minOf(if (hasGlyph) cleanGlyphTop else 0f, if (hasRule) ruleTop else 0f)
+        var cleanBottom = maxOf(if (hasGlyph) cleanGlyphBottom else 0f, if (hasRule) ruleBottom else 0f)
+        if (hasHostText) {
+            if (hasGlyph || hasRule) {
+                left = minOf(left, hostTextLeft)
+                top = minOf(top, hostTextTop)
+                right = maxOf(right, hostTextRight)
+                bottom = maxOf(bottom, hostTextBottom)
+                cleanTop = minOf(cleanTop, hostTextTop)
+                cleanBottom = maxOf(cleanBottom, hostTextBottom)
+            } else {
+                left = hostTextLeft
+                top = hostTextTop
+                right = hostTextRight
+                bottom = hostTextBottom
+                cleanTop = hostTextTop
+                cleanBottom = hostTextBottom
+            }
+        }
         val ascent = (-top).coerceAtLeast(0f)
         val descent = bottom.coerceAtLeast(0f)
         return MathBox(
@@ -5928,6 +6066,7 @@ private class MathLayoutPass(
                 policy = MathTeXCleanBoxPolicy.GlyphOutlineUnion,
                 evidence = cleanEvidence,
             ),
+            hostTextRuns,
         )
     }
 
@@ -5942,10 +6081,11 @@ private class MathLayoutPass(
         range: SourceRange,
         children: List<Pair<MathBox, Float>>,
         constructionPaintGroups: List<MathConstructionPaintGroup> = emptyList(),
+        hostTextRuns: List<MathHostTextPlacement> = emptyList(),
     ): MathBox {
         val paintGroups = (constructionPaintGroups + children.flatMap { it.first.constructionPaintGroups })
             .distinctBy { it.id }
-        val inkBox = geometryExtents(width, glyphs, rules, range, paintGroups)
+        val inkBox = geometryExtents(width, glyphs, rules, range, paintGroups, hostTextRuns)
         val logicalAscent = children.maxOfOrNull { (box, baselineY) ->
             (box.ascent - baselineY).coerceAtLeast(0f)
         } ?: 0f
@@ -6280,6 +6420,14 @@ private fun buildMathLayoutDebugDump(
                 "constructionGroup=${glyph.constructionGroupId}",
         )
     }
+    box.hostTextRuns.forEachIndexed { index, run ->
+        appendLine(
+            "hostText[$index] id=${run.runId} range=${run.sourceRange.start}..${run.sourceRange.endExclusive} " +
+                "x=${run.x} baseline=${run.baselineY} advance=${run.width} " +
+                "logical=${run.ascent}/${run.descent} weight=${run.requestedWeight} " +
+                "ink=${run.inkBounds.left},${run.inkBounds.top},${run.inkBounds.right},${run.inkBounds.bottom}",
+        )
+    }
     box.rules.forEachIndexed { index, rule ->
         val line = rule.lineSegment?.let { " line=$it" }.orEmpty()
         appendLine(
@@ -6351,7 +6499,7 @@ private enum class ScriptBaseKind {
 }
 
 private fun MathBox.singleGlyphOrNull(): MathGlyphPlacement? =
-    if (rules.isEmpty() && glyphs.size == 1) glyphs.single() else null
+    if (rules.isEmpty() && hostTextRuns.isEmpty() && glyphs.size == 1) glyphs.single() else null
 
 private fun MathBox.sideScriptVerticalMetrics(): SideScriptBoxVerticalMetrics =
     SideScriptBoxVerticalMetrics(
@@ -6394,6 +6542,13 @@ private fun MathBox.translated(dx: Float, dy: Float): MathBox = copy(
             },
         )
     },
+    hostTextRuns = hostTextRuns.map { run ->
+        run.copy(
+            x = run.x + dx,
+            baselineY = run.baselineY + dy,
+            inkBounds = run.inkBounds.translated(dx, dy),
+        )
+    },
 )
 
 /** Applies a surrounding color declaration without overwriting a nested declaration. */
@@ -6406,6 +6561,9 @@ private fun MathBox.withInheritedPaintColor(color: MathPaintColor): MathBox = co
     },
     constructionPaintGroups = constructionPaintGroups.map { group ->
         if (group.paintColor == null) group.copy(paintColor = color) else group
+    },
+    hostTextRuns = hostTextRuns.map { run ->
+        if (run.paintColor == null) run.copy(paintColor = color) else run
     },
 )
 
