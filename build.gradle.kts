@@ -92,7 +92,7 @@ fun Project.configureMavenPublishing(module: PublishedModule) {
                 pom {
                     name.set(module.displayName)
                     description.set(module.description)
-                    url.set("https://github.com/tiqian-cjk/math-compose")
+                    url.set("https://github.com/tiqian-cjk/tiqian-math")
                     licenses {
                         license {
                             name.set("Mozilla Public License 2.0")
@@ -108,9 +108,9 @@ fun Project.configureMavenPublishing(module: PublishedModule) {
                         }
                     }
                     scm {
-                        connection.set("scm:git:https://github.com/tiqian-cjk/math-compose.git")
-                        developerConnection.set("scm:git:ssh://git@github.com/tiqian-cjk/math-compose.git")
-                        url.set("https://github.com/tiqian-cjk/math-compose")
+                        connection.set("scm:git:https://github.com/tiqian-cjk/tiqian-math.git")
+                        developerConnection.set("scm:git:ssh://git@github.com/tiqian-cjk/tiqian-math.git")
+                        url.set("https://github.com/tiqian-cjk/tiqian-math")
                     }
                 }
             }
@@ -159,12 +159,12 @@ subprojects {
 
 tasks.register("publishMathComposeToMavenLocal") {
     group = "publishing"
-    description = "Publishes every public math-compose module to Maven Local with one lockstep version."
+    description = "Publishes every public Tiqian Math module to Maven Local with one lockstep version."
     dependsOn(publishedModules.keys.map { "$it:publishToMavenLocal" })
 }
 
 tasks.register("publishMathComposeToCentral") {
     group = "publishing"
-    description = "Uploads every public math-compose module to the Central Portal staging API."
+    description = "Uploads every public Tiqian Math module to the Central Portal staging API."
     dependsOn(publishedModules.keys.map { "$it:publishAllPublicationsToCentralRepository" })
 }

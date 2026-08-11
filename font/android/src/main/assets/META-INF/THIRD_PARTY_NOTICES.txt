@@ -1,4 +1,4 @@
-math-compose Android native backend third-party notices
+Tiqian Math Android native backend third-party notices
 
 FreeType 2.13.2
 Copyright 1996-2023 by David Turner, Robert Wilhelm, and Werner Lemberg.

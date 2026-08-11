@@ -36,7 +36,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "math-compose"
+rootProject.name = "tiqian-math"
 
 include(
     ":core",

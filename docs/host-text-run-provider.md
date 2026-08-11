@@ -1,6 +1,6 @@
 # Host text atoms in math layout
 
-`MathText` and raw CJK text atoms are TeX/math semantics owned by math-compose, but their font
+`MathText` and raw CJK text atoms are TeX/math semantics owned by Tiqian Math, but their font
 fallback and shaping are host responsibilities. `MathTextRunProvider` is the boundary between
 those two decisions.
 
@@ -35,14 +35,14 @@ A future Tiqian adapter only needs to expose:
 
 The current common contract accepts platform output only when every positioned glyph has a stable
 face id and can be replayed independently. A Tiqian shaping result whose `renderFontKey` is null and
-which requires a platform whole-string draw must return `PlatformMultiFaceStringDraw`; math-compose
+which requires a platform whole-string draw must return `PlatformMultiFaceStringDraw`; Tiqian Math
 maps it to `NonReplayableHostTextRun` and formula-level fallback. Adapters must not invent a face id
 or substitute glyph zero. A future platform-neutral string replay token is an explicit extension
 option, but is not part of this alpha contract.
 
 Multiple physical faces are supported when the host can expose stable per-glyph face ownership.
 Their visual order and source clusters are accepted as supplied, so a future Tiqian adapter may
-return fully bidi-resolved placements without math-compose reordering them.
+return fully bidi-resolved placements without Tiqian Math reordering them.
 
 It must not call Tiqian paragraph layout from inside a formula, and it must not decide TeX script
 style, baseline shifts, collision constraints, or formula line breaking. This repository keeps no

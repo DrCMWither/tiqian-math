@@ -12,7 +12,7 @@ private data class BundledFace(
 )
 
 fun main(args: Array<String>) {
-    require(args.size in 1..2) { "Usage: metadata-generator <math-compose repository root> [--verify]" }
+    require(args.size in 1..2) { "Usage: metadata-generator <tiqian-math repository root> [--verify]" }
     val verifyOnly = args.getOrNull(1)?.also { require(it == "--verify") } != null
     val root = Path.of(args.first()).toAbsolutePath().normalize()
     val jvmFonts = root.resolve("font/opentype/src/jvmMain/resources/org/tiqian/math/fonts")
