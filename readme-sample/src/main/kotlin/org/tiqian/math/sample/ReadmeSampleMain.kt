@@ -150,7 +150,13 @@ fun main(args: Array<String>) {
             textShaper = shaper,
             fontMetricsResolver = SkiaFontMetricsResolver(),
         )
-        val first = layoutParagraph(FIRST_PARAGRAPH, mathEngine, paragraphEngine)
+        val boundarySeparatorAdvance = measureBoundarySeparatorAdvance(paragraphEngine)
+        val first = layoutParagraph(
+            FIRST_PARAGRAPH,
+            mathEngine,
+            paragraphEngine,
+            boundarySeparatorAdvance,
+        )
         val display = mathEngine.requireReady(
             DISPLAY_FORMULA,
             MathLayoutOptions(
@@ -159,7 +165,12 @@ fun main(args: Array<String>) {
                 displayWidthPx = MEASURE,
             ),
         )
-        val second = layoutParagraph(SECOND_PARAGRAPH, mathEngine, paragraphEngine)
+        val second = layoutParagraph(
+            SECOND_PARAGRAPH,
+            mathEngine,
+            paragraphEngine,
+            boundarySeparatorAdvance,
+        )
         verifySample(first, display, second)
 
         listOf(File(args[0]) to BLACK_INK, File(args[1]) to WHITE_INK).forEach { (output, color) ->
@@ -185,6 +196,7 @@ private fun layoutParagraph(
     chunks: List<SampleChunk>,
     mathEngine: MathFormulaCapabilityEngine,
     paragraphEngine: ExplainableStubParagraphLayoutEngine,
+    boundarySeparatorAdvance: Float,
 ): ParagraphLayout {
     val source = StringBuilder()
     val formulas = mutableListOf<InlineFormula>()
@@ -231,18 +243,31 @@ private fun layoutParagraph(
         constraints = LayoutConstraints(maxWidth = MEASURE),
         inlineObjects = formulas.flatMap { formula -> formula.pieces.map { it.inlineObject } },
     )
-    val probe = paragraphEngine.layout(baseInput)
     val gapCorrections = formulaBoundaryGaps.map { range ->
-        val measuredAdvance = probe.clusters.single { it.range == range }.advance
-        InlineBoxSpan(range = range, inlineEnd = FORMULA_BOUNDARY_GAP - measuredAdvance)
+        InlineBoxSpan(range = range, inlineEnd = FORMULA_BOUNDARY_GAP - boundarySeparatorAdvance)
     }
     val input = baseInput.copy(inlineBoxes = gapCorrections)
     return ParagraphLayout(paragraphEngine.layout(input), formulas, formulaBoundaryGaps)
 }
 
 private fun Char.needsFormulaBoundaryGap(): Boolean =
-    UnicodeEastAsianSpacing.resolvedForGraphemeCluster(toString(), "zh-Hans") ==
+    isLetterOrDigit() &&
+        UnicodeEastAsianSpacing.resolvedForGraphemeCluster(toString(), "zh-Hans") ==
         EastAsianSpacingValue.Wide
+
+private fun measureBoundarySeparatorAdvance(
+    paragraphEngine: ExplainableStubParagraphLayoutEngine,
+): Float {
+    val result = paragraphEngine.layout(
+        LayoutInput(
+            content = TiqianTextContent("A A"),
+            textStyle = TextStyle(fontSize = BODY_FONT_SIZE),
+            paragraphStyle = ParagraphStyle(lineHeight = BODY_LINE_HEIGHT),
+            constraints = LayoutConstraints(maxWidth = MEASURE),
+        ),
+    )
+    return result.clusters.single { it.range == TextRange(1, 2) }.advance
+}
 
 private fun buildInlineFormula(
     source: String,
@@ -382,6 +407,7 @@ private fun verifySample(first: ParagraphLayout, display: MathLayoutResult, seco
     check(listOf(first, second).all { paragraph ->
         paragraph.result.input.inlineBoxes.size == paragraph.formulaBoundaryGaps.size
     }) { "Every formula-to-Han boundary gap must be normalized to the CLREQ profile width" }
+    listOf(first, second).forEach(::verifyFormulaBoundaryGaps)
     val equationTag = display.decisions.single { it.name == "AmsmathEquationTag" }
     check(abs(equationTag.details.getValue("displayWidthPx").toFloat() - MEASURE) < 0.01f)
     val equationTagGlyphs = display.box.glyphs.filter {
@@ -403,6 +429,23 @@ private fun verifySample(first: ParagraphLayout, display: MathLayoutResult, seco
         ?: error("README sample must contain an inline sum")
     check(inlineSum.result.initialStyle != display.initialStyle)
     check(abs(inlineSum.result.box.ascent - display.box.ascent) > 0.01f)
+}
+
+private fun verifyFormulaBoundaryGaps(paragraph: ParagraphLayout) {
+    val justificationByRange = paragraph.result.debug.justificationDecisions
+        .flatMap { it.allocations }
+        .groupBy { it.clusterRange }
+        .mapValues { (_, allocations) -> allocations.sumOf { it.delta.toDouble() }.toFloat() }
+    paragraph.formulaBoundaryGaps.forEach { range ->
+        val adjustedAdvance = paragraph.result.clusters.single { it.range == range }.advance
+        val naturalAdvance = adjustedAdvance - (justificationByRange[range] ?: 0f)
+        check(
+            abs(naturalAdvance - FORMULA_BOUNDARY_GAP) < 0.02f || abs(naturalAdvance) < 0.02f,
+        ) {
+            "Formula-to-Han gap $range resolved to $naturalAdvance px instead of " +
+                "$FORMULA_BOUNDARY_GAP px (or zero at a line edge)"
+        }
+    }
 }
 
 private fun legalInternalFormulaBreaks(paragraph: ParagraphLayout): List<InternalBreak> {
