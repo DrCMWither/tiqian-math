@@ -178,17 +178,17 @@ class AndroidTiqianMathDeviceTest {
     }
 
     @Test
-    fun normalProductionEntryPresentsItsOwnVisibleDiagnostic() {
+    fun normalProductionEntryPresentsVisibleDiagnosticForUnsupportedSyntax() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         AndroidMathFontFace.loadLete(context).use { face ->
             compose.setContent {
                 TiqianMath(
-                    source = "x+\\text{unsupported}",
+                    source = "x+\\matrix{bad}",
                     fontSizePx = 32f,
                     fontFace = face,
                 )
             }
-            compose.onNodeWithContentDescription("Math formula error: MissingTextProvider")
+            compose.onNodeWithContentDescription("Math formula error: UnsupportedSyntax")
                 .assertIsDisplayed()
         }
     }
