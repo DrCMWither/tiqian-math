@@ -15,7 +15,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.3.20" apply false
 }
 
-group = "org.tiqian.math"
+group = "org.tiqian"
 version = providers.gradleProperty("tiqianVersion")
     .orElse(providers.environmentVariable("TIQIAN_VERSION"))
     .getOrElse("0.1.0-SNAPSHOT")
