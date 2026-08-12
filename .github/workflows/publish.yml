@@ -58,9 +58,18 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
 
-      - name: Verify Tiqian Math release build
+      - name: Verify platform-independent tests and release artifacts
         run: |
-          ./gradlew build publishMathComposeToMavenLocal \
+          ./gradlew \
+            :core:allTests \
+            :parser:allTests \
+            :font:opentype:allTests \
+            :font:stix:allTests \
+            :layout:allTests \
+            :font:metadata-generator:test \
+            :scanner:test \
+            assemble \
+            publishMathComposeToMavenLocal \
             -Dmaven.repo.local="$RUNNER_TEMP/tiqian-math-maven-preflight" \
             --no-daemon
 
