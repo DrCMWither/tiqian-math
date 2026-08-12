@@ -43,7 +43,7 @@ class TiqianMathFontsPluginTest {
         """.trimIndent())
         val fonts = project.resolve("fonts").createDirectories()
         Files.copy(
-            repository.resolve("font/stix/src/jvmMain/resources/org/tiqian/math/fonts/STIXTwoMath-Regular.otf"),
+            stixFont(repository),
             fonts.resolve("STIXTwoMath-Regular.otf"),
         )
 
@@ -118,7 +118,7 @@ class TiqianMathFontsPluginTest {
         Files.writeString(source.resolve("AndroidManifest.xml"), "<manifest />\n")
         val fonts = project.resolve("fonts").createDirectories()
         Files.copy(
-            repository.resolve("font/stix/src/jvmMain/resources/org/tiqian/math/fonts/STIXTwoMath-Regular.otf"),
+            stixFont(repository),
             fonts.resolve("STIXTwoMath-Regular.otf"),
         )
 
@@ -181,7 +181,7 @@ class TiqianMathFontsPluginTest {
         """.trimIndent())
         val fonts = project.resolve("fonts").createDirectories()
         Files.copy(
-            repository.resolve("font/stix/src/jvmMain/resources/org/tiqian/math/fonts/STIXTwoMath-Regular.otf"),
+            stixFont(repository),
             fonts.resolve("STIXTwoMath-Regular.otf"),
         )
 
@@ -211,4 +211,8 @@ class TiqianMathFontsPluginTest {
         .withProjectDir(project.toFile())
         .withArguments(*arguments, "--stacktrace")
         .withPluginClasspath()
+
+    private fun stixFont(repository: Path): Path = repository.resolve(
+        "font/stix/src/commonMain/resources/org/tiqian/math/host-fonts/stix/regular.otf",
+    )
 }
