@@ -12,13 +12,18 @@
 提椠 Math 更侧重于行内公式与正文排版之间的协作。公式可以向正文提供准确的基线、上下边界和断行位置，
 较长的公式能够在运算符后换行，并参与[提椠](https://github.com/tiqian-cjk/tiqian)的两端对齐。`\text{...}` 和中日韩文字沿用 Compose 或提椠的字体选择与文字处理。
 
-默认数学字体为 [Lete Sans Math](https://github.com/abccsss/LeteSansMath)，也可以使用其他数学字体并配置字重与 fallback。当前仍处于早期开发阶段，支持
-Compose Desktop 和 Android 23 及以上版本。
+默认数学字体为 [Lete Sans Math](https://github.com/abccsss/LeteSansMath)，也可以使用其他数学字体并配置字重与 fallback。我们也预设了衬线数学字体
+[STIX Two Math](https://github.com/stipub/stixfonts)，可以作为独立模块按需引入。
+
+当前仍处于早期开发阶段，支持 Compose Desktop 和 Android 23 及以上版本。
 
 ## 使用
 
 ```kotlin
 implementation("org.tiqian:math-compose:<version>")
+
+// 可选：预设的 STIX Two Math 衬线字体
+implementation("org.tiqian:math-font-stix:<version>")
 ```
 
 ```kotlin
@@ -26,6 +31,17 @@ TiqianMath(
     source = "\\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}",
     mode = MathMode.Display,
     style = MaterialTheme.typography.bodyLarge,
+)
+```
+
+选择 STIX Two Math：
+
+```kotlin
+val stix = rememberPackagedMathFontFamily("stix")
+
+TiqianMath(
+    source = source,
+    fontFace = stix,
 )
 ```
 
