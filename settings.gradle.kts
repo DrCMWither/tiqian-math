@@ -51,6 +51,8 @@ include(
     ":core",
     ":parser",
     ":font:opentype",
+    ":font:tooling",
+    ":font:gradle-plugin",
     ":font:metadata-generator",
     ":font:android",
     ":font:stix",

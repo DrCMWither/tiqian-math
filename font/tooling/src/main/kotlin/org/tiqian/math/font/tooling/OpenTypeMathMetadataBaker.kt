@@ -1,5 +1,6 @@
-package org.tiqian.math.font.generator
+package org.tiqian.math.font.tooling
 
+import java.security.MessageDigest
 import org.tiqian.math.font.opentype.MathDeviceAdjustment
 import org.tiqian.math.font.opentype.MathGlyphAssembly
 import org.tiqian.math.font.opentype.MathGlyphConstruction
@@ -7,8 +8,27 @@ import org.tiqian.math.font.opentype.MathGlyphKernInfo
 import org.tiqian.math.font.opentype.MathKernTable
 import org.tiqian.math.font.opentype.OpenTypeMathConstants
 import org.tiqian.math.font.opentype.OpenTypeMathFont
+import org.tiqian.math.font.opentype.OpenTypeMathReader
 
-internal object OpenTypeMathSnapshotEncoder {
+data class BakedOpenTypeMathMetadata(
+    val fontSha256: String,
+    val snapshotBytes: ByteArray,
+)
+
+/** Build-time entry point. Runtime artifacts contain only the matching decoder. */
+object OpenTypeMathMetadataBaker {
+    fun bake(fontBytes: ByteArray): BakedOpenTypeMathMetadata {
+        val digest = MessageDigest.getInstance("SHA-256").digest(fontBytes).toHex()
+        return BakedOpenTypeMathMetadata(
+            fontSha256 = digest,
+            snapshotBytes = OpenTypeMathSnapshotEncoder.encode(
+                digest,
+                OpenTypeMathReader().read(fontBytes),
+            ),
+        )
+    }
+}
+private object OpenTypeMathSnapshotEncoder {
     private const val FormatVersion = 1
     private val Magic = byteArrayOf(0x54, 0x51, 0x4D, 0x41, 0x54, 0x48, 0x00, 0x01)
 
@@ -184,4 +204,8 @@ private class SnapshotWriter {
         while (newSize < required) newSize *= 2
         bytes = bytes.copyOf(newSize)
     }
+}
+
+private fun ByteArray.toHex(): String = joinToString("") { byte ->
+    (byte.toInt() and 0xff).toString(16).padStart(2, '0')
 }

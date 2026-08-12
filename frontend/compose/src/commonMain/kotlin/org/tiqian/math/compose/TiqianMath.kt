@@ -39,6 +39,11 @@ import kotlin.math.ceil
 @Composable
 fun rememberLeteMathFontFace(): MathComposeFontFace = rememberPlatformLeteMathFontFace()
 
+/** Loads one font family prebaked from the host's `tiqianMathFonts` Gradle declaration. */
+@Composable
+fun rememberPackagedMathFontFamily(familyId: String): MathComposeFontFace =
+    rememberPlatformPackagedMathFontFamily(familyId)
+
 /** Loads one host-provided OpenType MATH font and keeps measurement and drawing on the same face. */
 @Composable
 fun rememberMathFontFace(fontBytes: ByteArray): MathComposeFontFace =

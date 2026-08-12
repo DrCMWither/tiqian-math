@@ -17,6 +17,8 @@ import org.jetbrains.skia.shaper.TrivialScriptRunIterator
 import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.OpenTypeMathReader
 import org.tiqian.math.font.opentype.LeteSansMath
+import org.tiqian.math.font.opentype.PrebakedOpenTypeMathFamilySpec
+import org.tiqian.math.font.opentype.VerifiedOpenTypeMathSnapshotLoader
 import org.tiqian.math.layout.*
 import kotlin.math.max
 
@@ -225,6 +227,23 @@ class SkiaMathFontFamily private constructor(
             val mathFaces = spec.faces.associate { face ->
                 face.faceId to SkiaMathFontFace(
                     OpenTypeMathReader().read(face.fontBytes),
+                    face.faceId,
+                    face.fontClass,
+                    face.weight,
+                    face.weight,
+                )
+            }
+            return SkiaMathFontFamily(Owner(spec.fontClass, mathFaces), MathFontWeight.Regular)
+        }
+
+        fun fromPrebakedSpec(spec: PrebakedOpenTypeMathFamilySpec): SkiaMathFontFamily {
+            val mathFaces = spec.faces.associate { face ->
+                face.faceId to SkiaMathFontFace(
+                    VerifiedOpenTypeMathSnapshotLoader.load(
+                        face.fontBytes,
+                        face.snapshotBytes,
+                        face.expectedSha256,
+                    ),
                     face.faceId,
                     face.fontClass,
                     face.weight,

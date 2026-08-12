@@ -29,6 +29,8 @@ TiqianMath(
 )
 ```
 
+需要随应用内置其他数学字体时，可以在宿主构建中[预烘焙字体度量](docs/host-font-baking.md)。
+
 ## 体验与构建
 
 ```shell

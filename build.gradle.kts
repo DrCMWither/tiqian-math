@@ -30,6 +30,9 @@ val publishedModules = mapOf(
     ":core" to PublishedModule("math-core", "Tiqian Math Core", "Core expression and style data types for the Tiqian math engine."),
     ":parser" to PublishedModule("math-parser", "Tiqian Math Parser", "TeX math parser for the Tiqian math engine."),
     ":font:opentype" to PublishedModule("math-font-opentype", "Tiqian Math OpenType", "OpenType MATH table model and reader for the Tiqian math engine."),
+    ":font:stix" to PublishedModule("math-font-stix", "Tiqian Math STIX", "Optional prebaked STIX Two Math font family."),
+    ":font:tooling" to PublishedModule("math-font-tooling", "Tiqian Math Font Tooling", "Build-time OpenType MATH metadata tooling."),
+    ":font:gradle-plugin" to PublishedModule("math-gradle-plugin", "Tiqian Math Gradle Plugin", "Prebakes host-selected OpenType MATH fonts during application builds."),
     ":font:android" to PublishedModule("math-font-android", "Tiqian Math Android Font", "Native Android OpenType MATH font backend."),
     ":font:skia" to PublishedModule("math-font-skia", "Tiqian Math Skia Font", "Skia OpenType MATH font backend."),
     ":layout" to PublishedModule("math-layout", "Tiqian Math Layout", "OpenType MATH layout engine."),
@@ -80,17 +83,20 @@ fun Project.configureMavenPublishing(module: PublishedModule) {
         extensions.configure<PublishingExtension>("publishing") {
             publications.withType(MavenPublication::class.java).configureEach {
                 val publicationName = name
-                val targetSuffix = artifactId.removePrefix(project.name)
-                artifactId = module.artifactId + targetSuffix
-                artifact(
-                    tasks.register<Jar>("${publicationName}PublicationJavadocJar") {
-                        archiveBaseName.set("${project.name}-$publicationName")
-                        archiveClassifier.set("javadoc")
-                        from(rootProject.file("LICENSE")) {
-                            into("META-INF")
-                        }
-                    },
-                )
+                val isPluginMarker = publicationName.endsWith("PluginMarkerMaven")
+                if (!isPluginMarker) {
+                    val targetSuffix = artifactId.removePrefix(project.name)
+                    artifactId = module.artifactId + targetSuffix
+                    artifact(
+                        tasks.register<Jar>("${publicationName}PublicationJavadocJar") {
+                            archiveBaseName.set("${project.name}-$publicationName")
+                            archiveClassifier.set("javadoc")
+                            from(rootProject.file("LICENSE")) {
+                                into("META-INF")
+                            }
+                        },
+                    )
+                }
                 pom {
                     name.set(module.displayName)
                     description.set(module.description)
@@ -148,6 +154,37 @@ subprojects {
             jvm {
                 compilerOptions {
                     jvmTarget.set(JvmTarget.JVM_17)
+                }
+            }
+        }
+    }
+
+    plugins.withId("org.jetbrains.kotlin.jvm") {
+        extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension>("kotlin") {
+            jvmToolchain(25)
+            compilerOptions {
+                jvmTarget.set(JvmTarget.JVM_17)
+            }
+        }
+        extensions.configure<org.gradle.api.plugins.JavaPluginExtension>("java") {
+            sourceCompatibility = JavaVersion.VERSION_17
+            targetCompatibility = JavaVersion.VERSION_17
+            withSourcesJar()
+        }
+    }
+
+    plugins.withId("org.jetbrains.kotlin.jvm") {
+        if (path in publishedModules) {
+            pluginManager.apply("maven-publish")
+            afterEvaluate {
+                if (!pluginManager.hasPlugin("java-gradle-plugin")) {
+                    extensions.configure<PublishingExtension>("publishing") {
+                        if (publications.findByName("maven") == null) {
+                            publications.create<MavenPublication>("maven") {
+                                from(components["java"])
+                            }
+                        }
+                    }
                 }
             }
         }

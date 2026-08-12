@@ -5,6 +5,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.tiqian.math.font.opentype.OpenTypeLineMetrics
+import org.tiqian.math.font.opentype.PackagedOpenTypeMathManifestCodec
+import org.tiqian.math.font.opentype.VerifiedOpenTypeMathSnapshotLoader
 
 class StixTwoMathTest {
     @Test
@@ -72,9 +74,26 @@ class StixTwoMathTest {
         assertTrue(font.extendedShapeGlyphs.isNotEmpty())
         assertTrue(font.mathKernInfo.isNotEmpty())
         assertEquals(
-            "95bc2729e41faf93b0bcae9e96c4dc4da45855067fd0581e621e30734fe8d90b",
+            StixTwoMath.Sha256,
             MessageDigest.getInstance("SHA-256").digest(StixTwoMath.loadBytes()).toHex(),
         )
+    }
+
+    @Test
+    fun bundledSnapshotMatchesBundledFont() {
+        val manifest = checkNotNull(javaClass.getResourceAsStream(StixTwoMath.ManifestResourcePath))
+            .use { PackagedOpenTypeMathManifestCodec.decode(it.readBytes()) }
+        val face = manifest.faces.single()
+        assertEquals(StixTwoMath.FamilyId, manifest.familyId)
+        assertEquals(StixTwoMath.Sha256, face.fontSha256)
+        val snapshot = checkNotNull(javaClass.getResourceAsStream(StixTwoMath.SnapshotResourcePath))
+            .use { it.readBytes() }
+        val font = VerifiedOpenTypeMathSnapshotLoader.load(
+            StixTwoMath.loadBytes(),
+            snapshot,
+            face.fontSha256,
+        )
+        assertEquals(258, font.constants.axisHeight)
     }
 }
 

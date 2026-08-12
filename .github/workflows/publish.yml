@@ -65,6 +65,8 @@ jobs:
             :parser:allTests \
             :font:opentype:allTests \
             :font:stix:allTests \
+            :font:tooling:test \
+            :font:gradle-plugin:test \
             :layout:allTests \
             :font:metadata-generator:test \
             :scanner:test \

@@ -12,6 +12,9 @@ import org.tiqian.math.core.MathFontFamilySpec
 internal expect fun rememberPlatformLeteMathFontFace(): MathComposeFontFace
 
 @Composable
+internal expect fun rememberPlatformPackagedMathFontFamily(familyId: String): MathComposeFontFace
+
+@Composable
 internal expect fun rememberPlatformMathFontFace(fontBytes: ByteArray): MathComposeFontFace
 
 @Composable

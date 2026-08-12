@@ -32,6 +32,26 @@ internal actual fun rememberPlatformLeteMathFontFace(): MathComposeFontFace {
 }
 
 @Composable
+internal actual fun rememberPlatformPackagedMathFontFamily(familyId: String): MathComposeFontFace {
+    val context = LocalContext.current.applicationContext
+    val face = remember(context, familyId) {
+        AndroidMathFontFamily.fromPrebakedSpec(
+            loadPackagedMathFontFamilySpec(familyId) { path ->
+                runCatching { context.assets.open(path) }
+                    .getOrElse {
+                        checkNotNull(context.classLoader.getResourceAsStream(path)) {
+                            "Packaged math font resource is missing at $path; " +
+                                "apply org.tiqian.math.fonts to the host"
+                        }
+                    }.use { it.readBytes() }
+            },
+        )
+    }
+    DisposableEffect(face) { onDispose(face::close) }
+    return face
+}
+
+@Composable
 internal actual fun rememberPlatformMathFontFamily(spec: MathFontFamilySpec): MathComposeFontFace {
     val face = remember(spec) { AndroidMathFontFamily.fromSpec(spec) }
     DisposableEffect(face) { onDispose(face::close) }

@@ -4,7 +4,7 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":font:opentype"))
+    implementation(project(":font:tooling"))
 }
 
 application {

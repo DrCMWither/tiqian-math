@@ -9,6 +9,7 @@ import kotlin.math.max
 import org.tiqian.math.font.opentype.MathVerticalAssemblyPolicy
 import org.tiqian.math.font.opentype.MathVerticalConstructionRequest
 import org.tiqian.math.font.opentype.LeteSansMathPrebakedData
+import org.tiqian.math.font.opentype.PrebakedOpenTypeMathFamilySpec
 
 /** API 23+ HarfBuzz/FreeType family: every placement keeps the native face that produced it. */
 class AndroidMathFontFamily private constructor(
@@ -185,6 +186,20 @@ class AndroidMathFontFamily private constructor(
             val mathFaces = spec.faces.associate { face ->
                 face.faceId to AndroidMathFontFace.fromBytes(
                     face.fontBytes, face.faceId, face.fontClass, face.weight, face.weight,
+                )
+            }
+            return AndroidMathFontFamily(Owner(spec.fontClass, mathFaces), MathFontWeight.Regular)
+        }
+
+        fun fromPrebakedSpec(spec: PrebakedOpenTypeMathFamilySpec): AndroidMathFontFamily {
+            val mathFaces = spec.faces.associate { face ->
+                face.faceId to AndroidMathFontFace.fromPrebakedBytes(
+                    face.fontBytes,
+                    face.snapshotBytes,
+                    face.expectedSha256,
+                    face.faceId,
+                    face.fontClass,
+                    face.weight,
                 )
             }
             return AndroidMathFontFamily(Owner(spec.fontClass, mathFaces), MathFontWeight.Regular)
