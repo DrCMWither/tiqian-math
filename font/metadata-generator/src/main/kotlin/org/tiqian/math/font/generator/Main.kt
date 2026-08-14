@@ -22,8 +22,8 @@ fun main(args: Array<String>) {
     val jvmFonts = root.resolve("font/opentype/src/jvmMain/resources/org/tiqian/math/fonts")
     val androidFonts = root.resolve("font/android/src/main/assets/org/tiqian/math/fonts")
     val faces = listOf(
-        BundledFace(LeteSansMathPrebakedData.RegularFileStem, LeteSansMathPrebakedData.RegularSha256),
-        BundledFace(LeteSansMathPrebakedData.BoldFileStem, LeteSansMathPrebakedData.BoldSha256),
+        BundledFace(LeteSansMathPrebakedData.RegularFileStem, LeteSansMathPrebakedData.RegularSourceSha256),
+        BundledFace(LeteSansMathPrebakedData.BoldFileStem, LeteSansMathPrebakedData.BoldSourceSha256),
     )
 
     faces.forEach { face ->

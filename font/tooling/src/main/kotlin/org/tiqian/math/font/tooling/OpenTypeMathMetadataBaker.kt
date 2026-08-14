@@ -17,26 +17,36 @@ data class BakedOpenTypeMathMetadata(
 
 /** Build-time entry point. Runtime artifacts contain only the matching decoder. */
 object OpenTypeMathMetadataBaker {
-    fun bake(fontBytes: ByteArray): BakedOpenTypeMathMetadata {
-        val digest = MessageDigest.getInstance("SHA-256").digest(fontBytes).toHex()
+    fun bake(fontBytes: ByteArray): BakedOpenTypeMathMetadata = bake(fontBytes, fontBytes)
+
+    /**
+     * Compiles layout tables from [layoutFontBytes] into a snapshot attached to
+     * [runtimeFontBytes]. Both faces must preserve glyph ids, cmap, advances, and outlines.
+     * That invariant is checked by the font compilation step before this baker runs.
+     */
+    fun bake(
+        layoutFontBytes: ByteArray,
+        runtimeFontBytes: ByteArray,
+    ): BakedOpenTypeMathMetadata {
+        val digest = MessageDigest.getInstance("SHA-256").digest(runtimeFontBytes).toHex()
         return BakedOpenTypeMathMetadata(
             fontSha256 = digest,
             snapshotBytes = OpenTypeMathSnapshotEncoder.encode(
                 digest,
-                OpenTypeMathReader().read(fontBytes),
+                OpenTypeMathReader().read(layoutFontBytes),
             ),
         )
     }
 }
 private object OpenTypeMathSnapshotEncoder {
-    private const val FormatVersion = 1
+    private const val FormatVersion = 3
     private val Magic = byteArrayOf(0x54, 0x51, 0x4D, 0x41, 0x54, 0x48, 0x00, 0x01)
 
     fun encode(fontSha256: String, font: OpenTypeMathFont): ByteArray {
         require(fontSha256.length == 64 && fontSha256.all { it in '0'..'9' || it in 'a'..'f' })
         val writer = SnapshotWriter()
         writer.writeBytes(Magic)
-        writer.writeInt(FormatVersion)
+        writer.writeFixedInt(FormatVersion)
         writer.writeString(fontSha256)
         writer.writeInt(font.unitsPerEm)
         writer.writeInt(font.lineMetrics.typoAscender)
@@ -54,6 +64,8 @@ private object OpenTypeMathSnapshotEncoder {
         writer.writeDeviceAdjustmentMap(font.topAccentAttachmentDeviceAdjustments)
         writer.writeGlyphSet(font.unsupportedTopAccentAttachmentVariationAdjustments)
         writer.writeConstructionMap(font.horizontalConstructions)
+        writer.writeScalarGlyphMap(font.characterGlyphs)
+        writer.writeGlyphAlternatesMap(font.scriptStyleAlternates)
         return writer.toByteArray()
     }
 }
@@ -70,7 +82,7 @@ private class SnapshotWriter {
         size += value.size
     }
 
-    fun writeInt(value: Int) {
+    fun writeFixedInt(value: Int) {
         ensure(4)
         bytes[size++] = (value ushr 24).toByte()
         bytes[size++] = (value ushr 16).toByte()
@@ -78,12 +90,9 @@ private class SnapshotWriter {
         bytes[size++] = value.toByte()
     }
 
-    fun writeU16(value: UShort) {
-        ensure(2)
-        val intValue = value.toInt()
-        bytes[size++] = (intValue ushr 8).toByte()
-        bytes[size++] = intValue.toByte()
-    }
+    fun writeInt(value: Int) = writeVarUInt((value shl 1) xor (value shr 31))
+
+    fun writeU16(value: UShort) = writeVarUInt(value.toInt())
 
     fun writeBoolean(value: Boolean) {
         ensure(1)
@@ -92,7 +101,7 @@ private class SnapshotWriter {
 
     fun writeString(value: String) {
         val encoded = value.encodeToByteArray()
-        writeInt(encoded.size)
+        writeCount(encoded.size)
         writeBytes(encoded)
     }
 
@@ -126,34 +135,71 @@ private class SnapshotWriter {
     }
 
     fun writeGlyphIntMap(value: Map<UShort, Int>) {
-        writeInt(value.size)
+        writeCount(value.size)
+        var previousGlyph = 0
         value.entries.sortedBy { it.key.toInt() }.forEach { (glyph, measurement) ->
-            writeU16(glyph)
+            writeVarUInt(glyph.toInt() - previousGlyph)
+            previousGlyph = glyph.toInt()
             writeInt(measurement)
         }
     }
 
     fun writeGlyphSet(value: Set<UShort>) {
-        writeInt(value.size)
-        value.sorted().forEach(::writeU16)
+        writeCount(value.size)
+        var previousGlyph = 0
+        value.sorted().forEach { glyph ->
+            writeVarUInt(glyph.toInt() - previousGlyph)
+            previousGlyph = glyph.toInt()
+        }
+    }
+
+    fun writeScalarGlyphMap(value: Map<Int, UShort>) {
+        writeCount(value.size)
+        var previousScalar = 0
+        var previousGlyph = 0
+        value.entries.sortedBy { it.key }.forEach { (scalar, glyph) ->
+            writeVarUInt(scalar - previousScalar)
+            writeInt(glyph.toInt() - previousGlyph)
+            previousScalar = scalar
+            previousGlyph = glyph.toInt()
+        }
+    }
+
+    fun writeGlyphAlternatesMap(value: Map<UShort, List<UShort>>) {
+        writeCount(value.size)
+        var previousGlyph = 0
+        value.entries.sortedBy { it.key.toInt() }.forEach { (glyph, alternates) ->
+            writeVarUInt(glyph.toInt() - previousGlyph)
+            previousGlyph = glyph.toInt()
+            writeCount(alternates.size)
+            var previousAlternate = glyph.toInt()
+            alternates.forEach { alternate ->
+                writeInt(alternate.toInt() - previousAlternate)
+                previousAlternate = alternate.toInt()
+            }
+        }
     }
 
     fun writeDeviceAdjustmentMap(value: Map<UShort, MathDeviceAdjustment>) {
-        writeInt(value.size)
+        writeCount(value.size)
+        var previousGlyph = 0
         value.entries.sortedBy { it.key.toInt() }.forEach { (glyph, adjustment) ->
-            writeU16(glyph)
+            writeVarUInt(glyph.toInt() - previousGlyph)
+            previousGlyph = glyph.toInt()
             writeInt(adjustment.startPpem)
             writeInt(adjustment.endPpem)
             writeInt(adjustment.deltaFormat)
-            writeInt(adjustment.deltasPx.size)
+            writeCount(adjustment.deltasPx.size)
             adjustment.deltasPx.forEach(::writeInt)
         }
     }
 
     fun writeMathKernMap(value: Map<UShort, MathGlyphKernInfo>) {
-        writeInt(value.size)
+        writeCount(value.size)
+        var previousGlyph = 0
         value.entries.sortedBy { it.key.toInt() }.forEach { (glyph, info) ->
-            writeU16(glyph)
+            writeVarUInt(glyph.toInt() - previousGlyph)
+            previousGlyph = glyph.toInt()
             writeKernTable(info.topRight)
             writeKernTable(info.topLeft)
             writeKernTable(info.bottomRight)
@@ -164,32 +210,38 @@ private class SnapshotWriter {
     private fun writeKernTable(value: MathKernTable?) {
         writeBoolean(value != null)
         if (value == null) return
-        writeInt(value.correctionHeights.size)
+        writeCount(value.correctionHeights.size)
         value.correctionHeights.forEach(::writeInt)
-        writeInt(value.kernValues.size)
+        writeCount(value.kernValues.size)
         value.kernValues.forEach(::writeInt)
     }
 
     fun writeConstructionMap(value: Map<UShort, MathGlyphConstruction>) {
-        writeInt(value.size)
+        writeCount(value.size)
+        var previousGlyph = 0
         value.entries.sortedBy { it.key.toInt() }.forEach { (glyph, construction) ->
-            writeU16(glyph)
-            writeInt(construction.variants.size)
+            writeVarUInt(glyph.toInt() - previousGlyph)
+            previousGlyph = glyph.toInt()
+            writeCount(construction.variants.size)
+            var previousVariantGlyph = glyph.toInt()
             construction.variants.forEach { variant ->
-                writeU16(variant.glyphId)
+                writeInt(variant.glyphId.toInt() - previousVariantGlyph)
+                previousVariantGlyph = variant.glyphId.toInt()
                 writeInt(variant.advanceMeasurement)
             }
             writeBoolean(construction.assembly != null)
-            construction.assembly?.let(::writeAssembly)
+            construction.assembly?.let { writeAssembly(it, glyph) }
         }
     }
 
-    private fun writeAssembly(assembly: MathGlyphAssembly) {
+    private fun writeAssembly(assembly: MathGlyphAssembly, baseGlyph: UShort) {
         writeInt(assembly.minimumConnectorOverlap)
         writeInt(assembly.italicCorrection)
-        writeInt(assembly.parts.size)
+        writeCount(assembly.parts.size)
+        var previousPartGlyph = baseGlyph.toInt()
         assembly.parts.forEach { part ->
-            writeU16(part.glyphId)
+            writeInt(part.glyphId.toInt() - previousPartGlyph)
+            previousPartGlyph = part.glyphId.toInt()
             writeInt(part.startConnectorLength)
             writeInt(part.endConnectorLength)
             writeInt(part.fullAdvance)
@@ -203,6 +255,22 @@ private class SnapshotWriter {
         var newSize = bytes.size
         while (newSize < required) newSize *= 2
         bytes = bytes.copyOf(newSize)
+    }
+
+    private fun writeCount(value: Int) {
+        require(value >= 0)
+        writeVarUInt(value)
+    }
+
+    private fun writeVarUInt(value: Int) {
+        var remaining = value
+        while (remaining and -0x80 != 0) {
+            ensure(1)
+            bytes[size++] = ((remaining and 0x7f) or 0x80).toByte()
+            remaining = remaining ushr 7
+        }
+        ensure(1)
+        bytes[size++] = remaining.toByte()
     }
 }
 

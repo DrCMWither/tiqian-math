@@ -92,6 +92,79 @@ class TiqianMathFormula internal constructor(
     }
 }
 
+/**
+ * Prepares replayable formulas outside composition.
+ *
+ * One instance owns the capability engines derived from one already-loaded math face and host-text
+ * provider. Formula preparation is serialized so an instance may be shared by a UI path and one
+ * background pre-layout worker; the returned [TiqianMathFormula] can be handed to
+ * [TiqianMathFormulaCanvas] without parsing or measuring again.
+ */
+class TiqianMathFormulaPreparer internal constructor(
+    private val familyFace: MathComposeFontFace,
+    private val textRunProvider: MathTextRunProvider?,
+) {
+    private val faces = mutableMapOf<MathFontWeight, MathComposeFontFace>()
+    private val engines = mutableMapOf<MathFontWeight, MathFormulaCapabilityEngine>()
+
+    @Synchronized
+    fun prepare(
+        source: String,
+        mode: MathMode = MathMode.Inline,
+        fontSizePx: Float,
+        fontWeight: Int = MathFontWeight.Regular.cssWeight,
+        requestedLineHeightPx: Float? = null,
+        nullDelimiterSpacePx: Float? = null,
+        scriptSpacePx: Float? = null,
+        delimiterFactor: Int = 901,
+        delimiterShortfallPx: Float? = null,
+        color: Color = Color.Black,
+        textLocale: String? = null,
+        displayWidthPx: Float? = null,
+    ): TiqianMathFormula {
+        require(fontSizePx.isFinite() && fontSizePx > 0f) { "fontSizePx must be finite and positive" }
+        val requestedWeight = MathFontWeight.nearest(fontWeight)
+        val face = faces.getOrPut(requestedWeight) {
+            familyFace.selectWeight(requestedWeight) as? MathComposeFontFace
+                ?: error("Selected math weight is not Compose-replayable")
+        }
+        val engine = engines.getOrPut(requestedWeight) {
+            platformFormulaCapabilityEngine(face, textRunProvider)
+        }
+        val capability = tiqianMathTraceSection("TiqianMath.evaluate") {
+            engine.evaluate(
+                source,
+                MathLayoutOptions(
+                    mode = mode,
+                    fontSizePx = fontSizePx,
+                    nullDelimiterSpacePx = nullDelimiterSpacePx,
+                    scriptSpacePx = scriptSpacePx,
+                    delimiterFactor = delimiterFactor,
+                    delimiterShortfallPx = delimiterShortfallPx,
+                    textLocale = textLocale,
+                    displayWidthPx = displayWidthPx,
+                ),
+            )
+        }
+        return TiqianMathFormula(
+            ResolvedFormulaCapability(
+                face = face,
+                textRunProvider = textRunProvider,
+                capability = capability,
+                requestedLineHeightPx = requestedLineHeightPx,
+                resolvedFontSizePx = fontSizePx,
+                color = color,
+            ),
+        )
+    }
+}
+
+/** Creates a replayable formula preparer from already-loaded resources. */
+fun createTiqianMathFormulaPreparer(
+    fontFace: MathComposeFontFace,
+    textRunProvider: MathTextRunProvider? = null,
+): TiqianMathFormulaPreparer = TiqianMathFormulaPreparer(fontFace, textRunProvider)
+
 data class TiqianMathPresentationMetrics(
     val widthPx: Float,
     val heightPx: Float,
@@ -471,19 +544,21 @@ private fun rememberResolvedFormulaCapability(
         displayWidthPx,
         capabilityEngine,
     ) {
-        capabilityEngine.evaluate(
-            source,
-            MathLayoutOptions(
-                mode = mode,
-                fontSizePx = resolvedFontSizePx,
-                nullDelimiterSpacePx = nullDelimiterSpacePx,
-                scriptSpacePx = scriptSpacePx,
-                delimiterFactor = delimiterFactor,
-                delimiterShortfallPx = delimiterShortfallPx,
-                textLocale = textLocale,
-                displayWidthPx = displayWidthPx,
-            ),
-        )
+        tiqianMathTraceSection("TiqianMath.evaluate") {
+            capabilityEngine.evaluate(
+                source,
+                MathLayoutOptions(
+                    mode = mode,
+                    fontSizePx = resolvedFontSizePx,
+                    nullDelimiterSpacePx = nullDelimiterSpacePx,
+                    scriptSpacePx = scriptSpacePx,
+                    delimiterFactor = delimiterFactor,
+                    delimiterShortfallPx = delimiterShortfallPx,
+                    textLocale = textLocale,
+                    displayWidthPx = displayWidthPx,
+                ),
+            )
+        }
     }
     return ResolvedFormulaCapability(
         resolvedFace,

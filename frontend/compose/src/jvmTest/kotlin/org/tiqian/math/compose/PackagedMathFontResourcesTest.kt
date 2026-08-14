@@ -9,6 +9,7 @@ import org.tiqian.math.font.opentype.PackagedMathFontManifestName
 import org.tiqian.math.font.opentype.PackagedOpenTypeMathFaceManifest
 import org.tiqian.math.font.opentype.PackagedOpenTypeMathFamilyManifest
 import org.tiqian.math.font.opentype.PackagedOpenTypeMathManifestCodec
+import org.tiqian.math.font.opentype.VerifiedOpenTypeMathSnapshotLoader
 import org.tiqian.math.font.opentype.packagedMathFontFamilyResourcePath
 import org.tiqian.math.font.skia.SkiaMathFontFamily
 
@@ -16,6 +17,8 @@ class PackagedMathFontResourcesTest {
     @Test
     fun restoresVerifiedFamilyFromHostResourceBundle() {
         val base = packagedMathFontFamilyResourcePath("sample")
+        val snapshot = checkNotNull(javaClass.getResourceAsStream(LeteSansMath.SnapshotResourcePath))
+            .use { it.readBytes() }
         val manifest = PackagedOpenTypeMathManifestCodec.encode(
             PackagedOpenTypeMathFamilyManifest(
                 familyId = "sample",
@@ -23,14 +26,12 @@ class PackagedMathFontResourcesTest {
                 faces = listOf(PackagedOpenTypeMathFaceManifest(
                     faceId = "regular",
                     weight = MathFontWeight.Regular,
-                    fontSha256 = LeteSansMath.Sha256,
+                    fontSha256 = VerifiedOpenTypeMathSnapshotLoader.prepare(snapshot).fontSha256,
                     fontFileName = "regular.otf",
                     snapshotFileName = "regular.tqmath",
                 )),
             ),
         )
-        val snapshot = checkNotNull(javaClass.getResourceAsStream(LeteSansMath.SnapshotResourcePath))
-            .use { it.readBytes() }
         val resources = mapOf(
             "$base/$PackagedMathFontManifestName" to manifest,
             "$base/regular.otf" to LeteSansMath.loadBytes(),

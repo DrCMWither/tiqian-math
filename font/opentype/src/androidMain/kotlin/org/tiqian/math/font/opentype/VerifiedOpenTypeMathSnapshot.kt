@@ -21,6 +21,9 @@ class VerifiedOpenTypeMathSnapshot internal constructor(
 }
 
 object VerifiedOpenTypeMathSnapshotLoader {
+    fun prepare(snapshotBytes: ByteArray): VerifiedOpenTypeMathSnapshot =
+        VerifiedOpenTypeMathSnapshot(OpenTypeMathSnapshotDecoder.decode(snapshotBytes))
+
     fun prepare(snapshotBytes: ByteArray, expectedSha256: String): VerifiedOpenTypeMathSnapshot {
         requireValidSha256(expectedSha256)
         val decoded = OpenTypeMathSnapshotDecoder.decode(snapshotBytes)
@@ -35,6 +38,11 @@ object VerifiedOpenTypeMathSnapshotLoader {
         snapshotBytes: ByteArray,
         expectedSha256: String,
     ): OpenTypeMathFont = prepare(snapshotBytes, expectedSha256).attach(fontBytes)
+
+    fun load(
+        fontBytes: ByteArray,
+        snapshotBytes: ByteArray,
+    ): OpenTypeMathFont = prepare(snapshotBytes).attach(fontBytes)
 }
 
 private fun requireValidSha256(value: String) {

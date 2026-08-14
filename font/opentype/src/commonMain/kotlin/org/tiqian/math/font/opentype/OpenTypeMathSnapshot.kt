@@ -6,11 +6,11 @@ import org.tiqian.math.core.DiagnosticCode
 object LeteSansMathPrebakedData {
     const val RegularFileStem: String = "LeteSansMath-Regular"
     const val BoldFileStem: String = "LeteSansMath-Bold"
-    const val RegularSha256: String = "ead643895be03f42f6fa201fb1176323f60dd330d4109387bac90bdf980fcf3e"
-    const val BoldSha256: String = "a521f128db0821a9943e4f703103204d8982aeb39c933e12344c43e9d3b0907a"
+    const val RegularSourceSha256: String = "ead643895be03f42f6fa201fb1176323f60dd330d4109387bac90bdf980fcf3e"
+    const val BoldSourceSha256: String = "a521f128db0821a9943e4f703103204d8982aeb39c933e12344c43e9d3b0907a"
 }
 
-internal const val OpenTypeMathSnapshotFormatVersion: Int = 1
+internal const val OpenTypeMathSnapshotFormatVersion: Int = 3
 
 internal data class DecodedOpenTypeMathSnapshot(
     val fontSha256: String,
@@ -23,10 +23,11 @@ internal object OpenTypeMathSnapshotDecoder {
     fun decode(snapshotBytes: ByteArray): DecodedOpenTypeMathSnapshot {
         val reader = SnapshotReader(snapshotBytes)
         if (!reader.readBytes(Magic.size).contentEquals(Magic)) malformed("Invalid Tiqian MATH snapshot magic")
-        val version = reader.readInt()
-        if (version != OpenTypeMathSnapshotFormatVersion) {
+        val version = reader.readFixedInt()
+        if (version !in 2..OpenTypeMathSnapshotFormatVersion) {
             malformed("Unsupported Tiqian MATH snapshot version $version")
         }
+        reader.compact = version >= 3
         val fontSha256 = reader.readString()
         if (fontSha256.length != 64 || fontSha256.any { it !in '0'..'9' && it !in 'a'..'f' }) {
             malformed("Invalid font SHA-256 in Tiqian MATH snapshot")
@@ -47,6 +48,8 @@ internal object OpenTypeMathSnapshotDecoder {
             topAccentAttachmentDeviceAdjustments = reader.readDeviceAdjustmentMap(),
             unsupportedTopAccentAttachmentVariationAdjustments = reader.readGlyphSet(),
             horizontalConstructions = reader.readConstructionMap(),
+            characterGlyphs = reader.readScalarGlyphMap(),
+            scriptStyleAlternates = reader.readGlyphAlternatesMap(),
         )
         reader.requireFullyConsumed()
         return DecodedOpenTypeMathSnapshot(fontSha256, metadata)
@@ -59,13 +62,14 @@ private fun malformed(message: String): Nothing = throw OpenTypeMathException(Di
 
 private class SnapshotReader(private val bytes: ByteArray) {
     private var offset = 0
+    var compact: Boolean = false
 
     fun readBytes(count: Int): ByteArray {
         requireAvailable(count)
         return bytes.copyOfRange(offset, offset + count).also { offset += count }
     }
 
-    fun readInt(): Int {
+    fun readFixedInt(): Int {
         requireAvailable(4)
         return (((bytes[offset++].toInt() and 0xff) shl 24) or
             ((bytes[offset++].toInt() and 0xff) shl 16) or
@@ -73,9 +77,15 @@ private class SnapshotReader(private val bytes: ByteArray) {
             (bytes[offset++].toInt() and 0xff))
     }
 
-    fun readU16(): UShort {
+    fun readInt(): Int = if (compact) readVarInt() else readFixedInt()
+
+    fun readU16(): UShort = if (compact) {
+        val value = readVarUInt()
+        if (value > 0xffff) malformed("Invalid glyph id $value in Tiqian MATH snapshot")
+        value.toUShort()
+    } else {
         requireAvailable(2)
-        return (((bytes[offset++].toInt() and 0xff) shl 8) or
+        (((bytes[offset++].toInt() and 0xff) shl 8) or
             (bytes[offset++].toInt() and 0xff)).toUShort()
     }
 
@@ -106,27 +116,65 @@ private class SnapshotReader(private val bytes: ByteArray) {
     }
 
     fun readGlyphIntMap(): Map<UShort, Int> = buildMap {
-        repeat(readCount("glyph map")) { put(readU16(), readInt()) }
+        var glyph = 0
+        repeat(readCount("glyph map")) {
+            glyph = if (compact) glyph + readVarUInt() else readU16().toInt()
+            put(glyph.toGlyphId(), readInt())
+        }
     }
 
     fun readGlyphSet(): Set<UShort> = buildSet {
-        repeat(readCount("glyph set")) { add(readU16()) }
+        var glyph = 0
+        repeat(readCount("glyph set")) {
+            glyph = if (compact) glyph + readVarUInt() else readU16().toInt()
+            add(glyph.toGlyphId())
+        }
+    }
+
+    fun readScalarGlyphMap(): Map<Int, UShort> = buildMap {
+        var scalar = 0
+        var glyph = 0
+        repeat(readCount("scalar glyph map")) {
+            if (compact) {
+                scalar += readVarUInt()
+                glyph += readVarInt()
+            } else {
+                scalar = readInt()
+                glyph = readU16().toInt()
+            }
+            put(scalar, glyph.toGlyphId())
+        }
+    }
+
+    fun readGlyphAlternatesMap(): Map<UShort, List<UShort>> = buildMap {
+        var glyph = 0
+        repeat(readCount("glyph alternates map")) {
+            glyph = if (compact) glyph + readVarUInt() else readU16().toInt()
+            var alternate = glyph
+            put(glyph.toGlyphId(), List(readCount("glyph alternates")) {
+                alternate = if (compact) alternate + readVarInt() else readU16().toInt()
+                alternate.toGlyphId()
+            })
+        }
     }
 
     fun readDeviceAdjustmentMap(): Map<UShort, MathDeviceAdjustment> = buildMap {
+        var glyph = 0
         repeat(readCount("device adjustment map")) {
-            val glyph = readU16()
+            glyph = if (compact) glyph + readVarUInt() else readU16().toInt()
             val startPpem = readInt()
             val endPpem = readInt()
             val deltaFormat = readInt()
             val deltas = List(readCount("device adjustment values")) { readInt() }
-            put(glyph, MathDeviceAdjustment(startPpem, endPpem, deltaFormat, deltas))
+            put(glyph.toGlyphId(), MathDeviceAdjustment(startPpem, endPpem, deltaFormat, deltas))
         }
     }
 
     fun readMathKernMap(): Map<UShort, MathGlyphKernInfo> = buildMap {
+        var glyph = 0
         repeat(readCount("MathKern map")) {
-            put(readU16(), MathGlyphKernInfo(readKernTable(), readKernTable(), readKernTable(), readKernTable()))
+            glyph = if (compact) glyph + readVarUInt() else readU16().toInt()
+            put(glyph.toGlyphId(), MathGlyphKernInfo(readKernTable(), readKernTable(), readKernTable(), readKernTable()))
         }
     }
 
@@ -139,22 +187,27 @@ private class SnapshotReader(private val bytes: ByteArray) {
     }
 
     fun readConstructionMap(): Map<UShort, MathGlyphConstruction> = buildMap {
+        var glyph = 0
         repeat(readCount("construction map")) {
-            val glyph = readU16()
+            glyph = if (compact) glyph + readVarUInt() else readU16().toInt()
+            var variantGlyph = glyph
             val variants = List(readCount("construction variants")) {
-                MathGlyphVariant(readU16(), readInt())
+                variantGlyph = if (compact) variantGlyph + readVarInt() else readU16().toInt()
+                MathGlyphVariant(variantGlyph.toGlyphId(), readInt())
             }
             val assembly = if (readBoolean()) {
                 val minimumConnectorOverlap = readInt()
                 val italicCorrection = readInt()
+                var partGlyph = glyph
                 val parts = List(readCount("assembly parts")) {
-                    MathGlyphAssemblyPart(readU16(), readInt(), readInt(), readInt(), readBoolean())
+                    partGlyph = if (compact) partGlyph + readVarInt() else readU16().toInt()
+                    MathGlyphAssemblyPart(partGlyph.toGlyphId(), readInt(), readInt(), readInt(), readBoolean())
                 }
                 MathGlyphAssembly(parts, minimumConnectorOverlap, italicCorrection)
             } else {
                 null
             }
-            put(glyph, MathGlyphConstruction(variants, assembly))
+            put(glyph.toGlyphId(), MathGlyphConstruction(variants, assembly))
         }
     }
 
@@ -168,9 +221,31 @@ private class SnapshotReader(private val bytes: ByteArray) {
     }
 
     private fun readCount(context: String): Int {
-        val count = readInt()
+        val count = if (compact) readVarUInt() else readFixedInt()
         if (count < 0 || count > bytes.size) malformed("Invalid $context count $count in Tiqian MATH snapshot")
         return count
+    }
+
+    private fun readVarUInt(): Int {
+        var value = 0
+        var shift = 0
+        while (shift < 35) {
+            val byte = readByte()
+            value = value or ((byte and 0x7f) shl shift)
+            if (byte and 0x80 == 0) return value
+            shift += 7
+        }
+        malformed("Invalid variable-length integer in Tiqian MATH snapshot")
+    }
+
+    private fun readVarInt(): Int {
+        val value = readVarUInt()
+        return (value ushr 1) xor -(value and 1)
+    }
+
+    private fun Int.toGlyphId(): UShort {
+        if (this !in 0..0xffff) malformed("Invalid glyph id $this in Tiqian MATH snapshot")
+        return toUShort()
     }
 
     private fun requireAvailable(count: Int) {

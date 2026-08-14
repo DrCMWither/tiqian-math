@@ -226,6 +226,10 @@ data class OpenTypeMathFont(
     val topAccentAttachmentDeviceAdjustments: Map<UShort, MathDeviceAdjustment> = emptyMap(),
     val unsupportedTopAccentAttachmentVariationAdjustments: Set<UShort> = emptySet(),
     val horizontalConstructions: Map<UShort, MathGlyphConstruction> = emptyMap(),
+    /** Unicode scalar to the font's base cmap glyph. */
+    val characterGlyphs: Map<Int, UShort> = emptyMap(),
+    /** Base glyph to ordered OpenType `ssty` alternates (feature values 1, 2, ...). */
+    val scriptStyleAlternates: Map<UShort, List<UShort>> = emptyMap(),
 ) {
     /** Compatibility view: only truly unsupported VariationIndex records remain here. */
     val unsupportedItalicCorrectionAdjustments: Set<UShort>
@@ -244,6 +248,13 @@ data class OpenTypeMathFont(
     fun scaleDesignUnits(value: Int, fontSizePx: Float): Float = value * fontSizePx / unitsPerEm
 
     fun scaleDesignUnits(value: Float, fontSizePx: Float): Float = value * fontSizePx / unitsPerEm
+
+    fun glyphForScalar(scalar: Int, scriptStyleLevel: Int = 0): UShort? {
+        val base = characterGlyphs[scalar] ?: return null
+        if (scriptStyleLevel <= 0) return base
+        val alternates = scriptStyleAlternates[base].orEmpty()
+        return alternates.getOrNull(scriptStyleLevel - 1) ?: alternates.lastOrNull() ?: base
+    }
 
     fun italicCorrection(glyphId: UShort, fontSizePx: Float): Float {
         if (glyphId in unsupportedItalicCorrectionVariationAdjustments) {
@@ -680,6 +691,8 @@ class OpenTypeMathReader {
         val mathKernInfo = readMathKernInfo(reader, glyphInfoBase)
         val verticalConstructions = readConstructions(reader, variantsBase, vertical = true)
         val horizontalConstructions = readConstructions(reader, variantsBase, vertical = false)
+        val characterGlyphs = readCharacterGlyphs(reader, tables)
+        val scriptStyleAlternates = readScriptStyleAlternates(reader, tables)
         return OpenTypeMathFont(
             bytes = bytes.copyOf(),
             unitsPerEm = unitsPerEm,
@@ -697,7 +710,156 @@ class OpenTypeMathReader {
             unsupportedTopAccentAttachmentVariationAdjustments =
                 topAccentAttachments.unsupportedVariationAdjustments,
             horizontalConstructions = horizontalConstructions,
+            characterGlyphs = characterGlyphs,
+            scriptStyleAlternates = scriptStyleAlternates,
         )
+    }
+
+    private fun readCharacterGlyphs(
+        reader: BigEndianReader,
+        tables: Map<String, TableRecord>,
+    ): Map<Int, UShort> {
+        val cmap = tables["cmap"] ?: malformed("Font has no cmap table")
+        reader.requireRange(cmap.offset, 4)
+        val recordCount = reader.u16(cmap.offset + 2)
+        val candidates = buildList {
+            repeat(recordCount) { index ->
+                val record = cmap.offset + 4 + index * 8
+                reader.requireRange(record, 8)
+                val platform = reader.u16(record)
+                val encoding = reader.u16(record + 2)
+                val subtable = cmap.offset + reader.u32(record + 4)
+                val format = reader.u16(subtable)
+                val priority = when {
+                    format == 12 && platform == 3 && encoding == 10 -> 0
+                    format == 12 && platform == 0 -> 1
+                    format == 4 && platform == 3 && encoding == 1 -> 2
+                    format == 4 && platform == 0 -> 3
+                    else -> 4
+                }
+                if (priority < 4) add(Triple(priority, format, subtable))
+            }
+        }
+        if (candidates.isEmpty()) malformed("Font has no Unicode cmap")
+        return buildMap {
+            candidates
+                .sortedBy { it.first }
+                .distinctBy { it.third }
+                .forEach { (_, format, subtable) ->
+                    val mappings = when (format) {
+                        12 -> readFormat12Cmap(reader, subtable)
+                        4 -> readFormat4Cmap(reader, subtable)
+                        else -> malformed("Unsupported selected cmap format $format")
+                    }
+                    mappings.forEach { (scalar, glyph) ->
+                        if (scalar !in this) put(scalar, glyph)
+                    }
+                }
+        }
+    }
+
+    private fun readFormat12Cmap(reader: BigEndianReader, base: Int): Map<Int, UShort> = buildMap {
+        reader.requireRange(base, 16)
+        val groupCount = reader.u32(base + 12)
+        repeat(groupCount) { index ->
+            val group = base + 16 + index * 12
+            val start = reader.u32(group)
+            val end = reader.u32(group + 4)
+            val startGlyph = reader.u32(group + 8)
+            if (end < start) malformed("cmap format 12 group is reversed")
+            for (scalar in start..end) {
+                if (scalar in MathGlyphReplayScalarBase..0xFFFFD) continue
+                val glyph = startGlyph + scalar - start
+                if (glyph in 1..0xFFFF) put(scalar, glyph.toUShort())
+            }
+        }
+    }
+
+    private fun readFormat4Cmap(reader: BigEndianReader, base: Int): Map<Int, UShort> = buildMap {
+        reader.requireRange(base, 14)
+        val length = reader.u16(base + 2)
+        reader.requireRange(base, length)
+        val segmentCount = reader.u16(base + 6) / 2
+        val endCodes = base + 14
+        val startCodes = endCodes + segmentCount * 2 + 2
+        val deltas = startCodes + segmentCount * 2
+        val rangeOffsets = deltas + segmentCount * 2
+        repeat(segmentCount) { index ->
+            val start = reader.u16(startCodes + index * 2)
+            val end = reader.u16(endCodes + index * 2)
+            val delta = reader.s16(deltas + index * 2)
+            val rangeOffsetAddress = rangeOffsets + index * 2
+            val rangeOffset = reader.u16(rangeOffsetAddress)
+            if (end < start) malformed("cmap format 4 segment is reversed")
+            for (scalar in start..end) {
+                if (scalar == 0xFFFF) continue
+                val glyph = if (rangeOffset == 0) {
+                    (scalar + delta) and 0xFFFF
+                } else {
+                    val address = rangeOffsetAddress + rangeOffset + (scalar - start) * 2
+                    val raw = reader.u16(address)
+                    if (raw == 0) 0 else (raw + delta) and 0xFFFF
+                }
+                if (glyph != 0) put(scalar, glyph.toUShort())
+            }
+        }
+    }
+
+    private fun readScriptStyleAlternates(
+        reader: BigEndianReader,
+        tables: Map<String, TableRecord>,
+    ): Map<UShort, List<UShort>> {
+        val gsub = tables["GSUB"] ?: return emptyMap()
+        reader.requireRange(gsub.offset, 10)
+        val featureList = gsub.offset + reader.u16(gsub.offset + 6)
+        val lookupList = gsub.offset + reader.u16(gsub.offset + 8)
+        val featureCount = reader.u16(featureList)
+        val lookupIndices = buildList {
+            repeat(featureCount) { index ->
+                val record = featureList + 2 + index * 6
+                if (reader.tag(record) != "ssty") return@repeat
+                val feature = featureList + reader.u16(record + 4)
+                val count = reader.u16(feature + 2)
+                repeat(count) { add(reader.u16(feature + 4 + it * 2)) }
+            }
+        }.distinct()
+        if (lookupIndices.isEmpty()) return emptyMap()
+        val lookupCount = reader.u16(lookupList)
+        return buildMap {
+            lookupIndices.forEach { lookupIndex ->
+                if (lookupIndex >= lookupCount) malformed("GSUB ssty lookup index is out of range")
+                val lookup = lookupList + reader.u16(lookupList + 2 + lookupIndex * 2)
+                val type = reader.u16(lookup)
+                val subtableCount = reader.u16(lookup + 4)
+                repeat(subtableCount) { subtableIndex ->
+                    val subtable = lookup + reader.u16(lookup + 6 + subtableIndex * 2)
+                    when (type) {
+                        3 -> putAll(readAlternateSubstitution(reader, subtable))
+                        7 -> {
+                            if (reader.u16(subtable) != 1) malformed("Unsupported GSUB extension format")
+                            if (reader.u16(subtable + 2) == 3) {
+                                putAll(readAlternateSubstitution(reader, subtable + reader.u32(subtable + 4)))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun readAlternateSubstitution(
+        reader: BigEndianReader,
+        base: Int,
+    ): Map<UShort, List<UShort>> {
+        if (reader.u16(base) != 1) malformed("Unsupported GSUB AlternateSubst format")
+        val coverage = readCoverage(reader, base + reader.u16(base + 2))
+        val setCount = reader.u16(base + 4)
+        if (setCount != coverage.size) malformed("GSUB AlternateSubst coverage size mismatch")
+        return coverage.indices.associate { index ->
+            val set = base + reader.u16(base + 6 + index * 2)
+            val count = reader.u16(set)
+            coverage[index] to List(count) { reader.u16(set + 2 + it * 2).toUShort() }
+        }
     }
 
     private fun readLineMetrics(

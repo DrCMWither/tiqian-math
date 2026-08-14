@@ -5,14 +5,11 @@ object LeteSansMath {
     const val BoldResourcePath: String = "/org/tiqian/math/fonts/${LeteSansMathPrebakedData.BoldFileStem}.otf"
     const val SnapshotResourcePath: String = "/org/tiqian/math/fonts/${LeteSansMathPrebakedData.RegularFileStem}.tqmath"
     const val BoldSnapshotResourcePath: String = "/org/tiqian/math/fonts/${LeteSansMathPrebakedData.BoldFileStem}.tqmath"
-    const val Sha256: String = LeteSansMathPrebakedData.RegularSha256
-    const val BoldSha256: String = LeteSansMathPrebakedData.BoldSha256
-
     private val regularSnapshot: VerifiedOpenTypeMathSnapshot by lazy {
-        VerifiedOpenTypeMathSnapshotLoader.prepare(readResource(SnapshotResourcePath), Sha256)
+        VerifiedOpenTypeMathSnapshotLoader.prepare(readResource(SnapshotResourcePath))
     }
     private val boldSnapshot: VerifiedOpenTypeMathSnapshot by lazy {
-        VerifiedOpenTypeMathSnapshotLoader.prepare(readResource(BoldSnapshotResourcePath), BoldSha256)
+        VerifiedOpenTypeMathSnapshotLoader.prepare(readResource(BoldSnapshotResourcePath))
     }
 
     fun loadBytes(): ByteArray = readResource(ResourcePath)

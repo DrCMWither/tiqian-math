@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     kotlin("multiplatform")
     id("com.android.kotlin.multiplatform.library")
@@ -55,4 +57,13 @@ kotlin {
 // when the module has no Compose resources. Device tests use only Android assets from font:android.
 tasks.matching { it.name == "copyAndroidDeviceTestComposeResourcesToAndroidAssets" }.configureEach {
     enabled = false
+}
+
+tasks.named<Test>("jvmTest") {
+    systemProperty(
+        "tiqianLeteSourceRegularFont",
+        rootProject.layout.projectDirectory.file(
+            "font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Regular.otf",
+        ).asFile.absolutePath,
+    )
 }

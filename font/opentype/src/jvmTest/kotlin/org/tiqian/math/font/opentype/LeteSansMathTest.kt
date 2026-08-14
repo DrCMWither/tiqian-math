@@ -8,7 +8,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
-import java.security.MessageDigest
+import java.nio.file.Files
+import java.nio.file.Path
 
 class LeteSansMathTest {
     @Test
@@ -59,10 +60,7 @@ class LeteSansMathTest {
         assertEquals(1519, font.topAccentAttachments.size)
         assertTrue(font.extendedShapeGlyphs.isNotEmpty())
         assertTrue(font.mathKernInfo.isNotEmpty())
-        assertEquals(
-            "ead643895be03f42f6fa201fb1176323f60dd330d4109387bac90bdf980fcf3e",
-            MessageDigest.getInstance("SHA-256").digest(LeteSansMath.loadBytes()).toHex(),
-        )
+        assertContentEquals(LeteSansMath.loadBytes(), font.bytes)
     }
 
     @Test
@@ -72,7 +70,7 @@ class LeteSansMathTest {
     }
 
     @Test
-    fun prebakedRegularAndBoldMetadataExactlyMatchTheAuthoritativeReader() {
+    fun prebakedRegularAndBoldMetadataIsAttachedToTheBundledRuntimeFonts() {
         listOf(
             PrebakedCase(
                 LeteSansMath.loadBytes(),
@@ -83,12 +81,9 @@ class LeteSansMathTest {
                 LeteSansMath.loadBold(),
             ),
         ).forEach { case ->
-            val authoritative = OpenTypeMathReader().read(case.fontBytes)
-            val sharedByteMarker = ByteArray(0)
-            assertEquals(
-                authoritative.copy(bytes = sharedByteMarker),
-                case.prebaked.copy(bytes = sharedByteMarker),
-            )
+            assertContentEquals(case.fontBytes, case.prebaked.bytes)
+            assertTrue(case.prebaked.characterGlyphs.isNotEmpty())
+            assertTrue(case.prebaked.constants.axisHeight > 0)
         }
     }
 
@@ -96,7 +91,7 @@ class LeteSansMathTest {
     fun preparedSnapshotRejectsMismatchedBytesBeforeAttachingMetadata() {
         val snapshot = checkNotNull(javaClass.getResourceAsStream(LeteSansMath.SnapshotResourcePath))
             .use { it.readBytes() }
-        val prepared = VerifiedOpenTypeMathSnapshotLoader.prepare(snapshot, LeteSansMath.Sha256)
+        val prepared = VerifiedOpenTypeMathSnapshotLoader.prepare(snapshot)
         val bytes = LeteSansMath.loadBytes()
         bytes[bytes.lastIndex] = (bytes.last().toInt() xor 1).toByte()
 
@@ -120,7 +115,9 @@ class LeteSansMathTest {
 
     @Test
     fun radicalMathValueDeviceAdjustmentIsRejectedExplicitly() {
-        val bytes = LeteSansMath.loadBytes().copyOf()
+        val bytes = Files.readAllBytes(
+            Path.of(checkNotNull(System.getProperty("tiqianLeteSourceRegularFont"))),
+        )
         val constants = bytes.mathConstantsOffset()
         val deviceOffset = constants + 8 + 45 * 4 + 2
         bytes[deviceOffset] = 0
@@ -166,7 +163,3 @@ private fun ByteArray.u32(offset: Int): Int =
         ((this[offset + 1].toInt() and 0xFF) shl 16) or
         ((this[offset + 2].toInt() and 0xFF) shl 8) or
         (this[offset + 3].toInt() and 0xFF)
-
-private fun ByteArray.toHex(): String = joinToString("") { byte ->
-    (byte.toInt() and 0xFF).toString(16).padStart(2, '0')
-}

@@ -180,8 +180,6 @@ class AndroidMathFontFamily private constructor(
         const val LeteBoldAsset = "org/tiqian/math/fonts/${LeteSansMathPrebakedData.BoldFileStem}.otf"
         const val LeteRegularSnapshotAsset = "org/tiqian/math/fonts/${LeteSansMathPrebakedData.RegularFileStem}.tqmath"
         const val LeteBoldSnapshotAsset = "org/tiqian/math/fonts/${LeteSansMathPrebakedData.BoldFileStem}.tqmath"
-        const val LeteRegularSha256 = LeteSansMathPrebakedData.RegularSha256
-        const val LeteBoldSha256 = LeteSansMathPrebakedData.BoldSha256
         fun fromSpec(spec: MathFontFamilySpec): AndroidMathFontFamily {
             val mathFaces = spec.faces.associate { face ->
                 face.faceId to AndroidMathFontFace.fromBytes(
@@ -196,10 +194,10 @@ class AndroidMathFontFamily private constructor(
                 face.faceId to AndroidMathFontFace.fromPrebakedBytes(
                     face.fontBytes,
                     face.snapshotBytes,
-                    face.expectedSha256,
                     face.faceId,
                     face.fontClass,
                     face.weight,
+                    face.expectedSha256,
                 )
             }
             return AndroidMathFontFamily(Owner(spec.fontClass, mathFaces), MathFontWeight.Regular)
@@ -209,11 +207,11 @@ class AndroidMathFontFamily private constructor(
             val assets = context.applicationContext.assets
             fun bytes(path: String) = assets.open(path).use { it.readBytes() }
             val regular = AndroidMathFontFace.fromPrebakedBytes(
-                bytes(LeteRegularAsset), bytes(LeteRegularSnapshotAsset), LeteRegularSha256,
+                bytes(LeteRegularAsset), bytes(LeteRegularSnapshotAsset),
                 MathFaceId("lete-sans-math-regular"), MathFontClass.SansSerif, MathFontWeight.Regular,
             )
             val bold = AndroidMathFontFace.fromPrebakedBytes(
-                bytes(LeteBoldAsset), bytes(LeteBoldSnapshotAsset), LeteBoldSha256,
+                bytes(LeteBoldAsset), bytes(LeteBoldSnapshotAsset),
                 MathFaceId("lete-sans-math-bold"), MathFontClass.SansSerif, MathFontWeight.Bold,
             )
             val faces = listOf(regular, bold).associateBy { it.faceId }

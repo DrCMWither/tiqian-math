@@ -89,26 +89,28 @@ internal actual fun DrawScope.drawPlatformMathPlan(
     plan: RenderPlan,
     color: Color,
 ) {
-    val mathCatalog = face as? AndroidReplayCatalog ?: error("Android Compose requires a replayable face catalog")
-    val textCatalog = textRunProvider as? AndroidReplayCatalog
-    val androidFaces = combineAndroidReplayCatalogs(mathCatalog, textCatalog)
-    val renderer = AndroidMathRenderer(androidFaces)
-    drawIntoCanvas { canvas ->
-        plan.boxes.forEach { positioned ->
-            renderer.drawBox(
-                canvas.nativeCanvas,
-                positioned.box,
-                positioned.x,
-                positioned.baselineFromTop,
-                color.toArgb(),
-                drawHostText = {
-                    canvas.drawComposeMathTextRuns(
-                        textRunProvider,
-                        listOf(positioned),
-                        color,
-                    )
-                },
-            )
+    tiqianMathTraceSection("TiqianMath.paint") {
+        val mathCatalog = face as? AndroidReplayCatalog ?: error("Android Compose requires a replayable face catalog")
+        val textCatalog = textRunProvider as? AndroidReplayCatalog
+        val androidFaces = combineAndroidReplayCatalogs(mathCatalog, textCatalog)
+        val renderer = AndroidMathRenderer(androidFaces)
+        drawIntoCanvas { canvas ->
+            plan.boxes.forEach { positioned ->
+                renderer.drawBox(
+                    canvas.nativeCanvas,
+                    positioned.box,
+                    positioned.x,
+                    positioned.baselineFromTop,
+                    color.toArgb(),
+                    drawHostText = {
+                        canvas.drawComposeMathTextRuns(
+                            textRunProvider,
+                            listOf(positioned),
+                            color,
+                        )
+                    },
+                )
+            }
         }
     }
 }

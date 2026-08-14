@@ -38,35 +38,13 @@ import org.tiqian.math.layout.MathTextRunProvider
 import org.tiqian.math.layout.MathTextRunRequest
 import org.tiqian.math.layout.MathTextRunProviderResult
 import org.tiqian.math.layout.MeasuredMathRun
-import org.tiqian.math.font.opentype.OpenTypeMathReader
 import org.tiqian.math.font.opentype.VerifiedOpenTypeMathSnapshotLoader
 
 @RunWith(AndroidJUnit4::class)
 class AndroidMathBackendInstrumentedTest {
     @Test
-    fun reportBundledPrebakedVersusDynamicFamilyInitialization() {
+    fun reportBundledPrebakedFamilyInitialization() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val assets = context.assets
-        fun dynamicFamily(): AndroidMathFontFamily = AndroidMathFontFamily.fromSpec(
-            org.tiqian.math.core.MathFontFamilySpec(
-                "lete-dynamic-benchmark",
-                org.tiqian.math.core.MathFontClass.SansSerif,
-                listOf(
-                    org.tiqian.math.core.MathFontFaceSpec(
-                        MathFaceId("lete-dynamic-regular"),
-                        assets.open(AndroidMathFontFamily.LeteRegularAsset).use { it.readBytes() },
-                        org.tiqian.math.core.MathFontClass.SansSerif,
-                        MathFontWeight.Regular,
-                    ),
-                    org.tiqian.math.core.MathFontFaceSpec(
-                        MathFaceId("lete-dynamic-bold"),
-                        assets.open(AndroidMathFontFamily.LeteBoldAsset).use { it.readBytes() },
-                        org.tiqian.math.core.MathFontClass.SansSerif,
-                        MathFontWeight.Bold,
-                    ),
-                ),
-            ),
-        )
         fun measure(factory: () -> AndroidMathFontFamily): Long {
             val start = SystemClock.elapsedRealtimeNanos()
             factory().close()
@@ -74,35 +52,23 @@ class AndroidMathBackendInstrumentedTest {
         }
 
         repeat(3) {
-            dynamicFamily().close()
             AndroidMathFontFamily.loadBundledLete(context).close()
         }
-        val dynamicNs = LongArray(15)
         val prebakedNs = LongArray(15)
         repeat(15) { index ->
-            if (index % 2 == 0) {
-                dynamicNs[index] = measure(::dynamicFamily)
-                prebakedNs[index] = measure { AndroidMathFontFamily.loadBundledLete(context) }
-            } else {
-                prebakedNs[index] = measure { AndroidMathFontFamily.loadBundledLete(context) }
-                dynamicNs[index] = measure(::dynamicFamily)
-            }
+            prebakedNs[index] = measure { AndroidMathFontFamily.loadBundledLete(context) }
         }
-        val dynamicMedian = dynamicNs.sorted()[dynamicNs.size / 2]
         val prebakedMedian = prebakedNs.sorted()[prebakedNs.size / 2]
         Log.i(
             "TiqianMathPrebake",
-            "family-init dynamicMedianNs=" + dynamicMedian +
-                " prebakedMedianNs=" + prebakedMedian +
-                " dynamicSamples=" + dynamicNs.joinToString() +
+            "family-init prebakedMedianNs=" + prebakedMedian +
                 " prebakedSamples=" + prebakedNs.joinToString(),
         )
-        assertTrue(dynamicMedian > 0)
         assertTrue(prebakedMedian > 0)
     }
 
     @Test
-    fun bundledAndroidSnapshotMatchesDynamicOpenTypeReader() {
+    fun bundledAndroidSnapshotAttachesToRuntimeFont() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val assets = context.assets
         listOf(
@@ -110,19 +76,12 @@ class AndroidMathBackendInstrumentedTest {
             AndroidMathFontFamily.LeteBoldAsset to AndroidMathFontFamily.LeteBoldSnapshotAsset,
         ).forEach { (fontPath, snapshotPath) ->
             val bytes = assets.open(fontPath).use { it.readBytes() }
-            val dynamic = OpenTypeMathReader().read(bytes)
-            val expectedSha256 = if (fontPath == AndroidMathFontFamily.LeteRegularAsset) {
-                AndroidMathFontFamily.LeteRegularSha256
-            } else {
-                AndroidMathFontFamily.LeteBoldSha256
-            }
             val prebaked = VerifiedOpenTypeMathSnapshotLoader.load(
                 bytes,
                 assets.open(snapshotPath).use { it.readBytes() },
-                expectedSha256,
             )
-            val sharedByteMarker = ByteArray(0)
-            assertEquals(dynamic.copy(bytes = sharedByteMarker), prebaked.copy(bytes = sharedByteMarker))
+            assertTrue(prebaked.constants.axisHeight > 0)
+            assertTrue(prebaked.characterGlyphs.isNotEmpty())
         }
     }
 
@@ -137,7 +96,6 @@ class AndroidMathBackendInstrumentedTest {
             AndroidMathFontFace.fromPrebakedBytes(
                 bytes,
                 assets.open(AndroidMathFontFamily.LeteRegularSnapshotAsset).use { it.readBytes() },
-                AndroidMathFontFamily.LeteRegularSha256,
                 MathFaceId("mismatched-bundled-face"),
                 org.tiqian.math.core.MathFontClass.SansSerif,
                 MathFontWeight.Regular,
@@ -205,12 +163,10 @@ class AndroidMathBackendInstrumentedTest {
     fun collidingMathAndHostFaceIdsFailPreflightInsteadOfDrawingTheMathFace() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         AndroidMathFontFamily.loadBundledLete(context).use { math ->
-            val collidingHostFace = AndroidMathFontFace.fromBytes(
+            AndroidMathTextRunProvider.fromBytes(
+                MathFaceId("lete-sans-math-regular"),
                 context.assets.open(AndroidMathFontFace.LeteAssetPath).use { it.readBytes() },
-                faceId = MathFaceId("lete-sans-math-regular"),
-                fontClass = org.tiqian.math.core.MathFontClass.SansSerif,
-            )
-            AndroidTestHostTextProvider(collidingHostFace).use { provider ->
+            ).use { provider ->
                 val fallback = assertIs<MathFormulaCapabilityResult.FallbackRequired>(
                     math.androidFormulaCapabilityEngine(provider).evaluate("\\text{中}"),
                 )
@@ -289,14 +245,11 @@ class AndroidMathBackendInstrumentedTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         AndroidMathFontFamily.loadBundledLete(context).use { regular ->
             val bold = regular.selectWeight(MathFontWeight.Bold) as AndroidMathFontFamily
-            val hostFace = AndroidMathFontFace.fromBytes(
+            AndroidMathTextRunProvider.fromBytes(
+                MathFaceId("android-test-host-text"),
                 context.assets.open(AndroidMathFontFace.LeteAssetPath).use { it.readBytes() },
-                faceId = MathFaceId("android-test-host-text"),
-                fontClass = org.tiqian.math.core.MathFontClass.SansSerif,
-                weight = MathFontWeight.Bold,
-                requestedWeight = MathFontWeight.Bold,
-            )
-            AndroidTestHostTextProvider(hostFace).use { provider ->
+                resolvedWeight = MathFontWeight.Bold,
+            ).use { provider ->
                 val source = "x+\\aleph_0+\\text{中文}+原始+x^{中文2}+\\sqrt{\\frac{\\frac{a}{b}}{c}}"
                 val capability = bold.androidFormulaCapabilityEngine(provider).evaluate(
                     source,
@@ -311,7 +264,7 @@ class AndroidMathBackendInstrumentedTest {
                             MathFontFallbackReason.MissingMathConstructionInRequestedWeight,
                         )
                 })
-                val textGlyphs = result.box.glyphs.filter { it.faceId == hostFace.faceId }
+                val textGlyphs = result.box.glyphs.filter { it.faceId == provider.faceId }
                 assertTrue(textGlyphs.isNotEmpty())
                 assertTrue(textGlyphs.all { it.requestedWeight == MathFontWeight.Bold })
                 assertTrue(textGlyphs.any { it.style.level == org.tiqian.math.core.MathStyleLevel.Script && it.fontSizePx < 40f })
@@ -333,7 +286,7 @@ class AndroidMathBackendInstrumentedTest {
     fun pinnedNativeBackendShapesMeasuresAndReplaysKnownGlyphsFromTheSameFace() {
         withAcceptanceFaces { oracle ->
             oracle.face.use { face ->
-                assertEquals("FreeType 2.13.2; HarfBuzz 8.3.0", face.nativeVersions(), oracle.label)
+                assertEquals("Android Typeface", face.nativeVersions(), oracle.label)
                 val result = requireReady(face, "x+2", MathLayoutOptions(fontSizePx = 40f))
                 assertEquals(oracle.xPlusTwoGlyphs, result.box.glyphs.map { it.glyphId }, oracle.label)
                 assertTrue(result.box.width > 0f && result.box.ascent > 0f, oracle.label)

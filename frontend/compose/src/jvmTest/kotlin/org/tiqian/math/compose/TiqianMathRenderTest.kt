@@ -57,6 +57,43 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalComposeUiApi::class)
 class TiqianMathRenderTest {
     @Test
+    fun formulaPreparerBuildsAReplayableInlineFormulaOutsideComposition() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            val formula = createTiqianMathFormulaPreparer(face).prepare(
+                source = "a+b=c",
+                mode = MathMode.Inline,
+                fontSizePx = 24f,
+            )
+            val layout = assertNotNull(formula.layoutResult)
+            assertEquals("a+b=c", layout.source)
+            assertTrue(assertNotNull(formula.presentationMetrics()).widthPx > 0f)
+        }
+    }
+
+    @Test
+    fun declaredOperatorIsOneSourceFragmentForHostSelection() {
+        val source = "a+\\operatorname{arg max}+b"
+        val operator = "\\operatorname{arg max}"
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            val layout = assertNotNull(
+                createTiqianMathFormulaPreparer(face).prepare(
+                    source = source,
+                    mode = MathMode.Inline,
+                    fontSizePx = 24f,
+                ).layoutResult,
+            )
+
+            val operatorFragment = layout.fragments.single { fragment ->
+                source.substring(fragment.sourceRange.start, fragment.sourceRange.endExclusive) == operator
+            }
+            assertEquals(
+                SourceRange(source.indexOf(operator), source.indexOf(operator) + operator.length),
+                operatorFragment.sourceRange,
+            )
+        }
+    }
+
+    @Test
     fun composeTextBackendReplaysNestedHostTextWithoutAnInjectedProvider() {
         var observed: MathLayoutResult? = null
         ImageComposeScene(width = 520, height = 180, density = Density(1f)) {
@@ -210,7 +247,11 @@ class TiqianMathRenderTest {
     fun legacySingleFaceRememberApiPreservesTheSurroundingWeightRequest() {
         var observed: MathLayoutResult? = null
         ImageComposeScene(width = 180, height = 100, density = Density(1f)) {
-            val face = rememberMathFontFace(LeteSansMath.loadBytes())
+            val face = rememberMathFontFace(
+                java.nio.file.Files.readAllBytes(
+                    java.nio.file.Path.of(checkNotNull(System.getProperty("tiqianLeteSourceRegularFont"))),
+                ),
+            )
             TiqianMath(
                 source = "x+1",
                 style = TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Bold),

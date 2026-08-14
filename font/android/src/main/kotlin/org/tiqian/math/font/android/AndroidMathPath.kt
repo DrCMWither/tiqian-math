@@ -6,55 +6,6 @@ import org.tiqian.math.layout.MathConstructionOutlineEvidence
 import org.tiqian.math.layout.MathConstructionOutlineUnavailableReason
 import org.tiqian.math.layout.MathConstructionTopStroke
 
-internal fun decodeAndroidGlyphPath(commands: FloatArray): Path? {
-    if (commands.isEmpty()) return null
-    val path = Path()
-    var cursor = 0
-    while (cursor < commands.size) {
-        when (val verb = commands[cursor++].toInt()) {
-            0 -> {
-                requireRemaining(commands, cursor, 2, verb)
-                path.moveTo(commands[cursor], commands[cursor + 1])
-                cursor += 2
-            }
-            1 -> {
-                requireRemaining(commands, cursor, 2, verb)
-                path.lineTo(commands[cursor], commands[cursor + 1])
-                cursor += 2
-            }
-            2 -> {
-                requireRemaining(commands, cursor, 4, verb)
-                path.quadTo(
-                    commands[cursor],
-                    commands[cursor + 1],
-                    commands[cursor + 2],
-                    commands[cursor + 3],
-                )
-                cursor += 4
-            }
-            3 -> {
-                requireRemaining(commands, cursor, 6, verb)
-                path.cubicTo(
-                    commands[cursor],
-                    commands[cursor + 1],
-                    commands[cursor + 2],
-                    commands[cursor + 3],
-                    commands[cursor + 4],
-                    commands[cursor + 5],
-                )
-                cursor += 6
-            }
-            4 -> path.close()
-            else -> error("Unknown native outline verb $verb")
-        }
-    }
-    return if (path.isEmpty) null else path
-}
-
-private fun requireRemaining(values: FloatArray, cursor: Int, count: Int, verb: Int) {
-    require(cursor + count <= values.size) { "Truncated native outline verb $verb" }
-}
-
 internal fun Path.radicalTopStrokeEvidence(
     fontSizePx: Float,
     unitsPerEm: Int,
