@@ -77,7 +77,10 @@ class AndroidMathTextRunProvider private constructor(
                     fontKey = faceId.value,
                     requestedWeight = request.requestedWeight,
                     resolvedWeight = resolvedWeight,
-                    selectionReason = "CallerTypefaceWithAndroidFallback",
+                    // `ExplicitStandaloneSingleFace`: this path shapes with the caller's single
+                    // explicit face only — no Android fallback participates (missing glyphs are
+                    // reported, not substituted) — matching the Skia backend's decision name.
+                    selectionReason = "ExplicitStandaloneSingleFace",
                     substitutionReason = if (request.requestedWeight == resolvedWeight) null
                         else "RequestedWeightUnavailableInExplicitFace",
                 ),
