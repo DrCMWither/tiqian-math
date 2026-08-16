@@ -1,0 +1,539 @@
+package org.tiqian.math.layout
+
+import org.tiqian.math.core.*
+import org.tiqian.math.font.opentype.MathConstructionKind
+import org.tiqian.math.font.opentype.MathDeviceAdjustment
+import org.tiqian.math.font.opentype.MathGlyphComponent
+import org.tiqian.math.font.opentype.MathHorizontalConstructionRequest
+import org.tiqian.math.font.opentype.MathKernCorner
+import org.tiqian.math.font.opentype.MathVerticalConstruction
+import org.tiqian.math.font.opentype.MathVerticalConstructionRequest
+import org.tiqian.math.font.opentype.MathVerticalAssemblyPolicy
+import org.tiqian.math.font.opentype.OpenTypeMathConstants
+import org.tiqian.math.font.opentype.OpenTypeMathException
+import org.tiqian.math.font.opentype.OpenTypeMathFont
+import org.tiqian.math.parser.MacroExpansionLimits
+import org.tiqian.math.parser.MathFormulaParser
+import org.tiqian.math.parser.MathMacroDefinition
+import org.tiqian.math.parser.MathParser
+import kotlin.math.floor
+import kotlin.math.max
+import org.tiqian.math.layout.MathLayoutPass.Companion.GEOMETRY_EPSILON_PX
+import org.tiqian.math.layout.MathLayoutPass.LaidNode
+import org.tiqian.math.layout.MathLayoutPass.MathAlphabetOverride
+import org.tiqian.math.layout.MathLayoutPass.PlacedVerticalConstruction
+
+internal fun MathLayoutPass.layoutOperatorName(
+    node: MathOperatorName,
+    style: MathStyle,
+    alphabetOverride: MathAlphabetOverride?,
+): LaidNode {
+    if (node.origin == MathOperatorNameOrigin.OperatorNameCommand) {
+        val textBox = layoutTextSegments(node.nameSegments.orEmpty(), style, node.range)
+        decision(
+            "TeXDeclaredOperatorName",
+            node.range,
+            "name" to node.name,
+            "origin" to node.origin,
+            "nameRange" to node.nameRange,
+            "atomClass" to MathAtomClass.Operator,
+            "limitsPolicy" to node.limitsPolicy,
+            "limitsPolicyExplicit" to node.hasExplicitLimitsPolicy,
+            "shaping" to "SingleUprightTextRunPerSourceSegment",
+        )
+        return LaidNode(
+            node = node,
+            box = textBox,
+            atomClass = MathAtomClass.Operator,
+            italicCorrectionPx = 0f,
+            style = style,
+            scriptBaseKind = ScriptBaseKind.CompoundBox,
+        )
+    }
+    // Render the name as upright roman letters, then present the whole run as one Operator-class
+    // atom so inter-atom spacing (`2\sin x`, `\sin x`) is correct. Every letter maps back to the
+    // command's source range, so selection and source-partitioning treat the name as one unit.
+    val letters = node.name.map { ch ->
+        MathSymbol(
+            sourceText = ch.toString(),
+            identity = MathSymbolIdentity.LatinLetter(ch),
+            atomClass = MathAtomClass.Ordinary,
+            family = MathFamily.Operators,
+            familyBinding = MathFamilyBinding.Fixed,
+            alphabet = MathAlphabet.Roman,
+            range = node.commandRange,
+        )
+    }
+    val horizontal = layoutList(MathList(letters, node.commandRange), style, alphabetOverride)
+    decision(
+        "TeXMathOperatorName",
+        node.range,
+        "name" to node.name,
+        "limitsPolicy" to node.limitsPolicy,
+        "limitsPolicyExplicit" to node.hasExplicitLimitsPolicy,
+        "commandRange" to node.commandRange,
+        "modifierRange" to node.limitsModifierRange,
+        "atomClass" to MathAtomClass.Operator,
+    )
+    return horizontal.laid.copy(
+        node = node,
+        box = horizontal.laid.box.copy(range = node.range),
+        atomClass = MathAtomClass.Operator,
+        italicCorrectionPx = 0f,
+        scriptBaseKind = ScriptBaseKind.CompoundBox,
+    )
+}
+
+internal fun MathLayoutPass.layoutOperatorNoad(
+    node: MathOperatorNoad,
+    style: MathStyle,
+    alphabetOverride: MathAlphabetOverride?,
+): LaidNode {
+    val nucleus = layoutNode(node.nucleus, style, alphabetOverride).completedTeXMathField()
+    decision(
+        "TeXMathOperatorNoad",
+        node.range,
+        "commandRange" to node.commandRange,
+        "nucleusRange" to node.nucleus.range,
+        "limitsPolicy" to node.limitsPolicy,
+        "limitsPolicyExplicit" to node.hasExplicitLimitsPolicy,
+        "modifierRange" to node.limitsModifierRange,
+        "atomClass" to MathAtomClass.Operator,
+        "nucleusPolicy" to "XeTeXCleanBoxSubMlistCurrentStyle",
+        "italicCorrectionPx" to 0f,
+    )
+    return LaidNode(
+        node = node,
+        box = nucleus.box.copy(range = node.range),
+        atomClass = MathAtomClass.Operator,
+        italicCorrectionPx = 0f,
+        style = style,
+        scriptBaseKind = ScriptBaseKind.CompoundBox,
+    )
+}
+
+internal fun MathLayoutPass.layoutBraceNoad(
+    node: MathBraceNoad,
+    style: MathStyle,
+    alphabetOverride: MathAlphabetOverride?,
+): LaidNode {
+    val identity = if (node.kind == MathBraceKind.Over) {
+        MathAccentIdentity.OverBrace
+    } else {
+        MathAccentIdentity.UnderBrace
+    }
+    val accent = layoutAccent(
+        MathAccent(
+            identity = identity,
+            commandRange = node.commandRange,
+            base = node.base,
+            range = node.range,
+        ),
+        style,
+        alphabetOverride,
+    )
+    decision(
+        "TeXBraceOperatorNoad",
+        node.range,
+        "kind" to node.kind,
+        "commandRange" to node.commandRange,
+        "baseRange" to node.base.range,
+        "limitsPolicy" to node.limitsPolicy,
+        "limitsPolicyExplicit" to node.hasExplicitLimitsPolicy,
+        "modifierRange" to node.limitsModifierRange,
+        "accentIdentity" to identity,
+        "atomClass" to MathAtomClass.Operator,
+        "constructionPolicy" to "XeTeXGrowingTopOrBottomMathAccentWrappedInLimitsOpNoad",
+    )
+    return accent.copy(
+        node = node,
+        box = accent.box.copy(range = node.range),
+        atomClass = MathAtomClass.Operator,
+        style = style,
+        scriptBaseKind = ScriptBaseKind.CompoundBox,
+    )
+}
+
+internal fun MathLayoutPass.layoutOperator(
+    node: MathOperator,
+    style: MathStyle,
+    alphabetOverride: MathAlphabetOverride? = null,
+): LaidNode {
+    alphabetOverride?.version?.let { version ->
+        diagnostics += MathDiagnostic(
+            DiagnosticCode.UnsupportedMathAlphabet,
+            "The selected formula-wide math face has no $version LargeSymbols math version for ${node.identity.debugName}",
+            node.commandRange,
+        )
+        decision(
+            "TeXMathVersionCapability",
+            node.commandRange,
+            "version" to version,
+            "identity" to node.identity.debugName,
+            "family" to MathFamily.LargeSymbols,
+            "capability" to "UnsupportedNoFormulaWideBoldLargeSymbolsFace",
+        )
+    }
+    val size = fontSize(style)
+    val resolved = glyphSource.resolveOperator(
+        MathOperatorGlyphRequest(node.identity, style, node.commandRange),
+        size,
+    )
+    val operatorFaceId = resolved.run.glyphs.firstOrNull()?.faceId ?: glyphSource.faceId
+    val operatorMathFont = mathFontForFace(operatorFaceId)
+    if (resolved.run.missingGlyph) {
+        diagnostics += MathDiagnostic(
+            DiagnosticCode.MissingGlyph,
+            "The selected formula-wide math face has no LargeSymbols glyph for ${node.identity.debugName}",
+            node.commandRange,
+        )
+    }
+
+    val display = style.level == MathStyleLevel.Display
+    val normalGlyphExtent = resolved.run.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f
+    // XeTeX make_op uses the larger of DisplayOperatorMinHeight and 5/4 of the
+    // normal native glyph's exact height+depth as the variant-selection target.
+    val displayOperatorMinHeight = if (display) {
+        operatorMathFont.scaleDesignUnits(operatorMathFont.constants.displayOperatorMinHeight, size)
+    } else {
+        0f
+    }
+    val normalGlyphFiveQuarters = if (display) normalGlyphExtent * 5f / 4f else 0f
+    val targetHeight = max(displayOperatorMinHeight, normalGlyphFiveQuarters)
+    val construction = if (display) {
+        resolved.constructionBaseGlyphId?.let {
+            selectVerticalConstruction(
+                baseGlyphId = it,
+                normalRun = resolved.run,
+                targetHeight = targetHeight,
+                size = size,
+                style = style,
+                range = node.commandRange,
+                assemblyPolicy = MathVerticalAssemblyPolicy.TectonicXeTeXStretchGlue,
+            )
+        }
+    } else {
+        null
+    }
+    val assemblyValidation = construction?.assemblyValidation
+        ?: resolved.constructionBaseGlyphId?.let(operatorMathFont::verticalAssemblyValidation)
+    val rawBox = if (construction != null) {
+        operatorConstructionBox(construction, node, style, size, operatorFaceId)
+    } else {
+        measuredRunBox(resolved.run, node.commandRange, style, size)
+    }
+    val axisY = -operatorMathFont.scaleDesignUnits(operatorMathFont.constants.axisHeight, size)
+    val inkCenterBefore = (rawBox.inkBounds.top + rawBox.inkBounds.bottom) / 2f
+    val centerShift = axisY - inkCenterBefore
+    val centeredPlacements = rawBox.glyphs.map { placement ->
+        placement.copy(
+            baselineY = placement.baselineY + centerShift,
+            inkBounds = placement.inkBounds.translated(0f, centerShift),
+        )
+    }
+    val box = geometryExtents(rawBox.width, centeredPlacements, rawBox.rules, node.range)
+    val achievedAdvance = construction?.let {
+        operatorMathFont.scaleDesignUnits(it.advanceMeasurement, size)
+    } ?: rawBox.inkBounds.height
+    // XeTeX exhausts the variant ladder and keeps the last available glyph when the
+    // suggested target is not reached. Unlike radicals and delimiters, this is a complete
+    // operator selection, not a missing rendering capability.
+    val suggestedTargetReached = !display || achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight
+    val exhaustedVariantLadder = display && !suggestedTargetReached
+
+    val finalGlyphId = when (construction?.kind) {
+        MathConstructionKind.BaseGlyph,
+        MathConstructionKind.Variant ->
+            construction.components.singleOrNull()?.glyphId
+        MathConstructionKind.Assembly -> null
+        null -> resolved.run.glyphs.lastOrNull()?.glyphId
+    }
+    val italicCorrectionSource = if (
+        construction?.kind == MathConstructionKind.Assembly
+    ) {
+        "GlyphAssembly"
+    } else if (finalGlyphId in operatorMathFont.italicCorrectionDeviceAdjustments) {
+        "XeTeXHarfBuzzZeroPpemMathItalicsCorrection"
+    } else {
+        "MathItalicsCorrectionInfo"
+    }
+    val italicCorrection = construction?.assemblyItalicCorrection?.let {
+        operatorMathFont.scaleDesignUnits(it, size)
+    } ?: finalGlyphId?.let {
+        operatorMathFont.italicCorrection(it, size)
+    } ?: 0f
+    decision(
+        "TeXOperatorNoad",
+        node.range,
+        "sourceText" to node.sourceText,
+        "commandRange" to node.commandRange,
+        "identity" to node.identity.debugName,
+        "atomClass" to node.atomClass,
+        "family" to node.family,
+        "baseScalar" to unicodeLabel(node.identity.baseScalar),
+        "backendScalar" to unicodeLabel(resolved.backendScalar),
+        "style" to style,
+        "fontSizePx" to size,
+        "constructionBaseGlyphId" to resolved.constructionBaseGlyphId,
+        "glyphIds" to box.glyphs.joinToString(",") { it.glyphId.toString() },
+        "construction" to (construction?.kind ?: "BaseGlyph"),
+        "constructionPolicy" to when {
+            exhaustedVariantLadder && construction != null ->
+                "XeTeXMakeOpLargestAvailableBelowSuggestedTarget"
+            exhaustedVariantLadder -> "XeTeXMakeOpNormalGlyphAfterExhaustedVariantLadder"
+            else -> construction?.constructionPolicy
+        },
+        "assemblyValid" to assemblyValidation?.valid,
+        "assemblyInvalidReasons" to assemblyValidation?.invalidReasons,
+        "assemblyValidationPolicy" to assemblyValidation?.validationPolicy,
+        "assemblySpecificationDivergence" to assemblyValidation?.specificationDivergence,
+        "assemblyCheckedConnectionCount" to assemblyValidation?.checkedConnectionCount,
+        "displayOperatorMinHeightPx" to displayOperatorMinHeight,
+        "normalGlyphExtentPx" to normalGlyphExtent,
+        "normalGlyphFiveQuartersPx" to normalGlyphFiveQuarters,
+        "variantSelectionTargetPx" to targetHeight,
+        "variantSelectionTargetPolicy" to "XeTeXMakeOpMaxDisplayOperatorMinHeightAndFiveQuartersNormalGlyph",
+        "achievedAdvancePx" to achievedAdvance,
+        "reachesTarget" to suggestedTargetReached,
+        "suggestedTargetReached" to suggestedTargetReached,
+        "selectionComplete" to true,
+        "exhaustedVariantLadder" to exhaustedVariantLadder,
+        "axisY" to axisY,
+        "inkCenterBefore" to inkCenterBefore,
+        "centerShiftPx" to centerShift,
+        "inkCenterAfter" to (box.inkBounds.top + box.inkBounds.bottom) / 2f,
+        "italicCorrectionPx" to italicCorrection,
+        "italicCorrectionSource" to italicCorrectionSource,
+        "italicCorrectionIgnoredDeviceAdjustment" to
+            finalGlyphId?.let(operatorMathFont.italicCorrectionDeviceAdjustments::get),
+        "limitsPolicy" to node.limitsPolicy,
+        "limitsPolicyExplicit" to node.hasExplicitLimitsPolicy,
+        "limitsModifierRange" to node.limitsModifierRange,
+    )
+    return LaidNode(
+        node = node,
+        box = box,
+        atomClass = MathAtomClass.Operator,
+        italicCorrectionPx = italicCorrection,
+        style = style,
+        scriptBaseKind = if (
+            (construction?.kind != null && construction.kind != MathConstructionKind.BaseGlyph) ||
+            box.glyphs.singleOrNull()?.glyphId in operatorMathFont.extendedShapeGlyphs
+        ) {
+            ScriptBaseKind.ExtendedShape
+        } else {
+            ScriptBaseKind.Character
+        },
+    )
+}
+
+internal fun MathLayoutPass.measuredRunBox(
+    run: MeasuredMathRun,
+    range: SourceRange,
+    style: MathStyle,
+    size: Float,
+): MathBox {
+    val placements = run.glyphs.map { glyph ->
+        MathGlyphPlacement(
+            glyphId = glyph.glyphId,
+            x = glyph.x,
+            baselineY = glyph.baselineOffsetPx,
+            advance = glyph.advance,
+            inkBounds = glyph.inkBounds.translated(glyph.x, glyph.baselineOffsetPx),
+            fontSizePx = size,
+            sourceRange = range,
+            style = style,
+            faceId = glyph.faceId,
+            fontClass = glyph.fontClass,
+            requestedWeight = glyph.requestedWeight,
+            resolvedWeight = glyph.resolvedWeight,
+            fallbackReason = glyph.fallbackReason,
+        )
+    }
+    return geometryExtents(run.width, placements, emptyList(), range)
+}
+
+/** One normal-glyph-first entry point shared by operators, radicals, and delimiters. */
+internal fun MathLayoutPass.selectVerticalConstruction(
+    baseGlyphId: UShort,
+    normalRun: MeasuredMathRun,
+    targetHeight: Float,
+    size: Float,
+    style: MathStyle,
+    range: SourceRange,
+    assemblyPolicy: MathVerticalAssemblyPolicy = MathVerticalAssemblyPolicy.MathMLCoreUniformOverlap,
+): MathVerticalConstruction? {
+    val faceId = normalRun.glyphs.singleOrNull()?.faceId ?: glyphSource.faceId
+    val mathFont = mathFontForFace(faceId)
+    return mathFont.verticalConstruction(
+        MathVerticalConstructionRequest(
+            baseGlyphId = baseGlyphId,
+            targetSizePx = targetHeight,
+            fontSizePx = size,
+            normalGlyphHeightPx = normalRun.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f,
+            normalGlyphAdvanceWidthPx = normalRun.width,
+            assemblyPolicy = assemblyPolicy,
+        ),
+        glyphVerticalExtentPx = { glyphId ->
+            measureGlyphOutlineForFace(faceId, glyphId, size, style, range)
+                .glyphs.singleOrNull()?.inkBounds?.height
+                ?: measureGlyphForFace(faceId, glyphId, size, style, range)
+                    .let { it.ascent + it.descent }
+        },
+    ) { glyphId ->
+        measureGlyphForFace(faceId, glyphId, size, style, range).width
+    }
+}
+
+private fun MathLayoutPass.operatorConstructionBox(
+    construction: MathVerticalConstruction,
+    node: MathOperator,
+    style: MathStyle,
+    size: Float,
+    faceId: MathFaceId,
+): MathBox {
+    val componentRuns = construction.components.map { component ->
+        component to measureGlyphOutlineForFace(faceId, component.glyphId, size, style, node.commandRange)
+    }
+    val placed = placeVerticalConstruction(
+        construction = construction,
+        componentRuns = componentRuns,
+        size = size,
+        style = style,
+        sourceRange = node.commandRange,
+        centerComponentsHorizontally = false,
+    )
+    decision(
+        "OpenTypeOperatorConstruction",
+        node.range,
+        "kind" to construction.kind,
+        "componentGlyphIds" to construction.components.joinToString(",") { it.glyphId.toString() },
+        "componentOffsetsDesignUnits" to construction.components.joinToString(",") { it.offset.toString() },
+        "advanceMeasurementDesignUnits" to construction.advanceMeasurement,
+        "extenderRepetitions" to construction.extenderRepetitions,
+        "connectorOverlapsDesignUnits" to construction.connectorOverlaps,
+        "assemblyItalicCorrectionDesignUnits" to construction.assemblyItalicCorrection,
+        "constructionPolicy" to construction.constructionPolicy,
+        "assemblyValid" to construction.assemblyValidation?.valid,
+        "assemblyInvalidReasons" to construction.assemblyValidation?.invalidReasons,
+        "assemblyValidationPolicy" to construction.assemblyValidation?.validationPolicy,
+        "assemblySpecificationDivergence" to construction.assemblyValidation?.specificationDivergence,
+        "assemblyCheckedConnectionCount" to construction.assemblyValidation?.checkedConnectionCount,
+        "uniformConnectorOverlapDesignUnits" to construction.uniformConnectorOverlap,
+        "componentHorizontalOriginsPx" to placed.componentHorizontalOriginsPx.joinToString(","),
+        "componentBottomOriginsPx" to placed.componentBottomOriginsPx.joinToString(","),
+        "componentBaselineOriginsPx" to placed.componentBaselineOriginsPx.joinToString(","),
+        "placementOrigin" to placed.placementOrigin,
+        "placementPolicy" to placed.placementPolicy,
+    )
+    return geometryExtents(placed.width, placed.glyphs, emptyList(), node.range)
+}
+
+/**
+ * A vertical assembly keeps one font-space x origin for every part, as required by the
+ * OpenType orthogonal alignment contract. MathML Core's bottom-to-top advance coordinate
+ * is converted independently to each glyph baseline; no per-part LSB cancellation is
+ * allowed. A ready-made variant retains normal baseline shaping.
+ */
+internal fun MathLayoutPass.placeVerticalConstruction(
+    construction: MathVerticalConstruction,
+    componentRuns: List<Pair<MathGlyphComponent, MeasuredMathRun>>,
+    componentOutlineEvidences: List<MathConstructionOutlineEvidence>? = null,
+    size: Float,
+    style: MathStyle,
+    sourceRange: SourceRange,
+    centerComponentsHorizontally: Boolean,
+): PlacedVerticalConstruction {
+    val width = construction.orthogonalAdvancePx
+    val assembly = construction.kind == MathConstructionKind.Assembly
+    val horizontalOrigins = mutableListOf<Float>()
+    val bottomOrigins = mutableListOf<Float>()
+    val baselineOrigins = mutableListOf<Float>()
+    val topStrokeCandidates = mutableListOf<MathConstructionOutlineEvidence.Available>()
+    val placements = componentRuns.flatMapIndexed { componentIndex, (component, run) ->
+        val componentFont = run.glyphs.firstOrNull()?.faceId?.let(glyphSource::mathFontFor) ?: glyphSource.mathFont
+        val componentBottomY = -componentFont.scaleDesignUnits(component.offset, size)
+        if (assembly) bottomOrigins += componentBottomY
+        val runOriginX = when {
+            assembly -> 0f
+            centerComponentsHorizontally -> (width - run.width) / 2f
+            else -> 0f
+        }
+        val runBaselineY = if (assembly) {
+            val glyph = run.glyphs.singleOrNull()
+            if (glyph == null) 0f else componentBottomY - glyph.inkBounds.bottom
+        } else {
+            0f
+        }
+        val outlineEvidence = componentOutlineEvidences?.getOrNull(componentIndex)
+        if (outlineEvidence is MathConstructionOutlineEvidence.Available) {
+            topStrokeCandidates += outlineEvidence.copy(
+                topStroke = MathConstructionTopStroke(
+                    topPx = outlineEvidence.topStroke.topPx + runBaselineY,
+                    bottomPx = outlineEvidence.topStroke.bottomPx + runBaselineY,
+                    rightPx = outlineEvidence.topStroke.rightPx + runOriginX,
+                ),
+            )
+        }
+        run.glyphs.map { glyph ->
+            val componentX = when {
+                assembly -> glyph.x
+                centerComponentsHorizontally -> (width - run.width) / 2f + glyph.x
+                else -> glyph.x
+            }
+            val baselineY = if (assembly) {
+                componentBottomY - glyph.inkBounds.bottom
+            } else {
+                0f
+            }
+            horizontalOrigins += componentX
+            baselineOrigins += baselineY
+            MathGlyphPlacement(
+                glyphId = glyph.glyphId,
+                x = componentX,
+                baselineY = baselineY,
+                advance = glyph.advance,
+                inkBounds = glyph.inkBounds.translated(componentX, baselineY),
+                fontSizePx = size,
+                sourceRange = sourceRange,
+                style = style,
+                faceId = glyph.faceId,
+                fontClass = glyph.fontClass,
+                requestedWeight = glyph.requestedWeight,
+                resolvedWeight = glyph.resolvedWeight,
+                fallbackReason = glyph.fallbackReason,
+            )
+        }
+    }
+    val constructionInkTop = placements.minOfOrNull { it.inkBounds.top } ?: 0f
+    val constructionInkBottom = placements.maxOfOrNull { it.inkBounds.bottom } ?: 0f
+    val allOutlineEvidenceAvailable = componentOutlineEvidences != null &&
+        componentOutlineEvidences.size == componentRuns.size &&
+        componentOutlineEvidences.all { it is MathConstructionOutlineEvidence.Available }
+    val topStrokeEvidence = if (allOutlineEvidenceAvailable) {
+        topStrokeCandidates.minByOrNull { it.topStroke.topPx }
+    } else {
+        null
+    }
+    val outlineEvidenceFailure = componentOutlineEvidences
+        ?.filterIsInstance<MathConstructionOutlineEvidence.Unavailable>()
+        ?.firstOrNull()
+        ?.reason
+    return PlacedVerticalConstruction(
+        width = width,
+        glyphs = placements,
+        boxAscentPx = (-constructionInkTop).coerceAtLeast(0f),
+        boxDescentPx = constructionInkBottom.coerceAtLeast(0f),
+        topStrokeEvidence = topStrokeEvidence,
+        outlineEvidenceFailure = outlineEvidenceFailure,
+        componentHorizontalOriginsPx = horizontalOrigins,
+        componentBottomOriginsPx = bottomOrigins,
+        componentBaselineOriginsPx = baselineOrigins,
+        placementOrigin = if (assembly) "shared-font-x/bottom" else "normal-glyph-baseline",
+        placementPolicy = if (assembly) {
+            "MathMLCore5.3.1SharedFontOriginBottom"
+        } else {
+            "NormalGlyphShaping"
+        },
+    )
+}
