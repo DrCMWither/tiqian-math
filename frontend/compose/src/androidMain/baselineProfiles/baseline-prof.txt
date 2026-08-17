@@ -1,0 +1,14 @@
+HSPLorg/tiqian/math/layout/MathFormulaCapabilityEngine;->**(**)**
+Lorg/tiqian/math/layout/MathFormulaCapabilityEngine;
+HSPLorg/tiqian/math/layout/MathFormulaCapabilityClassifier;->**(**)**
+Lorg/tiqian/math/layout/MathFormulaCapabilityClassifier;
+HSPLorg/tiqian/math/layout/MathLayoutPass;->**(**)**
+Lorg/tiqian/math/layout/MathLayoutPass;
+HSPLorg/tiqian/math/parser/ParserState;->**(**)**
+Lorg/tiqian/math/parser/ParserState;
+HSPLorg/tiqian/math/compose/TiqianMathKt;->**(**)**
+Lorg/tiqian/math/compose/TiqianMathKt;
+HSPLorg/tiqian/math/font/android/AndroidMathFontFace;->**(**)**
+Lorg/tiqian/math/font/android/AndroidMathFontFace;
+HSPLorg/tiqian/math/font/android/AndroidMathFontFamily;->**(**)**
+Lorg/tiqian/math/font/android/AndroidMathFontFamily;
