@@ -1,5 +1,7 @@
 # 提椠 Math
 
+[![Maven Central](https://img.shields.io/maven-central/v/org.tiqian/math-compose?label=maven)](https://central.sonatype.com/artifact/org.tiqian/math-compose)
+
 提椠 Math 是面向 Compose 的 TeX 数学排版库。
 
 它使用 Compose 原生测量与绘制，公式可以继承正文的字号、字重和颜色，并根据数学字体提供的度量排布符号、上下标、分式、根式和大型运算符。
