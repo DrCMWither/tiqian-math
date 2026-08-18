@@ -147,8 +147,10 @@ internal class ParserState(
         while (true) {
             skipIgnored()
             val token = peek()
-            if (token.kind == MathTokenKind.ControlWord && token.text == "atop") {
+            if (token.kind == MathTokenKind.ControlWord && token.text in GENERALIZED_FRACTION_COMMANDS) {
                 advance()
+                val isChoose = token.text == "choose"
+                val command = "\\${token.text}"
                 if (!generalizedFractionAllowed) {
                     diagnostics += MathDiagnostic(
                         DiagnosticCode.AmbiguousGeneralizedFraction,
@@ -162,7 +164,7 @@ internal class ParserState(
                 if (children.isEmpty()) {
                     diagnostics += MathDiagnostic(
                         DiagnosticCode.MissingGeneralizedFractionNumerator,
-                        "Command \\atop requires material before it in the containing math list",
+                        "Command $command requires material before it in the containing math list",
                         token.range,
                     )
                 }
@@ -176,7 +178,7 @@ internal class ParserState(
                 if (denominator.children.isEmpty()) {
                     diagnostics += MathDiagnostic(
                         DiagnosticCode.MissingGeneralizedFractionDenominator,
-                        "Command \\atop requires material after it in the containing math list",
+                        "Command $command requires material after it in the containing math list",
                         token.range,
                     )
                 }
@@ -186,9 +188,13 @@ internal class ParserState(
                     numerator = numerator,
                     denominator = denominator,
                     kind = FractionKind.Ruleless,
-                    hasParentheses = false,
+                    hasParentheses = isChoose,
                     range = fractionRange,
-                    origin = MathFractionOrigin.GeneralizedAtop,
+                    origin = if (isChoose) {
+                        MathFractionOrigin.GeneralizedChoose
+                    } else {
+                        MathFractionOrigin.GeneralizedAtop
+                    },
                     commandRange = token.range,
                 )
                 break
@@ -469,6 +475,8 @@ internal class ParserState(
     }
 
     internal companion object {
+        val GENERALIZED_FRACTION_COMMANDS = setOf("atop", "choose")
+
         val styleCommands = mapOf(
             "displaystyle" to MathStyleLevel.Display,
             "textstyle" to MathStyleLevel.Text,

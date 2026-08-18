@@ -3,18 +3,21 @@ package org.tiqian.math.font.skia
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.stix.StixTwoMath
+import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.constructionPaintOwnershipDiagnostics
 
 /** Reproducer: `preview/tectonic/remaining-command-oracle.tex`, Tectonic 0.17.0 at 24bp. */
 class TectonicRemainingCommandsOracleTest {
     @Test
-    fun atopNotAndHlineMatchSameFontXeTeXBoxesAndGlyphs() = withFaces { oracle, engine ->
+    fun remainingCommandsPinSameFontXeTeXBoxesAndKnownSstyBoundary() = withFaces { oracle, engine ->
         val hline = engine.layout("\\begin{array}{c}a\\\\\\hline b\\end{array}", options())
         assertBox(oracle.hline, hline, "${oracle.label} hline")
         val rule = hline.box.rules.single { it.sourceRange == SourceRange(19, 25) }
@@ -38,13 +41,95 @@ class TectonicRemainingCommandsOracleTest {
             it.name == "TeXFractionCommand"
         }.details["origin"])
 
+        val choose = engine.layout("{a\\choose b}", options())
+        // XeTeX does not apply STIX's optional ssty alternates to the fraction children,
+        // while Tiqian's established OpenType style contract does. The external oracle still
+        // pins the delimiter glyphs and full vertical box; chooseEngineWidthPx records that existing
+        // child-run divergence rather than weakening the primitive delimiter assertions.
+        assertNear(oracle.chooseEngineWidthPx, choose.box.width, "${oracle.label} choose width")
+        assertNear(oracle.choose.ascentPt * TEX_PT_TO_PX, choose.box.ascent, "${oracle.label} choose ascent")
+        assertNear(oracle.choose.descentPt * TEX_PT_TO_PX, choose.box.descent, "${oracle.label} choose descent")
+        assertEquals(
+            oracle.chooseDelimiterGlyphIds,
+            listOf(choose.box.glyphs.first().glyphId, choose.box.glyphs.last().glyphId),
+            "${oracle.label} choose delimiter glyphs",
+        )
+        assertEquals("GeneralizedChoose", choose.decisions.single {
+            it.name == "TeXFractionCommand"
+        }.details["origin"])
+        assertEquals(2, choose.decisions.count { it.name == "GeneralizedChooseDelimiter" })
+        assertTrue(choose.decisions.filter { it.name == "GeneralizedChooseDelimiter" }.all {
+            it.details["chooseTargetParameter"] == "delim2" &&
+                it.details["delimiterAxisPolicy"] == "XeTeXCurrentMathSizeVarDelimiterAxis"
+        })
+        assertTrue(choose.box.rules.isEmpty(), "${oracle.label} choose must be ruleless")
+        assertTrue(
+            choose.decisions.none { it.name == "TeXFractionNullDelimiters" },
+            "${oracle.label} primitive choose must not synthesize null delimiter boxes",
+        )
+        val chooseCommandRange = SourceRange(2, 9)
+        val delimiterGroups = choose.box.constructionPaintGroups.filter {
+            it.kind == MathConstructionPaintKind.Delimiter
+        }
+        assertEquals(2, delimiterGroups.size, "${oracle.label} choose delimiter paint ownership")
+        assertTrue(delimiterGroups.all { it.sourceRange == chooseCommandRange })
+        assertTrue(choose.box.constructionPaintOwnershipDiagnostics().isEmpty(), choose.debugDump)
+        assertTrue(
+            choose.box.glyphs.filter { it.constructionGroupId != null }.all {
+                it.sourceRange == chooseCommandRange
+            },
+            choose.debugDump,
+        )
+
+        val displayChoose = engine.layout("\\displaystyle{a\\choose b}", options())
+        assertBox(oracle.chooseDisplay, displayChoose, "${oracle.label} display choose")
+        assertEquals(
+            oracle.chooseDelimiterGlyphIds,
+            listOf(displayChoose.box.glyphs.first().glyphId, displayChoose.box.glyphs.last().glyphId),
+            "${oracle.label} display choose delimiter glyphs",
+        )
+        assertTrue(displayChoose.decisions.filter { it.name == "GeneralizedChooseDelimiter" }.all {
+            it.details["chooseTargetParameter"] == "delim1" &&
+                it.details["delimitedSubFormulaMinHeightUsed"] == "true"
+        })
+
         val not = engine.layout("\\mu\\not\\equiv\\mu", options())
         assertNear(oracle.not.widthPt * TEX_PT_TO_PX, not.box.width, "${oracle.label} not width")
         val negated = not.box.glyphs.single { it.sourceRange == SourceRange(3, 13) }
         assertEquals(oracle.notGlyphId, negated.glyphId, oracle.label)
         assertEquals("U+2262", not.decisions.single { it.name == "TeXNotRelation" }.details["precomposedScalar"])
 
-        assertTrue(listOf(atop, not, hline).all { it.diagnostics.isEmpty() }, oracle.label)
+        assertTrue(listOf(atop, choose, displayChoose, not, hline).all { it.diagnostics.isEmpty() }, oracle.label)
+    }
+
+    @Test
+    fun pandoraArticleChooseFormulaIsProductionReadyWithAHostTextProvider() {
+        val source = "\\begin{align} P_{\\text{blue}>0.5}=\\sum_{i=\\frac{A}{2}+1}^{A}" +
+            "\\sum_{j=0}^{a}\\left(\\frac12\\right)^{a}{a\\choose j}" +
+            "(0.8)^{A-a-i+j}(0.2)^{i-j}{A-a\\choose i-j} \\end{align}"
+        SkiaMathTextRunProvider.fromBytes(
+            faceId = MathFaceId("pandora-article-host-text"),
+            fontBytes = LeteSansMath.loadBytes(),
+        ).use { textProvider ->
+            listOf(
+                "Lete" to { SkiaMathFontFace(LeteSansMath.load()) },
+                "STIX" to { SkiaMathFontFace(StixTwoMath.load()) },
+            ).forEach { (label, factory) ->
+                factory().use { face ->
+                    val ready = assertIs<MathFormulaCapabilityResult.Ready>(
+                        face.formulaCapabilityEngine(textProvider).evaluate(
+                            source,
+                            options().copy(mode = MathMode.Display, initialStyle = MathStyle.Display),
+                        ),
+                        label,
+                    )
+                    assertTrue(ready.diagnostics.isEmpty(), "$label ${ready.diagnostics}")
+                    assertEquals(2, ready.layoutResult.decisions.count {
+                        it.name == "TeXFractionCommand" && it.details["origin"] == "GeneralizedChoose"
+                    })
+                }
+            }
+        }
     }
 
     @Test
@@ -141,8 +226,12 @@ class TectonicRemainingCommandsOracleTest {
         val label: String,
         val faceFactory: () -> SkiaMathFontFace,
         val atop: Box,
+        val choose: Box,
+        val chooseDisplay: Box,
         val atopWidthPx: Float,
         val atopGlyphIds: List<UShort>?,
+        val chooseEngineWidthPx: Float,
+        val chooseDelimiterGlyphIds: List<UShort>,
         val not: Box,
         val notGlyphId: UShort,
         val hline: Box,
@@ -156,8 +245,12 @@ class TectonicRemainingCommandsOracleTest {
                 "Lete",
                 { SkiaMathFontFace(LeteSansMath.load()) },
                 Box(12.01186f, 19.5092f, 11.68246f),
+                Box(28.88387f, 26.58403f, 13.09221f),
+                Box(33.0033f, 26.58403f, 17.03342f),
                 12.01186f * TEX_PT_TO_PX,
                 null,
+                28.88387f * TEX_PT_TO_PX,
+                listOf(1836u, 1851u),
                 Box(58.89072f, 16.598f, 4.14348f),
                 629u,
                 Box(23.7313f, 31.46956f, 17.97772f),
@@ -166,8 +259,12 @@ class TectonicRemainingCommandsOracleTest {
                 "STIX",
                 { SkiaMathFontFace(StixTwoMath.load()) },
                 Box(11.75891f, 19.40083f, 14.29651f),
+                Box(28.82364f, 23.39204f, 14.29651f),
+                Box(32.83467f, 26.95834f, 15.70831f),
                 16.829649f,
                 listOf(4421u, 4422u),
+                39.497604f,
+                listOf(1302u, 1314u),
                 Box(59.05934f, 16.33302f, 5.22752f),
                 1808u,
                 Box(23.36995f, 30.56613f, 18.13435f),

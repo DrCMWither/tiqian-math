@@ -42,9 +42,15 @@ internal fun MathLayoutPass.layoutFraction(node: MathFraction, style: MathStyle,
     )
     val display = fractionStyle.level == MathStyleLevel.Display
     val stack = layoutFractionStack(node, fractionStyle, numerator, denominator, display)
-    val fractionNoad = addNullFractionDelimiters(stack, node)
+    val fractionNoad = if (node.origin == MathFractionOrigin.GeneralizedChoose) {
+        // TeX's primitive \choose noad owns real delimiters directly. Null delimiter boxes
+        // belong to \over/\atop and to the inner noad used by LaTeX's \binom wrapper.
+        stack
+    } else {
+        addNullFractionDelimiters(stack, node)
+    }
     val withDelimiters = if (node.hasParentheses) {
-        addBinomialParentheses(fractionNoad, stack, node, fractionStyle)
+        addFractionParentheses(fractionNoad, stack, node, fractionStyle)
     } else {
         fractionNoad
     }
@@ -280,31 +286,53 @@ private fun MathLayoutPass.layoutFractionStack(
     )
 }
 
-private fun MathLayoutPass.addBinomialParentheses(
+private fun MathLayoutPass.addFractionParentheses(
     fractionNoad: MathBox,
     stack: MathBox,
     node: MathFraction,
     style: MathStyle,
 ): MathBox {
+    val generalizedChoose = node.origin == MathFractionOrigin.GeneralizedChoose
+    val delimiterSourceRange = if (generalizedChoose) node.commandRange else node.range
     val targetReferenceSize = fontSize(style)
-    val targetEmFactor = when (style.level) {
+    val targetEmFactor = if (generalizedChoose) null else when (style.level) {
         MathStyleLevel.Display -> LATEX_XETEX_GENFRAC_DISPLAY_DELIMITER_EM
         MathStyleLevel.Text -> LATEX_XETEX_GENFRAC_TEXT_DELIMITER_EM
         MathStyleLevel.Script -> LATEX_XETEX_GENFRAC_SCRIPT_DELIMITER_EM
         MathStyleLevel.ScriptScript -> LATEX_XETEX_GENFRAC_SCRIPT_SCRIPT_DELIMITER_EM
     }
-    val targetHeight = targetReferenceSize * targetEmFactor
+    val delimitedSubFormulaMinHeightPx = scale(constants.delimitedSubFormulaMinHeight, style)
+    val chooseNonDisplayTargetPx = 1.5f * targetReferenceSize
+    val targetHeight = if (generalizedChoose) {
+        if (style.level == MathStyleLevel.Display) {
+            delimitedSubFormulaMinHeightPx
+        } else {
+            minOf(chooseNonDisplayTargetPx, delimitedSubFormulaMinHeightPx)
+        }
+    } else {
+        targetReferenceSize * checkNotNull(targetEmFactor)
+    }
+    val chooseTargetParameter = if (!generalizedChoose) null else if (style.level == MathStyleLevel.Display) {
+        "delim1"
+    } else {
+        "delim2"
+    }
+    val delimitedSubFormulaMinHeightUsed = generalizedChoose &&
+        (style.level == MathStyleLevel.Display || delimitedSubFormulaMinHeightPx <= chooseNonDisplayTargetPx)
 
     // LaTeX2e's XeTeX genfrac fallback creates each delimiter in an inner text-style
     // formula around a style-selected, zero-width vcenter. The OpenType MATH table has
     // no fraction delim1/delim2 constants, so these named fallback factors are the same
     // ones used by amsmath (2.39/1/1.45/1.35 em). This is deliberately separate from
     // the content-driven \left/\right policy and from DelimitedSubFormulaMinHeight.
-    val delimiterStyle = MathStyle.Text
+    // XeTeX's primitive fraction noad asks var_delimiter at cur_size: display/text use
+    // the text math font, while script and scriptscript use their corresponding math font.
+    // LaTeX2e's \binom XeTeX fallback instead builds its delimiters in an inner text-style box.
+    val delimiterStyle = if (generalizedChoose) style else MathStyle.Text
     val delimiterFontSize = fontSize(delimiterStyle)
     val axisY = -scale(constants.axisHeight, delimiterStyle)
 
-    fun construction(baseRun: MeasuredMathRun, side: String): MathVerticalConstruction? {
+    fun construction(baseRun: MeasuredMathRun): MathVerticalConstruction? {
         val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
         val selected = baseGlyphId?.let {
             selectVerticalConstruction(
@@ -313,58 +341,61 @@ private fun MathLayoutPass.addBinomialParentheses(
                 targetHeight = targetHeight,
                 size = delimiterFontSize,
                 style = delimiterStyle,
-                range = node.range,
+                range = delimiterSourceRange,
             )
         }
         return selected
     }
 
-    fun chooseDelimiter(text: String, side: String): Pair<MeasuredMathRun, MathVerticalConstruction?> {
-        val candidates = constructionBaseCandidates(text, delimiterFontSize, node.range)
-            .map { it.run }
-            .filter { !it.missingGlyph && it.glyphs.size == 1 }
-            .map { it to construction(it, side) }
+    fun chooseDelimiter(text: String): Pair<MeasuredOutlineConstructionRun, MathVerticalConstruction?> {
+        val candidates = constructionBaseCandidates(text, delimiterFontSize, delimiterSourceRange)
+            .filter { !it.run.missingGlyph && it.run.glyphs.size == 1 }
+            .map { it to construction(it.run) }
         return candidates.firstOrNull { it.second?.reachesTarget == true }
             ?: candidates.firstOrNull()
-            ?: (glyphSource.shapeOutlineConstructionBase(text, delimiterFontSize, node.range).run to null)
+            ?: (glyphSource.shapeOutlineConstructionBase(text, delimiterFontSize, delimiterSourceRange) to null)
     }
-    val (leftBase, leftConstruction) = chooseDelimiter("(", "left")
-    val (rightBase, rightConstruction) = chooseDelimiter(")", "right")
+    val (leftBaseMeasurement, leftConstruction) = chooseDelimiter("(")
+    val (rightBaseMeasurement, rightConstruction) = chooseDelimiter(")")
     listOf("left" to leftConstruction, "right" to rightConstruction).forEach { (side, selected) ->
         if (selected == null) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MissingMathConstruction,
                 "The $side parenthesis has no MATH construction covering ${targetHeight}px",
-                node.range,
+                delimiterSourceRange,
             )
         }
     }
     fun delimiterBox(
         side: String,
         construction: MathVerticalConstruction?,
-        baseRun: MeasuredMathRun,
+        baseMeasurement: MeasuredOutlineConstructionRun,
     ): MathBox {
+        val baseRun = baseMeasurement.run
         val baseGlyphId = baseRun.glyphs.singleOrNull()?.glyphId
         val delimiterFaceId = baseRun.glyphs.singleOrNull()?.faceId ?: glyphSource.faceId
         val delimiterMathFont = mathFontForFace(delimiterFaceId)
         val assemblyValidation = construction?.assemblyValidation
             ?: baseGlyphId?.let(delimiterMathFont::verticalAssemblyValidation)
-        val componentRuns = construction?.components?.map { component ->
+        val componentMeasurements = construction?.components?.map { component ->
             component to measureConstructionGlyphForFace(
                 delimiterFaceId,
                 component.glyphId,
                 delimiterFontSize,
                 delimiterStyle,
-                node.range,
-            ).run
+                delimiterSourceRange,
+            )
         }
         val placedConstruction = construction?.let {
             placeVerticalConstruction(
                 construction = it,
-                componentRuns = componentRuns.orEmpty(),
+                componentRuns = componentMeasurements.orEmpty().map { measurement ->
+                    measurement.first to measurement.second.run
+                },
+                componentOutlineEvidences = componentMeasurements.orEmpty().map { it.second.evidence },
                 size = delimiterFontSize,
                 style = delimiterStyle,
-                sourceRange = node.range,
+                sourceRange = delimiterSourceRange,
                 centerComponentsHorizontally = true,
             )
         }
@@ -377,7 +408,7 @@ private fun MathLayoutPass.addBinomialParentheses(
                     advance = glyph.advance,
                     inkBounds = glyph.inkBounds.translated(glyph.x, glyph.baselineOffsetPx),
                     fontSizePx = delimiterFontSize,
-                    sourceRange = node.range,
+                    sourceRange = delimiterSourceRange,
                     style = delimiterStyle,
                     faceId = glyph.faceId,
                     fontClass = glyph.fontClass,
@@ -392,14 +423,51 @@ private fun MathLayoutPass.addBinomialParentheses(
         val inkTop = rawPlacements.minOfOrNull { it.inkBounds.top } ?: 0f
         val inkBottom = rawPlacements.maxOfOrNull { it.inkBounds.bottom } ?: 0f
         val centerShift = axisY - (inkTop + inkBottom) / 2f
-        val placements = rawPlacements.map { placement ->
+        val shiftedPlacements = rawPlacements.map { placement ->
             placement.copy(
                 baselineY = placement.baselineY + centerShift,
                 inkBounds = placement.inkBounds.translated(0f, centerShift),
             )
         }
+        val outlineMeasurements = if (construction == null) {
+            listOf(baseMeasurement)
+        } else {
+            componentMeasurements.orEmpty().map { it.second }
+        }
+        val outlineAvailable = outlineMeasurements.isNotEmpty() &&
+            outlineMeasurements.all { it.outlineCapability == MathConstructionOutlineCapability.Replayable }
+        if (generalizedChoose && !outlineAvailable && shiftedPlacements.isNotEmpty()) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MissingConstructionOutlineEvidence,
+                "The math font adapter cannot replay the $side parenthesis construction",
+                delimiterSourceRange,
+            )
+        }
+        val paintGroup = shiftedPlacements.takeIf { generalizedChoose && it.isNotEmpty() }?.let {
+            MathConstructionPaintGroup(
+                id = nextConstructionPaintGroupId++,
+                kind = MathConstructionPaintKind.Delimiter,
+                shapeKind = when (construction?.kind) {
+                    MathConstructionKind.Assembly -> MathConstructionShapeKind.Assembly
+                    MathConstructionKind.Variant -> MathConstructionShapeKind.Variant
+                    MathConstructionKind.BaseGlyph, null -> MathConstructionShapeKind.BaseGlyph
+                },
+                sourceRange = delimiterSourceRange,
+                outlinePolicy = MathConstructionOutlinePolicy.RequireOutlineUnion,
+                faceId = delimiterFaceId,
+            )
+        }
+        val placements = shiftedPlacements.map { placement ->
+            placement.copy(constructionGroupId = paintGroup?.id)
+        }
         val advance = placedConstruction?.width ?: baseRun.width
-        val box = geometryExtents(advance, placements, emptyList(), node.range)
+        val box = geometryExtents(
+            advance,
+            placements,
+            emptyList(),
+            delimiterSourceRange,
+            constructionPaintGroups = listOfNotNull(paintGroup),
+        )
         val achievedAdvance = construction?.let {
             delimiterMathFont.scaleDesignUnits(it.advanceMeasurement, delimiterFontSize)
         } ?: baseRun.ascent + baseRun.descent
@@ -411,29 +479,47 @@ private fun MathLayoutPass.addBinomialParentheses(
         ) {
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MathVariantTooShort,
-                "$side parenthesis construction does not cover the binomial target",
-                node.range,
+                "$side parenthesis construction does not cover the ${if (generalizedChoose) "\\choose" else "binomial"} target",
+                delimiterSourceRange,
                 DiagnosticSeverity.Warning,
             )
         }
         decision(
-            "BinomialDelimiter",
+            if (generalizedChoose) "GeneralizedChooseDelimiter" else "BinomialDelimiter",
             node.range,
             "side" to side,
             "style" to style,
             "delimiterStyle" to delimiterStyle,
             "baseGlyphId" to baseGlyphId,
             "construction" to (construction?.kind ?: "BaseGlyph"),
-            "targetPolicy" to "LaTeX2eXeTeXGenfracFixedStyleTarget",
-            "targetSource" to "amsmath-genfrac-XeTeX-fallback-no-OpenType-delim1-delim2",
+            "fractionOrigin" to node.origin,
+            "targetPolicy" to if (generalizedChoose) {
+                "XeTeXPrimitiveFractionDelim1Delim2OpenTypeMapping"
+            } else {
+                "LaTeX2eXeTeXGenfracFixedStyleTarget"
+            },
+            "targetSource" to if (generalizedChoose) {
+                "xetex-math.c-make_fraction-and-xetex-XeTeXOTMath.cpp-get_native_mathsy_param"
+            } else {
+                "amsmath-genfrac-XeTeX-fallback-no-OpenType-delim1-delim2"
+            },
             "targetEmFactor" to targetEmFactor,
+            "chooseTargetParameter" to chooseTargetParameter,
+            "delimitedSubFormulaMinHeightPx" to delimitedSubFormulaMinHeightPx,
+            "chooseNonDisplayTargetPx" to if (generalizedChoose) chooseNonDisplayTargetPx else null,
             "targetReferenceFontSizePx" to targetReferenceSize,
             "delimiterFontSizePx" to delimiterFontSize,
-            "delimiterAxisPolicy" to "InnerTextStyleVarDelimiterAxis",
+            "delimiterAxisPolicy" to if (generalizedChoose) {
+                "XeTeXCurrentMathSizeVarDelimiterAxis"
+            } else {
+                "InnerTextStyleVarDelimiterAxis"
+            },
             "axisY" to axisY,
-            "boundsSource" to (componentRuns?.joinToString(",") { it.second.boundsSource.toString() }
+            "boundsSource" to (componentMeasurements?.joinToString(",") { it.second.run.boundsSource.toString() }
                 ?: baseRun.boundsSource.toString()),
-            "delimitedSubFormulaMinHeightUsed" to false,
+            "outlineEvidenceAvailable" to outlineAvailable,
+            "constructionPaintGroupId" to paintGroup?.id,
+            "delimitedSubFormulaMinHeightUsed" to delimitedSubFormulaMinHeightUsed,
             "targetPx" to targetHeight,
             "achievedAdvancePx" to achievedAdvance,
             "reachesTarget" to (achievedAdvance + GEOMETRY_EPSILON_PX >= targetHeight),
@@ -463,8 +549,41 @@ private fun MathLayoutPass.addBinomialParentheses(
         return box
     }
 
-    val leftBox = delimiterBox("left", leftConstruction, leftBase)
-    val rightBox = delimiterBox("right", rightConstruction, rightBase)
+    val leftBox = delimiterBox("left", leftConstruction, leftBaseMeasurement)
+    val rightBox = delimiterBox("right", rightConstruction, rightBaseMeasurement)
+    if (generalizedChoose) {
+        // A primitive \choose fraction noad owns real left/right delimiters directly; unlike
+        // LaTeX's genfrac wrapper, there are no synthetic null delimiters or cancellation kerns.
+        val stackX = leftBox.width
+        val rightX = stackX + stack.width
+        val shiftedStack = stack.translated(stackX, 0f)
+        val shiftedRight = rightBox.translated(rightX, 0f)
+        decision(
+            "TeXGeneralizedChooseFractionNoadPacking",
+            node.range,
+            "leftDelimiterX" to 0f,
+            "leftDelimiterAdvancePx" to leftBox.width,
+            "stackX" to stackX,
+            "stackAdvancePx" to stack.width,
+            "rightDelimiterX" to rightX,
+            "rightDelimiterAdvancePx" to rightBox.width,
+            "totalAdvancePx" to (rightX + rightBox.width),
+            "nullDelimiterSpaceUsed" to false,
+            "policy" to "XeTeXPrimitiveFractionRealDelimiterPacking",
+        )
+        return geometryExtentsPreservingLogicalChildren(
+            rightX + rightBox.width,
+            leftBox.glyphs + shiftedStack.glyphs + shiftedRight.glyphs,
+            leftBox.rules + shiftedStack.rules + shiftedRight.rules,
+            node.range,
+            listOf(
+                leftBox to 0f,
+                stack to 0f,
+                rightBox to 0f,
+            ),
+            hostTextRuns = leftBox.hostTextRuns + shiftedStack.hostTextRuns + shiftedRight.hostTextRuns,
+        )
+    }
     // The primitive fraction noad contains a null delimiter box on both sides. LaTeX2e's
     // XeTeX genfrac wrapper places real delimiters outside it and cancels those two spaces
     // with explicit negative kerns. The visible stack therefore starts at leftBox.width and

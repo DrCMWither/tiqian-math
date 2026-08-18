@@ -16,6 +16,8 @@
 }
 \newcommand{\runoracles}[1]{%
   \traceformula{#1-ATOP}{{a\atop b}}%
+  \traceformula{#1-CHOOSE}{{a\choose b}}%
+  \traceformula{#1-CHOOSE-DISPLAY}{\displaystyle{a\choose b}}%
   \traceformula{#1-BF}{\bf{0}}%
   \traceformula{#1-BF-MIXED}{\bf{0+x+\alpha+\sum}}%
   \traceformula{#1-NOT}{\mu\not\equiv\mu}%
@@ -26,6 +28,6 @@
 \begin{document}
 \setmathfont[Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/]{LeteSansMath-Regular.otf}
 \runoracles{LETE}
-\setmathfont[Path=../../font/stix/src/jvmMain/resources/org/tiqian/math/fonts/]{STIXTwoMath-Regular.otf}
+\setmathfont[Path=../../font/stix/src/commonMain/resources/org/tiqian/math/host-fonts/stix/]{regular.otf}
 \runoracles{STIX}
 \end{document}

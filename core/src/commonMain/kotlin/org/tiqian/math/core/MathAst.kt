@@ -706,6 +706,7 @@ enum class MathFractionOrigin {
     DisplayFraction,
     ContinuedFraction,
     GeneralizedAtop,
+    GeneralizedChoose,
 }
 
 enum class MathFractionAlignment { Center, Left, Right }

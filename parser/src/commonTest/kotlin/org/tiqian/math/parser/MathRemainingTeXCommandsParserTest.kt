@@ -22,6 +22,21 @@ class MathRemainingTeXCommandsParserTest {
     }
 
     @Test
+    fun chooseSplitsTheContainingMathListAndRequestsParenthesizedRulelessPacking() {
+        val source = "{A-a\\choose i-j}"
+        val parsed = MathParser().parse(source)
+
+        assertTrue(parsed.diagnostics.isEmpty(), parsed.diagnostics.toString())
+        val fraction = assertIs<MathFraction>(assertIs<MathGroup>(parsed.root.children.single()).body.children.single())
+        assertEquals(MathFractionOrigin.GeneralizedChoose, fraction.origin)
+        assertEquals(FractionKind.Ruleless, fraction.kind)
+        assertTrue(fraction.hasParentheses)
+        assertEquals("\\choose", source.substring(fraction.commandRange.start, fraction.commandRange.endExclusive))
+        assertEquals("A-a", source.substring(fraction.numerator.range.start, fraction.numerator.range.endExclusive))
+        assertEquals("i-j", source.substring(fraction.denominator.range.start, fraction.denominator.range.endExclusive))
+    }
+
+    @Test
     fun malformedGeneralizedFractionsAreExplicitAndRecoverable() {
         val missingNumerator = MathParser().parse("{\\atop b}")
         assertTrue(missingNumerator.diagnostics.any {
@@ -33,6 +48,17 @@ class MathRemainingTeXCommandsParserTest {
         })
         val ambiguous = MathParser().parse("{a\\atop b\\atop c}")
         assertTrue(ambiguous.diagnostics.any { it.code == DiagnosticCode.AmbiguousGeneralizedFraction })
+        val mixed = MathParser().parse("{a\\choose b\\atop c}")
+        assertTrue(mixed.diagnostics.any { it.code == DiagnosticCode.AmbiguousGeneralizedFraction })
+
+        val missingChooseNumerator = MathParser().parse("{\\choose b}")
+        assertTrue(missingChooseNumerator.diagnostics.any {
+            it.code == DiagnosticCode.MissingGeneralizedFractionNumerator
+        })
+        val missingChooseDenominator = MathParser().parse("{a\\choose}")
+        assertTrue(missingChooseDenominator.diagnostics.any {
+            it.code == DiagnosticCode.MissingGeneralizedFractionDenominator
+        })
     }
 
     @Test
