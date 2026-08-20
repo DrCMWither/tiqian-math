@@ -318,11 +318,18 @@ internal object TeXMathSymbolTable {
     private val largeOperators = mapOf(
         "sum" to MathLargeOperatorIdentity.Sum,
         "prod" to MathLargeOperatorIdentity.Product,
+        "coprod" to MathLargeOperatorIdentity.Coproduct,
         "int" to MathLargeOperatorIdentity.Integral,
+        "smallint" to MathLargeOperatorIdentity.SmallIntegral,
         "oint" to MathLargeOperatorIdentity.ContourIntegral,
+        "bigwedge" to MathLargeOperatorIdentity.BigLogicalAnd,
+        "bigvee" to MathLargeOperatorIdentity.BigLogicalOr,
         "bigcap" to MathLargeOperatorIdentity.BigIntersection,
         "bigcup" to MathLargeOperatorIdentity.BigUnion,
+        "bigodot" to MathLargeOperatorIdentity.BigCircledDot,
+        "bigoplus" to MathLargeOperatorIdentity.BigCircledPlus,
         "bigotimes" to MathLargeOperatorIdentity.BigCircledTimes,
+        "biguplus" to MathLargeOperatorIdentity.BigDisjointUnion,
     )
 
     private val controlSymbols = mapOf(

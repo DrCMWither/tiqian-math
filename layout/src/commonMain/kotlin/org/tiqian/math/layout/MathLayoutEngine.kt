@@ -326,6 +326,7 @@ internal class MathLayoutPass(
         is MathOperator -> layoutOperator(node, style, alphabetOverride)
         is MathOperatorName -> layoutOperatorName(node, style, alphabetOverride)
         is MathOperatorNoad -> layoutOperatorNoad(node, style, alphabetOverride)
+        is MathModulo -> layoutModulo(node, style, alphabetOverride)
         is MathText -> layoutText(node, style)
         is MathAccent -> layoutAccent(node, style, alphabetOverride)
         is MathBraceNoad -> layoutBraceNoad(node, style, alphabetOverride)
@@ -926,6 +927,7 @@ internal class MathLayoutPass(
         const val TEX_CASES_STRUT_ASCENT_EM = 0.84f
         const val TEX_CASES_STRUT_DESCENT_EM = 0.36f
         const val TEX_ALIGNED_ROW_GAP_EM = 1f / 6f
+        const val TEX_SMALL_MATRIX_LINE_SKIP_EM = 3f / 32f
         const val TEX_ALIGNED_PAIR_GAP_EM = 2f
         const val TEX_ARRAY_INTERCOLUMN_EM = 1f
         const val TEX_ARRAY_COLUMN_SEPARATION_EM = 0.5f

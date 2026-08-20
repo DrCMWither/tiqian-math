@@ -33,6 +33,7 @@ internal class ParserState(
     private var index = 0
     internal var structureDepth = 0
     internal val bboxDisplayContainerDepths = mutableListOf<Int>()
+    internal val rowSeparatorContainerDepths = mutableListOf<Int>()
 
     fun parse(): MathParseResult {
         val parsedRoot = parseList(stopAtClosingGroup = false, opening = null)
@@ -150,6 +151,7 @@ internal class ParserState(
             if (token.kind == MathTokenKind.ControlWord && token.text in GENERALIZED_FRACTION_COMMANDS) {
                 advance()
                 val isChoose = token.text == "choose"
+                val isOver = token.text == "over"
                 val command = "\\${token.text}"
                 if (!generalizedFractionAllowed) {
                     diagnostics += MathDiagnostic(
@@ -187,13 +189,13 @@ internal class ParserState(
                 children += MathFraction(
                     numerator = numerator,
                     denominator = denominator,
-                    kind = FractionKind.Ruleless,
+                    kind = if (isOver) FractionKind.Barred else FractionKind.Ruleless,
                     hasParentheses = isChoose,
                     range = fractionRange,
-                    origin = if (isChoose) {
-                        MathFractionOrigin.GeneralizedChoose
-                    } else {
-                        MathFractionOrigin.GeneralizedAtop
+                    origin = when {
+                        isChoose -> MathFractionOrigin.GeneralizedChoose
+                        isOver -> MathFractionOrigin.GeneralizedOver
+                        else -> MathFractionOrigin.GeneralizedAtop
                     },
                     commandRange = token.range,
                 )
@@ -475,7 +477,7 @@ internal class ParserState(
     }
 
     internal companion object {
-        val GENERALIZED_FRACTION_COMMANDS = setOf("atop", "choose")
+        val GENERALIZED_FRACTION_COMMANDS = setOf("over", "atop", "choose")
 
         val styleCommands = mapOf(
             "displaystyle" to MathStyleLevel.Display,
@@ -517,6 +519,11 @@ internal class ParserState(
         }
 
         val accentCommands = mapOf(
+            "acute" to MathAccentIdentity.Acute,
+            "grave" to MathAccentIdentity.Grave,
+            "breve" to MathAccentIdentity.Breve,
+            "check" to MathAccentIdentity.Check,
+            "mathring" to MathAccentIdentity.Ring,
             "hat" to MathAccentIdentity.Hat,
             "bar" to MathAccentIdentity.Bar,
             "tilde" to MathAccentIdentity.Tilde,
@@ -525,6 +532,10 @@ internal class ParserState(
             "vec" to MathAccentIdentity.Vec,
             "widehat" to MathAccentIdentity.WideHat,
             "widetilde" to MathAccentIdentity.WideTilde,
+            "overleftarrow" to MathAccentIdentity.OverLeftArrow,
+            "overrightarrow" to MathAccentIdentity.OverRightArrow,
+            "underleftarrow" to MathAccentIdentity.UnderLeftArrow,
+            "underrightarrow" to MathAccentIdentity.UnderRightArrow,
         )
 
         val ruleDecorationCommands = mapOf(

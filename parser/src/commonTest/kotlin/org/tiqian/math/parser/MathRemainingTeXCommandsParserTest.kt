@@ -8,6 +8,18 @@ import org.tiqian.math.core.*
 
 class MathRemainingTeXCommandsParserTest {
     @Test
+    fun generalizedOverConsumesTheContainingMathListAsABarredFraction() {
+        val result = MathParser().parse("{a+b\\over c+d}")
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        val group = assertIs<MathGroup>(result.root.children.single())
+        val fraction = assertIs<MathFraction>(group.body.children.single())
+        assertEquals(MathFractionOrigin.GeneralizedOver, fraction.origin)
+        assertEquals(FractionKind.Barred, fraction.kind)
+        assertEquals("a+b", result.source.substring(fraction.numerator.range.start, fraction.numerator.range.endExclusive))
+        assertEquals("c+d", result.source.substring(fraction.denominator.range.start, fraction.denominator.range.endExclusive))
+    }
+
+    @Test
     fun atopSplitsTheContainingMathListInsteadOfBehavingLikeAPrefixCommand() {
         val source = "{g_1;S=X\\cup Y \\atop i+j=n-2}"
         val parsed = MathParser().parse(source)

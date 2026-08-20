@@ -87,6 +87,52 @@ class MathTableEnvironmentParserTest {
     }
 
     @Test
+    fun smallAndGatheredMatricesRetainTheirEnvironmentSemantics() {
+        val small = MathParser().parse("\\begin{smallmatrix}a&b\\\\c&d\\end{smallmatrix}")
+        assertTrue(small.diagnostics.isEmpty(), small.diagnostics.toString())
+        val smallTable = assertIs<MathTable>(small.root.children.single())
+        assertEquals(MathTableEnvironment.SmallMatrix, smallTable.environment)
+        assertEquals(listOf(2, 2), smallTable.rows.map { it.cells.size })
+
+        val gathered = MathParser().parse("\\begin{gathered}a=b\\\\c=d\\end{gathered}")
+        assertTrue(gathered.diagnostics.isEmpty(), gathered.diagnostics.toString())
+        val gatheredTable = assertIs<MathTable>(gathered.root.children.single())
+        assertEquals(MathTableEnvironment.Gathered, gatheredTable.environment)
+        assertEquals(listOf(1, 1), gatheredTable.rows.map { it.cells.size })
+    }
+
+    @Test
+    fun gatherDocumentEnvironmentsUseTheCenteredDisplayTableKernel() {
+        listOf("gather", "gather*").forEach { environment ->
+            val parsed = MathParser().parse("\\begin{$environment}a=b\\\\c=d\\end{$environment}")
+            assertTrue(parsed.diagnostics.isEmpty(), "$environment ${parsed.diagnostics}")
+            val display = assertIs<MathDisplayEnvironment>(parsed.root.children.single())
+            assertTrue(display.kind.alignment)
+            val table = assertIs<MathTable>(display.body)
+            assertEquals(MathTableEnvironment.Gathered, table.environment)
+            assertEquals(listOf(1, 1), table.rows.map { it.cells.size })
+        }
+    }
+
+    @Test
+    fun gatheredRejectsAlignmentTabsWithoutDroppingFollowingContent() {
+        listOf("gathered", "gather", "gather*").forEach { environment ->
+            val source = "\\begin{$environment}a&=b\\\\c=d\\end{$environment}"
+            val parsed = MathParser().parse(source)
+            val diagnostic = parsed.diagnostics.single { it.code == DiagnosticCode.UnexpectedAlignmentTab }
+            assertEquals("&", source.substring(diagnostic.range.start, diagnostic.range.endExclusive))
+            val table = when (val root = parsed.root.children.single()) {
+                is MathTable -> root
+                is MathDisplayEnvironment -> assertIs<MathTable>(root.body)
+                else -> error("unexpected ${root::class.simpleName}")
+            }
+            assertEquals(listOf(2, 1), table.rows.map { it.cells.size })
+            assertEquals("=b", source.substring(table.rows.first().cells.last().range.start, table.rows.first().cells.last().range.endExclusive))
+            assertEquals("c=d", source.substring(table.rows.last().range.start, table.rows.last().range.endExclusive))
+        }
+    }
+
+    @Test
     fun optionalRowSpacingRetainsDimensionAndExactRanges() {
         val source = "\\begin{aligned}a&=b\\\\[.2cm]c&=d\\end{aligned}"
         val parsed = MathParser().parse(source)

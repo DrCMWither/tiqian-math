@@ -20,7 +20,7 @@ internal fun ParserState.parseControlSymbol(token: MathToken): MathNode {
         return MathExplicitSpace(sourceSlice(token.range), mu, token.range)
     }
     if (token.text == "\\") {
-        if (structureDepth == 0) {
+        if (structureDepth == 0 || structureDepth in rowSeparatorContainerDepths) {
             val spacing = parseOptionalRowSpacing(token)
             return MathExplicitRowBreak(
                 separatorRange = token.range,
@@ -204,6 +204,64 @@ internal fun ParserState.parseControlWord(token: MathToken): MathNode {
             range = token.range.cover(nucleus.range),
         )
     }
+    if (token.text == "bmod" || token.text == "mod" || token.text == "pmod") {
+        val argument = if (token.text == "pmod") parseRequiredArgument(token, "modulus") else null
+        val kind = when (token.text) {
+            "bmod" -> MathModuloKind.Binary
+            "pmod" -> MathModuloKind.Parenthesized
+            else -> MathModuloKind.Plain
+        }
+        return MathModulo(
+            kind = kind,
+            argument = argument,
+            commandRange = token.range,
+            range = argument?.range?.let(token.range::cover) ?: token.range,
+        )
+    }
+    if (token.text == "substack") {
+        skipIgnored()
+        val rowDepth = structureDepth + if (peek().kind == MathTokenKind.OpenGroup) 1 else 0
+        rowSeparatorContainerDepths += rowDepth
+        val argument = try {
+            parseRequiredArgument(token, "substack rows")
+        } finally {
+            rowSeparatorContainerDepths.removeAt(rowSeparatorContainerDepths.lastIndex)
+        }
+        val body = when (argument) {
+            is MathGroup -> argument.body
+            is MathList -> argument
+            else -> MathList(listOf(argument), argument.range)
+        }
+        val rowNodes = mutableListOf<MathNode>()
+        val rows = mutableListOf<MathTableRow>()
+        fun finishRow(separator: MathExplicitRowBreak?) {
+            val rowRange = rowNodes.firstOrNull()?.range?.cover(rowNodes.last().range)
+                ?: SourceRange(separator?.range?.start ?: body.range.endExclusive, separator?.range?.start ?: body.range.endExclusive)
+            val cell = MathTableCell(MathList(rowNodes.toList(), rowRange), range = rowRange)
+            rows += MathTableRow(
+                cells = listOf(cell),
+                rowSeparatorRange = separator?.separatorRange,
+                additionalSpacing = separator?.additionalSpacing,
+                range = rowRange,
+            )
+            rowNodes.clear()
+        }
+        body.children.forEach { child ->
+            if (child is MathExplicitRowBreak) finishRow(child) else rowNodes += child
+        }
+        finishRow(null)
+        return MathTable(
+            environmentName = "substack",
+            environment = MathTableEnvironment.Substack,
+            rows = rows,
+            columnAlignments = listOf(MathTableColumnAlignment.Center),
+            beginCommandRange = token.range,
+            beginNameRange = token.range,
+            endCommandRange = null,
+            endNameRange = null,
+            range = token.range.cover(argument.range),
+        )
+    }
     accentCommands[token.text]?.let { identity ->
         val argument = parseRequiredArgument(token, "accent base")
         return MathAccent(identity, token.range, argument, token.range.cover(argument.range))
@@ -283,12 +341,19 @@ internal fun ParserState.parseControlWord(token: MathToken): MathNode {
             range = token.range,
         )
     }
-    if (token.text == "frac" || token.text == "binom" || token.text == "dfrac" || token.text == "cfrac") {
+    if (
+        token.text == "frac" ||
+        token.text == "binom" ||
+        token.text == "tfrac" ||
+        token.text == "dfrac" ||
+        token.text == "cfrac"
+    ) {
         val continuedAlignment = if (token.text == "cfrac") parseContinuedFractionAlignment() else null
         val numerator = parseRequiredArgument(token, "numerator")
         val denominator = parseRequiredArgument(token, "denominator")
         val origin = when (token.text) {
             "binom" -> MathFractionOrigin.Binomial
+            "tfrac" -> MathFractionOrigin.TextFraction
             "dfrac" -> MathFractionOrigin.DisplayFraction
             "cfrac" -> MathFractionOrigin.ContinuedFraction
             else -> MathFractionOrigin.Fraction
@@ -300,10 +365,12 @@ internal fun ParserState.parseControlWord(token: MathToken): MathNode {
             hasParentheses = origin == MathFractionOrigin.Binomial,
             range = token.range.cover(numerator.range).cover(denominator.range),
             origin = origin,
-            styleOverride = if (origin == MathFractionOrigin.DisplayFraction || origin == MathFractionOrigin.ContinuedFraction) {
-                MathStyleLevel.Display
-            } else {
-                null
+            styleOverride = when (origin) {
+                MathFractionOrigin.TextFraction -> MathStyleLevel.Text
+                MathFractionOrigin.DisplayFraction,
+                MathFractionOrigin.ContinuedFraction,
+                -> MathStyleLevel.Display
+                else -> null
             },
             numeratorAlignment = continuedAlignment?.alignment ?: MathFractionAlignment.Center,
             numeratorStrut = origin == MathFractionOrigin.ContinuedFraction,

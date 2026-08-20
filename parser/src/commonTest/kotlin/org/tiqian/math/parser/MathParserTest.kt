@@ -220,24 +220,29 @@ class MathParserTest {
     }
 
     @Test
-    fun displayAndContinuedFractionsRetainStyleAlignmentAndSourceSemantics() {
-        val source = "\\dfrac{a}{b}+\\cfrac[l]{a}{bbbb}+\\cfrac[r]{x}{y}"
+    fun styledAndContinuedFractionsRetainStyleAlignmentAndSourceSemantics() {
+        val source = "\\tfrac{a}{b}+\\dfrac{a}{b}+\\cfrac[l]{a}{bbbb}+\\cfrac[r]{x}{y}"
         val result = MathParser().parse(source)
 
         assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
         val fractions = result.root.children.filterIsInstance<MathFraction>()
-        assertEquals(3, fractions.size)
-        assertEquals(MathFractionOrigin.DisplayFraction, fractions[0].origin)
-        assertEquals(MathStyleLevel.Display, fractions[0].styleOverride)
+        assertEquals(4, fractions.size)
+        assertEquals(MathFractionOrigin.TextFraction, fractions[0].origin)
+        assertEquals(MathStyleLevel.Text, fractions[0].styleOverride)
         assertTrue(fractions[0].retainRightNullDelimiterSpace)
+        assertEquals("\\tfrac", source.substring(fractions[0].commandRange.start, fractions[0].commandRange.endExclusive))
 
-        assertEquals(MathFractionOrigin.ContinuedFraction, fractions[1].origin)
-        assertEquals(MathFractionAlignment.Left, fractions[1].numeratorAlignment)
-        assertTrue(fractions[1].numeratorStrut)
-        assertTrue(!fractions[1].retainRightNullDelimiterSpace)
-        assertEquals("[l]", source.substring(fractions[1].alignmentRange!!.start, fractions[1].alignmentRange!!.endExclusive))
-        assertEquals(MathFractionAlignment.Right, fractions[2].numeratorAlignment)
-        assertEquals("[r]", source.substring(fractions[2].alignmentRange!!.start, fractions[2].alignmentRange!!.endExclusive))
+        assertEquals(MathFractionOrigin.DisplayFraction, fractions[1].origin)
+        assertEquals(MathStyleLevel.Display, fractions[1].styleOverride)
+        assertTrue(fractions[1].retainRightNullDelimiterSpace)
+
+        assertEquals(MathFractionOrigin.ContinuedFraction, fractions[2].origin)
+        assertEquals(MathFractionAlignment.Left, fractions[2].numeratorAlignment)
+        assertTrue(fractions[2].numeratorStrut)
+        assertTrue(!fractions[2].retainRightNullDelimiterSpace)
+        assertEquals("[l]", source.substring(fractions[2].alignmentRange!!.start, fractions[2].alignmentRange!!.endExclusive))
+        assertEquals(MathFractionAlignment.Right, fractions[3].numeratorAlignment)
+        assertEquals("[r]", source.substring(fractions[3].alignmentRange!!.start, fractions[3].alignmentRange!!.endExclusive))
     }
 
     @Test

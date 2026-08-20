@@ -337,14 +337,23 @@ enum class MathLargeOperatorIdentity(
     val debugName: String,
     val baseScalar: Int,
     val defaultLimitsPolicy: MathLimitsPolicy,
+    /** Plain TeX's `\smallint` stays at text size even in display style. */
+    val growsInDisplayStyle: Boolean = true,
 ) {
     Sum("sum", 0x2211, MathLimitsPolicy.Auto),
     Product("product", 0x220F, MathLimitsPolicy.Auto),
+    Coproduct("coproduct", 0x2210, MathLimitsPolicy.Auto),
     Integral("integral", 0x222B, MathLimitsPolicy.NoLimits),
+    SmallIntegral("small-integral", 0x222B, MathLimitsPolicy.NoLimits, growsInDisplayStyle = false),
     ContourIntegral("contour-integral", 0x222E, MathLimitsPolicy.NoLimits),
+    BigLogicalAnd("big-logical-and", 0x22C0, MathLimitsPolicy.Auto),
+    BigLogicalOr("big-logical-or", 0x22C1, MathLimitsPolicy.Auto),
     BigIntersection("big-intersection", 0x22C2, MathLimitsPolicy.Auto),
     BigUnion("big-union", 0x22C3, MathLimitsPolicy.Auto),
+    BigCircledDot("big-circled-dot", 0x2A00, MathLimitsPolicy.Auto),
+    BigCircledPlus("big-circled-plus", 0x2A01, MathLimitsPolicy.Auto),
     BigCircledTimes("big-circled-times", 0x2A02, MathLimitsPolicy.Auto),
+    BigDisjointUnion("big-disjoint-union", 0x2A04, MathLimitsPolicy.Auto),
 }
 
 /** A real TeX operator noad, kept distinct from a Unicode symbol with Operator spacing. */
@@ -417,6 +426,22 @@ data class MathOperatorName(
     val hasExplicitLimitsPolicy: Boolean get() = limitsModifierRange != null
 }
 
+/** amsmath's `\bmod`, `\mod`, and `\pmod` spacing forms. */
+enum class MathModuloKind { Binary, Plain, Parenthesized }
+
+data class MathModulo(
+    val kind: MathModuloKind,
+    val argument: MathNode? = null,
+    val commandRange: SourceRange,
+    override val range: SourceRange,
+) : MathNode {
+    val atomClass: MathAtomClass get() = if (kind == MathModuloKind.Binary) {
+        MathAtomClass.Binary
+    } else {
+        MathAtomClass.Ordinary
+    }
+}
+
 
 enum class MathAccentIdentity(
     val debugName: String,
@@ -424,6 +449,11 @@ enum class MathAccentIdentity(
     val wide: Boolean,
     val placement: MathAccentPlacement = MathAccentPlacement.Top,
 ) {
+    Acute("acute", 0x0301, false),
+    Grave("grave", 0x0300, false),
+    Breve("breve", 0x0306, false),
+    Check("check", 0x030C, false),
+    Ring("ring", 0x030A, false),
     Hat("hat", 0x0302, false),
     Bar("bar", 0x0304, false),
     Tilde("tilde", 0x0303, false),
@@ -432,6 +462,10 @@ enum class MathAccentIdentity(
     Vec("vec", 0x20D7, false),
     WideHat("widehat", 0x0302, true),
     WideTilde("widetilde", 0x0303, true),
+    OverLeftArrow("overleftarrow", 0x2190, true, MathAccentPlacement.Top),
+    OverRightArrow("overrightarrow", 0x2192, true, MathAccentPlacement.Top),
+    UnderLeftArrow("underleftarrow", 0x2190, true, MathAccentPlacement.Bottom),
+    UnderRightArrow("underrightarrow", 0x2192, true, MathAccentPlacement.Bottom),
     OverBrace("overbrace", 0x23DE, true, MathAccentPlacement.Top),
     UnderBrace("underbrace", 0x23DF, true, MathAccentPlacement.Bottom),
 }
@@ -546,6 +580,7 @@ enum class MathTableEnvironment(
     val rightDelimiter: MathDelimiterIdentity? = null,
 ) {
     Matrix("matrix"),
+    SmallMatrix("smallmatrix"),
     ParenthesizedMatrix("pmatrix", MathDelimiterIdentity.LeftParenthesis, MathDelimiterIdentity.RightParenthesis),
     BracketedMatrix("bmatrix", MathDelimiterIdentity.LeftBracket, MathDelimiterIdentity.RightBracket),
     Determinant("vmatrix", MathDelimiterIdentity.VerticalBar, MathDelimiterIdentity.VerticalBar),
@@ -553,6 +588,9 @@ enum class MathTableEnvironment(
     Aligned("aligned"),
     Cases("cases", MathDelimiterIdentity.LeftBrace, MathDelimiterIdentity.Invisible),
     Split("split"),
+    Gathered("gathered"),
+    /** amsmath `\substack`, represented by the common row/cell AST but not an environment. */
+    Substack("substack"),
 }
 
 enum class MathTableColumnAlignment { Left, Center, Right }
@@ -620,6 +658,8 @@ enum class MathDisplayEnvironmentKind(
     EquationStar("equation*", false, false),
     Align("align", true, true),
     AlignStar("align*", true, false),
+    Gather("gather", true, true),
+    GatherStar("gather*", true, false),
 }
 
 /**
@@ -703,9 +743,11 @@ enum class FractionKind {
 enum class MathFractionOrigin {
     Fraction,
     Binomial,
+    TextFraction,
     DisplayFraction,
     ContinuedFraction,
     GeneralizedAtop,
+    GeneralizedOver,
     GeneralizedChoose,
 }
 
@@ -718,7 +760,7 @@ data class MathFraction(
     val hasParentheses: Boolean,
     override val range: SourceRange,
     val origin: MathFractionOrigin = if (hasParentheses) MathFractionOrigin.Binomial else MathFractionOrigin.Fraction,
-    /** LaTeX `\dfrac` and amsmath `\cfrac` select display style inside their local group. */
+    /** amsmath `\tfrac`, `\dfrac`, and `\cfrac` select a local fraction style. */
     val styleOverride: MathStyleLevel? = null,
     /** `\cfrac[l]`/`\cfrac[r]` align only the numerator inside the common fraction width. */
     val numeratorAlignment: MathFractionAlignment = MathFractionAlignment.Center,

@@ -3,6 +3,7 @@ package org.tiqian.math.font.skia
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathStyle
@@ -10,6 +11,7 @@ import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathFormulaCapabilityResult
 
 /**
  * Reviewed Tectonic 0.17.0/XeTeX showbox oracle at 24bp with the repository OTFs.
@@ -23,7 +25,11 @@ class TectonicCommonExtensionsOracleTest {
             assertBox(expected, result.box.width, result.box.ascent, result.box.descent, oracle.label)
             val command = result.decisions.single { it.name == "TeXFractionCommand" }
             assertEquals(expected.origin, command.details["origin"], "${oracle.label}/${expected.source}")
-            assertEquals("Display", command.details["fractionStyle"], "${oracle.label}/${expected.source}")
+            assertEquals(
+                expected.fractionStyle ?: "Display",
+                command.details["fractionStyle"],
+                "${oracle.label}/${expected.source}",
+            )
             assertTrue(result.diagnostics.isEmpty(), "${oracle.label}/${expected.source}: ${result.diagnostics}")
         }
 
@@ -98,10 +104,29 @@ class TectonicCommonExtensionsOracleTest {
             val fraction = cfrac.decisions.single { it.name == "TeXFractionCommand" }
             assertEquals(style.name, fraction.details["outerStyle"], "${oracle.label}/$style cfrac outer")
             assertEquals("Display", fraction.details["fractionStyle"], "${oracle.label}/$style cfrac inner")
+
+            val tfrac = engine.layout("\\tfrac{a}{b}", options().copy(initialStyle = style))
+            val textFraction = tfrac.decisions.single { it.name == "TeXFractionCommand" }
+            assertEquals(style.name, textFraction.details["outerStyle"], "${oracle.label}/$style tfrac outer")
+            assertEquals("Text", textFraction.details["fractionStyle"], "${oracle.label}/$style tfrac inner")
             assertTrue(brace.diagnostics.isEmpty(), "${oracle.label}/$style brace: ${brace.diagnostics}")
             assertTrue(operator.diagnostics.isEmpty(), "${oracle.label}/$style mathop: ${operator.diagnostics}")
             assertTrue(cfrac.diagnostics.isEmpty(), "${oracle.label}/$style cfrac: ${cfrac.diagnostics}")
+            assertTrue(tfrac.diagnostics.isEmpty(), "${oracle.label}/$style tfrac: ${tfrac.diagnostics}")
         }
+    }
+
+    @Test
+    fun zhihuIntegralWithTextFractionIsProductionReadyForBothFonts() = withOracles { oracle, _ ->
+        val source = "I=\\int_{\\pi/2}^{0}\\ln\\!\\big(\\sin(\\tfrac{\\pi}{2}-t)\\big)(-\\mathrm{d}t)"
+        val ready = assertIs<MathFormulaCapabilityResult.Ready>(
+            oracle.face.formulaCapabilityEngine().evaluate(source, options()),
+        )
+        val fraction = ready.layoutResult.decisions.single { it.name == "TeXFractionCommand" }
+        assertEquals("TextFraction", fraction.details["origin"], oracle.label)
+        assertEquals("Text", fraction.details["fractionStyle"], oracle.label)
+        assertTrue(ready.layoutResult.box.glyphs.isNotEmpty(), oracle.label)
+        assertTrue(ready.diagnostics.isEmpty(), "${oracle.label}: ${ready.diagnostics}")
     }
 
     private fun options() = MathLayoutOptions(
@@ -124,6 +149,15 @@ class TectonicCommonExtensionsOracleTest {
             "Lete Sans Math",
             SkiaMathFontFace(LeteSansMath.load()),
             fractions = listOf(
+                ExpectedBox("\\tfrac{a}{b}", 12.01192f, 19.54297f, 11.68246f, "TextFraction", "Text"),
+                ExpectedBox(
+                    "\\displaystyle\\tfrac{a}{b}",
+                    12.01192f,
+                    19.54297f,
+                    11.68246f,
+                    "TextFraction",
+                    "Text",
+                ),
                 ExpectedBox("\\dfrac{a}{b}", 16.13129f, 26.35594f, 17.03342f, "DisplayFraction"),
                 ExpectedBox("\\cfrac{a}{b}", 14.93129f, 36.44878f, 17.03342f, "ContinuedFraction"),
                 ExpectedBox("\\cfrac[l]{a}{bbbb}", 56.12517f, 36.44878f, 17.03342f, "ContinuedFraction"),
@@ -153,6 +187,15 @@ class TectonicCommonExtensionsOracleTest {
             "STIX Two Math",
             SkiaMathFontFace(StixTwoMath.load()),
             fractions = listOf(
+                ExpectedBox("\\tfrac{a}{b}", 12.66957f, 22.81232f, 14.31337f, "TextFraction", "Text"),
+                ExpectedBox(
+                    "\\displaystyle\\tfrac{a}{b}",
+                    12.66957f,
+                    22.81232f,
+                    14.31337f,
+                    "TextFraction",
+                    "Text",
+                ),
                 ExpectedBox("\\dfrac{a}{b}", 15.76994f, 26.95834f, 15.70831f, "DisplayFraction"),
                 ExpectedBox("\\cfrac{a}{b}", 14.56995f, 34.73833f, 15.70831f, "ContinuedFraction"),
                 ExpectedBox("\\cfrac[l]{a}{bbbb}", 51.5963f, 34.73833f, 15.70831f, "ContinuedFraction"),
@@ -195,6 +238,7 @@ class TectonicCommonExtensionsOracleTest {
         val ascentPt: Float,
         val descentPt: Float,
         val origin: String,
+        val fractionStyle: String? = null,
     )
 
     private class OperatorBox(

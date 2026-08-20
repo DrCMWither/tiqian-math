@@ -31,6 +31,7 @@ import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_ARRAY_STRUT_DESCENT_E
 import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_CASES_STRUT_ASCENT_EM
 import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_CASES_STRUT_DESCENT_EM
 import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_POINT_TO_PX
+import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_SMALL_MATRIX_LINE_SKIP_EM
 import org.tiqian.math.layout.MathLayoutPass.DelimiterTargetEvidence
 import org.tiqian.math.layout.MathLayoutPass.LaidNode
 import org.tiqian.math.layout.MathLayoutPass.MathAlphabetOverride
@@ -40,11 +41,18 @@ internal fun MathLayoutPass.layoutTable(
     style: MathStyle,
     alphabetOverride: MathAlphabetOverride?,
 ): LaidNode {
+    val substack = node.environment == MathTableEnvironment.Substack
+    val smallMatrix = node.environment == MathTableEnvironment.SmallMatrix
+    val gathered = node.environment == MathTableEnvironment.Gathered
     val preservesEntryStyle = node.environment in setOf(
         MathTableEnvironment.Aligned,
         MathTableEnvironment.Split,
     )
-    val cellStyle = if (preservesEntryStyle) {
+    val cellStyle = if (substack || smallMatrix) {
+        MathStyle.Script
+    } else if (gathered) {
+        MathStyle.Display
+    } else if (preservesEntryStyle) {
         style
     } else {
         when (style.level) {
@@ -93,6 +101,7 @@ internal fun MathLayoutPass.layoutTable(
             MathTableEnvironment.Split,
             -> if (column % 2 == 0) MathTableColumnAlignment.Right else MathTableColumnAlignment.Left
             MathTableEnvironment.Cases -> MathTableColumnAlignment.Left
+            MathTableEnvironment.Gathered -> MathTableColumnAlignment.Center
             else -> MathTableColumnAlignment.Center
         }
     }
@@ -103,8 +112,8 @@ internal fun MathLayoutPass.layoutTable(
     val cases = node.environment == MathTableEnvironment.Cases
     val strutAscentEm = if (cases) TEX_CASES_STRUT_ASCENT_EM else TEX_ARRAY_STRUT_ASCENT_EM
     val strutDescentEm = if (cases) TEX_CASES_STRUT_DESCENT_EM else TEX_ARRAY_STRUT_DESCENT_EM
-    val minimumRowAscent = strutAscentEm * size
-    val minimumRowDescent = strutDescentEm * size
+    val minimumRowAscent = if (substack || smallMatrix) 0f else strutAscentEm * size
+    val minimumRowDescent = if (substack || smallMatrix) 0f else strutDescentEm * size
     val rowAdditionalSpacingPx = node.rows.map { row ->
         row.additionalSpacing?.let { resolveTeXDimension(it, size) } ?: 0f
     }
@@ -127,21 +136,36 @@ internal fun MathLayoutPass.layoutTable(
     val columnGaps = List((columnCount - 1).coerceAtLeast(0)) { boundary ->
         when (node.environment) {
             MathTableEnvironment.Matrix,
+            MathTableEnvironment.SmallMatrix,
             MathTableEnvironment.ParenthesizedMatrix,
             MathTableEnvironment.BracketedMatrix,
             MathTableEnvironment.Determinant,
             MathTableEnvironment.Array,
-            -> arrayColumnSeparation * 2f
+            -> if (smallMatrix) {
+                5f * fontSize(style) / 18f
+            } else {
+                arrayColumnSeparation * 2f
+            }
 
             MathTableEnvironment.Aligned,
             MathTableEnvironment.Split,
             -> if (boundary % 2 == 1) TEX_ALIGNED_PAIR_GAP_EM * size else 0f
 
+            MathTableEnvironment.Substack -> 0f
+
             else -> TEX_ARRAY_INTERCOLUMN_EM * size
         }
     }
     val rowGapEm = if (preservesEntryStyle && node.rows.size > 1) TEX_ALIGNED_ROW_GAP_EM else 0f
-    val baseRowGap = rowGapEm * size
+    val baseRowGap = if (substack) {
+        scale(constants.stackGapMin, MathStyle.Script)
+    } else if (smallMatrix) {
+        TEX_SMALL_MATRIX_LINE_SKIP_EM * fontSize(style)
+    } else if (gathered && node.rows.size > 1) {
+        TEX_ALIGNED_ROW_GAP_EM * fontSize(style)
+    } else {
+        rowGapEm * size
+    }
     val rowGaps = List((node.rows.size - 1).coerceAtLeast(0)) { rowIndex ->
         baseRowGap + if (preservesEntryStyle) rowAdditionalSpacingPx[rowIndex] else 0f
     }
@@ -152,10 +176,10 @@ internal fun MathLayoutPass.layoutTable(
     }
     val horizontalRulesByBoundary = node.horizontalRules.groupBy { it.boundaryIndex }
     val horizontalRuleTotalHeight = node.horizontalRules.size * arrayRuleThicknessPx
-    val outerPadding = if (node.environment == MathTableEnvironment.Array) {
-        arrayColumnSeparation
-    } else {
-        0f
+    val outerPadding = when {
+        node.environment == MathTableEnvironment.Array -> arrayColumnSeparation
+        smallMatrix -> 3f * fontSize(style) / 18f
+        else -> 0f
     }
     val bodyWidth = outerPadding * 2f + columnWidths.sum() + columnGaps.sum()
     val bodyHeight = rowAscents.zip(rowDescents).sumOf { (ascent, descent) ->
@@ -276,6 +300,10 @@ internal fun MathLayoutPass.layoutTable(
         "columnGapsPx" to columnGaps.joinToString(","),
         "rowGapEm" to rowGapEm,
         "baseRowGapPx" to baseRowGap,
+        "substackRowGapParameter" to if (substack) "fontdimen10-scriptfont-symbols/StackGapMin" else null,
+        "smallMatrixOuterPaddingMu" to if (smallMatrix) 3f else null,
+        "smallMatrixInterColumnMu" to if (smallMatrix) 5f else null,
+        "smallMatrixLineSkipEm" to if (smallMatrix) TEX_SMALL_MATRIX_LINE_SKIP_EM else null,
         "rowAdditionalSpacingPx" to rowAdditionalSpacingPx.joinToString(","),
         "rowGapsPx" to rowGaps.joinToString(","),
         "trailingExplicitRowSpacingPx" to trailingExplicitRowSpacing,
@@ -293,7 +321,12 @@ internal fun MathLayoutPass.layoutTable(
         "bodyDescentPx" to bodyBox.descent,
         "logicalAdvancePx" to completed.width,
         "groupBreakPolicy" to "UnbreakableTeXTableInnerNoad",
-        "policy" to "LaTeXEnvironmentSpecificStyleArrayStrutAndAxisCenteredVcenter",
+        "policy" to when {
+            substack -> "AmsmathSubarrayScriptStyleFontdimen10BaselineSkipAndAxisCenteredVcenter"
+            smallMatrix -> "AmsmathSmallMatrixScriptStyleThreeMuOuterFiveMuColumnsAndLineSkip"
+            gathered -> "AmsmathGatheredDisplayStyleCenteredRowsAndArrayStrut"
+            else -> "LaTeXEnvironmentSpecificStyleArrayStrutAndAxisCenteredVcenter"
+        },
     )
     return LaidNode(
         node,

@@ -1,0 +1,25 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\pagestyle{empty}
+\tracingonline=1
+\showboxbreadth=500
+\showboxdepth=500
+\errorcontextlines=-1
+\newbox\oraclebox
+\newcommand{\traceformula}[2]{%
+  \message{TIQIAN-BASIC-COMMAND-#1-BEGIN}%
+  \setbox\oraclebox=\hbox{\fontsize{24bp}{24bp}\selectfont$#2$}%
+  \showbox\oraclebox
+  \message{TIQIAN-BASIC-COMMAND-#1-END}%
+}
+\begin{document}
+\setmainfont[Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/]{LeteSansMath-Regular.otf}
+\setmathfont[Path=../../font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/]{LeteSansMath-Regular.otf}
+\traceformula{BMOD}{a\bmod b}
+\traceformula{MOD}{a\mod b}
+\traceformula{PMOD}{a\pmod b}
+\traceformula{SUBSTACK}{\sum_{\substack{i=1\\j=2}}^n}
+\traceformula{SMALLMATRIX}{\begin{smallmatrix}a&b\\c&d\end{smallmatrix}}
+\traceformula{GATHERED}{\begin{gathered}a=b\\c=d\end{gathered}}
+\end{document}

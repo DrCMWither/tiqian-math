@@ -166,6 +166,42 @@ class TiqianMathRenderTest {
     }
 
     @Test
+    fun basicCommandExtensionsReplayFromTheSharedLayoutResult() {
+        var observed: MathLayoutResult? = null
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            ImageComposeScene(width = 720, height = 220, density = Density(1f)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    TiqianMath(
+                        source = "a\\pmod b+\\sum_{\\substack{i=1\\\\j=2}}^n+" +
+                            "\\overrightarrow{AB}+\\coprod_i^n+" +
+                            "\\begin{smallmatrix}a&b\\\\c&d\\end{smallmatrix}",
+                        fontSizePx = 32f,
+                        fontFace = face,
+                        softWrap = false,
+                        onMathLayout = { observed = it },
+                    )
+                }
+            }.use { scene ->
+                val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                val result = assertNotNull(observed)
+                assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+                assertTrue(result.decisions.any { it.name == "AmsmathModulo" })
+                assertTrue(result.decisions.any {
+                    it.name == "TeXMathTable" && it.details["environment"] == "Substack"
+                })
+                assertTrue(result.decisions.any {
+                    it.name == "TeXMathTable" && it.details["environment"] == "SmallMatrix"
+                })
+                assertTrue(result.decisions.any { it.name == "OpenTypeMathAccent" })
+                val darkPixels = (0 until pixels.height).sumOf { y ->
+                    (0 until pixels.width).count { x -> pixels[x, y].red < 0.5f }
+                }
+                assertTrue(darkPixels > 500, "all extension glyphs must be replayed: $darkPixels")
+            }
+        }
+    }
+
+    @Test
     fun mathJaxBboxBackgroundIsReplayedBeforeGlyphsAndForegroundBorder() {
         var observed: MathLayoutResult? = null
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
@@ -627,7 +663,7 @@ class TiqianMathRenderTest {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
             var observed: MathLayoutResult? = null
             val source = "\\overbrace{a+b+c+d+e}^{n}+\\underbrace{abcdefghijklmno}_{k}+" +
-                "\\dfrac{a}{b}+\\cfrac[l]{x}{bbbb}+\\mathop{rank}_0^1"
+                "\\tfrac{a}{b}+\\dfrac{a}{b}+\\cfrac[l]{x}{bbbb}+\\mathop{rank}_0^1"
             ImageComposeScene(width = 1500, height = 420, density = Density(1f)) {
                 Box(Modifier.fillMaxSize().background(Color.White)) {
                     TiqianMath(
@@ -647,6 +683,9 @@ class TiqianMathRenderTest {
                 assertEquals(2, layout.decisions.count { it.name == "TeXBraceOperatorNoad" })
                 assertEquals(2, layout.decisions.count {
                     it.name == "OpenTypeMathAccent" && it.details["identity"]?.endsWith("brace") == true
+                })
+                assertTrue(layout.decisions.any {
+                    it.name == "TeXFractionCommand" && it.details["origin"] == "TextFraction"
                 })
                 assertTrue(layout.decisions.any {
                     it.name == "TeXFractionCommand" && it.details["origin"] == "DisplayFraction"

@@ -50,21 +50,7 @@ internal fun MathLayoutPass.layoutOperatorName(
             scriptBaseKind = ScriptBaseKind.CompoundBox,
         )
     }
-    // Render the name as upright roman letters, then present the whole run as one Operator-class
-    // atom so inter-atom spacing (`2\sin x`, `\sin x`) is correct. Every letter maps back to the
-    // command's source range, so selection and source-partitioning treat the name as one unit.
-    val letters = node.name.map { ch ->
-        MathSymbol(
-            sourceText = ch.toString(),
-            identity = MathSymbolIdentity.LatinLetter(ch),
-            atomClass = MathAtomClass.Ordinary,
-            family = MathFamily.Operators,
-            familyBinding = MathFamilyBinding.Fixed,
-            alphabet = MathAlphabet.Roman,
-            range = node.commandRange,
-        )
-    }
-    val horizontal = layoutList(MathList(letters, node.commandRange), style, alphabetOverride)
+    val box = layoutBuiltInOperatorWord(node.name, node.commandRange, style, alphabetOverride)
     decision(
         "TeXMathOperatorName",
         node.range,
@@ -75,13 +61,35 @@ internal fun MathLayoutPass.layoutOperatorName(
         "modifierRange" to node.limitsModifierRange,
         "atomClass" to MathAtomClass.Operator,
     )
-    return horizontal.laid.copy(
+    return LaidNode(
         node = node,
-        box = horizontal.laid.box.copy(range = node.range),
+        box = box.copy(range = node.range),
         atomClass = MathAtomClass.Operator,
         italicCorrectionPx = 0f,
+        style = style,
         scriptBaseKind = ScriptBaseKind.CompoundBox,
     )
+}
+
+/** Upright operators-family word whose generated glyphs all retain the originating command range. */
+private fun MathLayoutPass.layoutBuiltInOperatorWord(
+    name: String,
+    commandRange: SourceRange,
+    style: MathStyle,
+    alphabetOverride: MathAlphabetOverride?,
+): MathBox {
+    val letters = name.map { ch ->
+        MathSymbol(
+            sourceText = ch.toString(),
+            identity = MathSymbolIdentity.LatinLetter(ch),
+            atomClass = MathAtomClass.Ordinary,
+            family = MathFamily.Operators,
+            familyBinding = MathFamilyBinding.Fixed,
+            alphabet = MathAlphabet.Roman,
+            range = commandRange,
+        )
+    }
+    return layoutList(MathList(letters, commandRange), style, alphabetOverride).laid.box
 }
 
 internal fun MathLayoutPass.layoutOperatorNoad(
@@ -109,6 +117,110 @@ internal fun MathLayoutPass.layoutOperatorNoad(
         italicCorrectionPx = 0f,
         style = style,
         scriptBaseKind = ScriptBaseKind.CompoundBox,
+    )
+}
+
+internal fun MathLayoutPass.layoutModulo(
+    node: MathModulo,
+    style: MathStyle,
+    alphabetOverride: MathAlphabetOverride?,
+): LaidNode {
+    val size = fontSize(style)
+    val mu = size / 18f
+    val tight = style.level == MathStyleLevel.Script || style.level == MathStyleLevel.ScriptScript
+    val name = layoutBuiltInOperatorWord("mod", node.commandRange, style, alphabetOverride).completedTeXBox()
+
+    fun delimiter(symbol: MathNamedSymbol): MathBox {
+        val synthetic = MathSymbol(
+            sourceText = when (symbol) {
+                MathNamedSymbol.LeftParenthesis -> "("
+                MathNamedSymbol.RightParenthesis -> ")"
+                else -> error("unexpected modulo delimiter $symbol")
+            },
+            identity = MathSymbolIdentity.Named(symbol),
+            atomClass = if (symbol == MathNamedSymbol.LeftParenthesis) MathAtomClass.Opening else MathAtomClass.Closing,
+            family = MathFamily.Operators,
+            familyBinding = MathFamilyBinding.Fixed,
+            range = node.commandRange,
+        )
+        return layoutSymbol(synthetic, style, alphabetOverride).box.completedTeXBox()
+    }
+
+    val leadingMu: Float
+    val trailingMu: Float
+    val children = mutableListOf<Pair<MathBox, Float>>()
+    var x = 0f
+    when (node.kind) {
+        MathModuloKind.Binary -> {
+            // plain/amsmath cancel the surrounding medmuskip in non-tight styles and leave
+            // exactly 5mu on each side. The list kernel still owns Bin classification/breaking.
+            leadingMu = if (tight) 5f else 1f
+            trailingMu = if (tight) 5f else 1f
+            children += name to x
+            x += name.width + trailingMu * mu
+        }
+        MathModuloKind.Plain -> {
+            leadingMu = if (style.level == MathStyleLevel.Display) 18f else 12f
+            trailingMu = 6f
+            children += name to x
+            x += name.width + trailingMu * mu
+        }
+        MathModuloKind.Parenthesized -> {
+            leadingMu = if (style.level == MathStyleLevel.Display) 18f else 8f
+            trailingMu = 0f
+            val left = delimiter(MathNamedSymbol.LeftParenthesis)
+            val right = delimiter(MathNamedSymbol.RightParenthesis)
+            val argument = layoutNode(checkNotNull(node.argument), style, alphabetOverride)
+                .completedTeXMathField().box
+            children += left to x
+            x += left.width
+            children += name to x
+            x += name.width + 6f * mu
+            children += argument to x
+            x += argument.width
+            children += right to x
+            x += right.width
+        }
+    }
+    val glyphs = children.flatMap { (box, offset) -> box.translated(offset, 0f).glyphs }
+    val rules = children.flatMap { (box, offset) -> box.translated(offset, 0f).rules }
+    val hostTextRuns = children.flatMap { (box, offset) -> box.translated(offset, 0f).hostTextRuns }
+    val box = geometryExtentsPreservingLogicalChildren(
+        width = x,
+        glyphs = glyphs,
+        rules = rules,
+        range = node.range,
+        children = children.map { it.first to 0f },
+        hostTextRuns = hostTextRuns,
+    )
+    decision(
+        "AmsmathModulo",
+        node.range,
+        "kind" to node.kind,
+        "style" to style,
+        "tightSpacingTable" to tight,
+        "muPx" to mu,
+        "leadingMu" to leadingMu,
+        "trailingMu" to trailingMu,
+        "nameFamily" to MathFamily.Operators,
+        "nameAlphabet" to MathAlphabet.Roman,
+        "nameFaceIds" to name.glyphs.joinToString(",") { it.faceId.toString() },
+        "argumentRange" to node.argument?.range,
+        "atomClass" to node.atomClass,
+        "spacingPolicy" to when (node.kind) {
+            MathModuloKind.Binary -> "PlainTeXBmodFiveMuAfterMedmuskipCancellation"
+            MathModuloKind.Plain -> "AmsmathModDisplay18MuText12MuThenSixMu"
+            MathModuloKind.Parenthesized -> "AmsmathPmodDisplay18MuText8MuThenSixMuInsideParentheses"
+        },
+    )
+    return LaidNode(
+        node = node,
+        box = box,
+        atomClass = node.atomClass,
+        italicCorrectionPx = 0f,
+        style = style,
+        scriptBaseKind = ScriptBaseKind.CompoundBox,
+        horizontalKernPx = leadingMu * mu,
     )
 }
 
@@ -189,7 +301,7 @@ internal fun MathLayoutPass.layoutOperator(
         )
     }
 
-    val display = style.level == MathStyleLevel.Display
+    val display = style.level == MathStyleLevel.Display && node.identity.growsInDisplayStyle
     val normalGlyphExtent = resolved.run.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f
     // XeTeX make_op uses the larger of DisplayOperatorMinHeight and 5/4 of the
     // normal native glyph's exact height+depth as the variant-selection target.
@@ -268,6 +380,7 @@ internal fun MathLayoutPass.layoutOperator(
         "sourceText" to node.sourceText,
         "commandRange" to node.commandRange,
         "identity" to node.identity.debugName,
+        "growsInDisplayStyle" to node.identity.growsInDisplayStyle,
         "atomClass" to node.atomClass,
         "family" to node.family,
         "baseScalar" to unicodeLabel(node.identity.baseScalar),

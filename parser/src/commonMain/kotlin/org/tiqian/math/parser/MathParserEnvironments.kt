@@ -27,7 +27,13 @@ internal fun ParserState.parseEnvironment(beginCommand: MathToken): MathNode {
         return parseSingleEquationEnvironment(beginCommand, parsedName, displayEnvironment)
     }
     val environment = tableEnvironments[parsedName.name]
-        ?: if (displayEnvironment?.alignment == true) MathTableEnvironment.Aligned else null
+        ?: when (displayEnvironment) {
+            MathDisplayEnvironmentKind.Gather,
+            MathDisplayEnvironmentKind.GatherStar,
+            -> MathTableEnvironment.Gathered
+            null -> null
+            else -> if (displayEnvironment.alignment) MathTableEnvironment.Aligned else null
+        }
     if (environment == null && displayEnvironment == null) {
         diagnostics += MathDiagnostic(
             DiagnosticCode.UnsupportedEnvironment,
@@ -138,6 +144,13 @@ internal fun ParserState.parseEnvironment(beginCommand: MathToken): MathNode {
                 }
                 token.kind == MathTokenKind.Symbol && token.text == "&" -> {
                     val separator = advance()
+                    if (environment == MathTableEnvironment.Gathered) {
+                        diagnostics += MathDiagnostic(
+                            DiagnosticCode.UnexpectedAlignmentTab,
+                            "Environment ${parsedName.name} centers one formula per row and does not accept alignment tabs",
+                            separator.range,
+                        )
+                    }
                     finishCell(separator.range)
                 }
                 token.kind == MathTokenKind.ControlSymbol && token.text == "\\" -> {
