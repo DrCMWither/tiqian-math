@@ -61,9 +61,11 @@ include(
     ":scanner",
     ":frontend:math-compose",
     ":preview",
+    ":demo:android-app",
 )
 
 project(":frontend:math-compose").projectDir = file("frontend/compose")
+project(":demo:android-app").projectDir = file("demo/android")
 
 // README artwork is an explicit cross-repository integration check. Keep it out of the normal
 // build graph; readme-sample/generate.sh publishes one Tiqian checkout to an isolated repository.
