@@ -137,7 +137,7 @@ internal fun renderSnapshot() {
         output.writeBytes(data.bytes)
         println("color-box-oracle=${output.absolutePath} bytes=${output.length()}")
     }
-    ImageComposeScene(width = 1000, height = 720) { EquationTagOracleScreen() }.use { scene ->
+    ImageComposeScene(width = 1000, height = 3200) { EquationTagOracleScreen() }.use { scene ->
         val data = checkNotNull(scene.render().encodeToData(EncodedImageFormat.PNG))
         val output = File("build/reports/tiqian-equation-tags.png")
         output.parentFile.mkdirs()

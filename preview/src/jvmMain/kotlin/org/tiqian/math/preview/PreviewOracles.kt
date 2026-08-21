@@ -1,6 +1,7 @@
 package org.tiqian.math.preview
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -75,14 +76,117 @@ internal fun EquationTagOracleScreen() {
     MaterialTheme {
         Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F5F1)) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text("Tiqian · amsmath equation tags · same-font Tectonic oracle · 32 px", fontSize = 17.sp)
-                Text("Each formula consumes its actual 430 px Compose constraint", fontSize = 11.sp)
+                Text("Tiqian · TeX equation tags + responsive electronic display · 32 px", fontSize = 17.sp)
+                Text(
+                    "Static tag geometry uses same-font Tectonic oracles; responsive wrapping is a named electronic-reading extension",
+                    fontSize = 11.sp,
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     EquationTagFontColumn("Lete Sans Math", lete, leteText)
                     EquationTagFontColumn("STIX Two Math", stix, stixText)
                 }
+                EquationTagOverflowSample("Lete Sans Math", lete, leteText)
+                EquationTagOverflowSample("STIX Two Math", stix, stixText)
+                EquationTagResponsiveSample("Lete Sans Math", lete, leteText)
+                EquationTagResponsiveSample("STIX Two Math", stix, stixText)
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    CurrentZhihuResponsiveColumn("Lete Sans Math", lete, leteText)
+                    CurrentZhihuResponsiveColumn("STIX Two Math", stix, stixText)
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun CurrentZhihuResponsiveColumn(
+    label: String,
+    face: SkiaMathFontFace,
+    textProvider: SkiaMathTextRunProvider,
+) {
+    Column(Modifier.width(430.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("$label · current Zhihu answer · 416 px / 16 px = phone 1248 px / 48 px", fontSize = 9.sp)
+        CURRENT_ZHIHU_RESPONSIVE_CASES.forEach { (caseLabel, source) ->
+            Column(Modifier.background(Color.White).padding(7.dp)) {
+                Text(caseLabel, fontSize = 8.sp, color = Color(0xFF6B655E))
+                TiqianMath(
+                    source = source,
+                    modifier = Modifier.width(416.dp),
+                    mode = MathMode.Display,
+                    fontFace = face,
+                    textRunProvider = textProvider,
+                    style = TextStyle(fontSize = 16.sp, lineHeight = 36.sp),
+                    softWrap = true,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EquationTagResponsiveSample(
+    label: String,
+    face: SkiaMathFontFace,
+    textProvider: SkiaMathTextRunProvider,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+            "$label · responsive display · full-width body · tag moves below right",
+            fontSize = 9.sp,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            listOf(416 to "wide 416 px", 300 to "narrow 300 px").forEach { (width, caption) ->
+                Column(Modifier.width(430.dp).background(Color.White).padding(7.dp)) {
+                    Text(caption, fontSize = 8.sp, color = Color(0xFF6B655E))
+                    TiqianMath(
+                        source = RESPONSIVE_DISPLAY_PREVIEW_SOURCE,
+                        modifier = Modifier.width(width.dp),
+                        mode = MathMode.Display,
+                        fontFace = face,
+                        textRunProvider = textProvider,
+                        style = TextStyle(fontSize = 32.sp, lineHeight = 72.sp),
+                        softWrap = true,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EquationTagOverflowSample(
+    label: String,
+    face: SkiaMathFontFace,
+    textProvider: SkiaMathTextRunProvider,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("$label · same 416 px viewport · body scrolls, tag stays right", fontSize = 9.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            EquationTagScrollViewport("scroll = 0 px", face, textProvider, remember { ScrollState(0) })
+            EquationTagScrollViewport("scroll = 220 px", face, textProvider, remember { ScrollState(220) })
+        }
+    }
+}
+
+@Composable
+private fun EquationTagScrollViewport(
+    label: String,
+    face: SkiaMathFontFace,
+    textProvider: SkiaMathTextRunProvider,
+    scrollState: ScrollState,
+) {
+    Column(Modifier.width(430.dp).background(Color.White).padding(7.dp)) {
+        Text(label, fontSize = 8.sp, color = Color(0xFF6B655E))
+        TiqianMath(
+            source = EQUATION_TAG_OVERFLOW_SOURCE,
+            modifier = Modifier.width(416.dp),
+            mode = MathMode.Display,
+            fontFace = face,
+            textRunProvider = textProvider,
+            style = TextStyle(fontSize = 32.sp, lineHeight = 72.sp),
+            displayScrollState = scrollState,
+            softWrap = false,
+        )
     }
 }
 
@@ -604,4 +708,3 @@ internal fun RadicalDegreeOracleScreen() {
         }
     }
 }
-

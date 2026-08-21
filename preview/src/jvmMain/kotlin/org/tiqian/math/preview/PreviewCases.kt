@@ -94,6 +94,28 @@ internal val EQUATION_TAG_PREVIEW_CASES = listOf(
     "unwrapped tag*" to "x+y\\tag*{A}",
     "fraction body" to "\\frac{a+b}{c+d}=x\\tag{2}",
     "two tagged align rows" to "\\begin{align*}a&=b\\tag{3}\\\\c&=\\frac{d}{e}\\tag{4}\\end{align*}",
+    "split body / vertically centered tag" to
+        "\\begin{equation*}\\begin{split}a&=b\\\\c&=\\frac{d}{e}\\end{split}\\tag{7}\\end{equation*}",
+)
+
+internal const val EQUATION_TAG_OVERFLOW_SOURCE =
+    "E=M+e(2-k)\\left[S_{1k}+S_{2k}-\\frac{1}{3}A_{2k}\\right]^{-1/2}, \\{e,M\\}\\in R_k,k=1 \\operatorname{or} 3\\tag{49}"
+
+internal const val RESPONSIVE_DISPLAY_PREVIEW_SOURCE =
+    "E_k=(n-1)E_{k-1}+E_{k-2}+\\frac{\\sum_{i=1}^{n}i^2}{\\binom{2n}{n}}+" +
+        "\\sqrt{\\frac{a+b}{c+d}}=y_2^3\\tag{50}"
+
+internal val CURRENT_ZHIHU_RESPONSIVE_CASES = listOf(
+    "trailing row separator · equation 35" to
+        "\\arg \\Omega_k^+(t)=\\tan^{-1}\\left[\\frac{2(-1)^{k+1}tC(t)\\left[e+(-1)^k\\frac{\\pi}{2}\\left|t\\right|\\right]}{\\left[e+(-1)^k\\frac{\\pi}{2}\\left|t\\right|\\right]^2-t^2[M-\\pi\\Delta(k)]^2-t^2C^2(t)}\\right]\\tag{35}\\\\",
+    "responsive shifted tag gap · equation 36" to
+        "E=M-e(M-\\pi)[e^2\\Omega_0(iy)E_0^2(iy)-y^2(M-\\pi)^2]^{-1/2},\\{e,M\\}\\in R_2 \\tag{36}\\\\",
+    "right-aligned clause break · equation 38" to
+        "\\boxed{E=M-e(M-\\pi)\\left[(e+1)^2-(M-\\pi)^2\\frac{2}{\\pi}\\int_0^1t\\arg \\Omega_0^+(t)\\mathrm{d}t\\right]^{-1/2},\\{e,M\\}\\in R_2 \\tag {38}}",
+    "trailing row separator · equation 43" to
+        "D_k(\\alpha,\\beta,\\gamma)=\\frac{1}{6}\\left[A_{1k}(\\alpha,\\beta,\\gamma)A_{2k}(\\alpha,\\beta,\\gamma)-3A_{0k}(\\alpha,\\beta,\\gamma)\\right]-[\\frac{1}{3}A_{2k}(\\alpha,\\beta,\\gamma)]^3\\tag{43}\\\\",
+    "boxed terminal row separator · equation 49" to
+        "\\boxed{E=M+e(2-k)\\left[S_{1k}+S_{2k}-\\frac{1}{3}A_{2k}\\right]^{-1/2},\\{e,M\\}\\in R_k,k=1\\ or\\ 3\\tag{49}\\\\}",
 )
 
 internal val COLOR_BOX_PREVIEW_CASES = listOf(
