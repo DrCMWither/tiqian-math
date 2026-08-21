@@ -108,8 +108,17 @@ internal class ParserState(
     }
 
     private fun foldTopLevelEquationTag(root: MathList): MathList {
-        if (root.children.none { it is MathEquationTag }) return root
-        val (bodyChildren, tag) = extractEquationTag(root.children)
+        val (normalizedChildren, boxedTag) = extractOutermostBoxedEquationTag(root.children)
+        if (boxedTag == null && normalizedChildren.none { it is MathEquationTag }) return root
+        val (bodyChildren, directTag) = extractEquationTag(normalizedChildren)
+        val tag = directTag ?: boxedTag
+        if (directTag != null && boxedTag != null) {
+            diagnostics += MathDiagnostic(
+                DiagnosticCode.MultipleEquationTags,
+                "A display row may contain only one equation tag",
+                boxedTag.range,
+            )
+        }
         val selected = tag ?: return root
         val bodyRange = bodyChildren.firstOrNull()?.range?.cover(bodyChildren.last().range)
             ?: SourceRange(root.range.start, root.range.start)
@@ -123,6 +132,28 @@ internal class ParserState(
             ),
             range = root.range,
         )
+    }
+
+    /**
+     * Zhihu/MathJax content in the wild sometimes places the row-level `\\tag` as the final
+     * direct item of an outermost `\\boxed{...}` argument. A TeX box never owns an equation
+     * number, so keep the box around its math field and promote that tag to the completed display
+     * row. This compatibility rule is intentionally limited to one outermost boxed noad; tags in
+     * fractions, scripts, or other nested math lists remain misplaced and diagnosable.
+     */
+    private fun extractOutermostBoxedEquationTag(
+        nodes: List<MathNode>,
+    ): Pair<List<MathNode>, MathEquationTag?> {
+        val boxed = nodes.singleOrNull() as? MathBoxed ?: return nodes to null
+        val group = boxed.body as? MathGroup ?: return nodes to null
+        val (bodyChildren, tag) = extractEquationTag(group.body.children)
+        val selected = tag ?: return nodes to null
+        val bodyRange = bodyChildren.firstOrNull()?.range?.cover(bodyChildren.last().range)
+            ?: SourceRange(group.body.range.start, group.body.range.start)
+        val normalized = boxed.copy(
+            body = group.copy(body = MathList(bodyChildren, bodyRange)),
+        )
+        return listOf(normalized) to selected
     }
 
     internal fun extractEquationTag(nodes: List<MathNode>): Pair<List<MathNode>, MathEquationTag?> {

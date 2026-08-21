@@ -163,10 +163,43 @@ internal fun ParserState.parseControlWord(token: MathToken): MathNode {
         )
     }
     if (token.text == "boxed") {
-        val body = parseRequiredArgument(token, "boxed math field")
+        skipIgnored()
+        val rowDepth = structureDepth + if (peek().kind == MathTokenKind.OpenGroup) 1 else 0
+        rowSeparatorContainerDepths += rowDepth
+        val parsedBody = try {
+            parseRequiredArgument(token, "boxed math field")
+        } finally {
+            rowSeparatorContainerDepths.removeAt(rowSeparatorContainerDepths.lastIndex)
+        }
+        val group = parsedBody as? MathGroup
+        val directChildren = group?.body?.children.orEmpty()
+        val terminalCandidate = directChildren.lastOrNull() as? MathExplicitRowBreak
+        val terminalRowSeparator = terminalCandidate?.takeIf {
+            structureDepth == 0 && directChildren.dropLast(1).any { child -> child is MathEquationTag }
+        }
+        val normalizedChildren = directChildren.mapNotNull { child ->
+            when {
+                child === terminalRowSeparator -> null
+                child is MathExplicitRowBreak -> {
+                    diagnostics += MathDiagnostic(
+                        DiagnosticCode.UnexpectedRowSeparator,
+                        "Only an empty final row separator is accepted inside a boxed display field",
+                        child.range,
+                    )
+                    MathErrorNode(sourceSlice(child.range), child.range)
+                }
+                else -> child
+            }
+        }
+        val body = if (group == null) {
+            parsedBody
+        } else {
+            group.copy(body = group.body.copy(children = normalizedChildren))
+        }
         return MathBoxed(
             body = body,
             commandRange = token.range,
+            terminalRowSeparator = terminalRowSeparator,
             range = token.range.cover(body.range),
         )
     }

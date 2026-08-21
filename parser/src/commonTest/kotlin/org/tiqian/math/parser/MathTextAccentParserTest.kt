@@ -23,6 +23,30 @@ class MathTextAccentParserTest {
     }
 
     @Test
+    fun cjkPunctuationUsesHostTextSemanticsWithoutRewritingMathSource() {
+        val source = "C_1=1-C，C_2=C-\\frac14"
+        val parsed = MathParser().parse(source)
+
+        assertTrue(parsed.diagnostics.isEmpty(), parsed.diagnostics.toString())
+        val punctuation = parsed.root.children.filterIsInstance<MathText>().single()
+        assertEquals("，", punctuation.text)
+        assertEquals(MathTextOrigin.ImplicitCjk, punctuation.origin)
+        assertEquals(SourceRange(7, 8), punctuation.range)
+        assertEquals("，", source.substring(punctuation.range.start, punctuation.range.endExclusive))
+        assertTrue(parsed.root.children.none {
+            it is MathSymbol && it.identity == MathSymbolIdentity.Literal('，'.code)
+        })
+
+        val contiguous = assertIs<MathText>(MathParser().parse("中，文").root.children.single())
+        assertEquals("中，文", contiguous.text)
+        assertEquals(SourceRange(0, 3), contiguous.range)
+
+        val asciiComma = assertIs<MathSymbol>(MathParser().parse(",").root.children.single())
+        assertEquals(MathNamedSymbol.Comma, assertIs<MathSymbolIdentity.Named>(asciiComma.identity).symbol)
+        assertEquals(MathAtomClass.Punctuation, asciiComma.atomClass)
+    }
+
+    @Test
     fun textPreservesSpacesUnicodeEscapesAndSourceRangesWithoutMathNoads() {
         val source = "\\text{hello  世界 ~ \\{x\\}}"
         val parsed = MathParser().parse(source)
