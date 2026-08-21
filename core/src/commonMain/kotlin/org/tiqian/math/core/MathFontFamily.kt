@@ -109,8 +109,13 @@ class MathFontFamilySpec(
     }
 }
 
-/** Frontend semantic classifier only; font fallback and segmentation belong to the host provider. */
-fun Int.isCjkMathTextScalar(): Boolean = this in 0x2E80..0x2FFF ||
+/**
+ * Frontend semantic classifier only; font fallback and segmentation belong to the host provider.
+ * Raw CJK typographic punctuation stays source-faithful and uses the same host text run as CJK
+ * letters instead of asking the selected OpenType MATH face for glyphs it does not own.
+ */
+fun Int.isCjkMathTextScalar(): Boolean = isCjkMathTextPunctuationScalar() ||
+    this in 0x2E80..0x2FFF ||
     this in 0x3040..0x30FF || // Hiragana, Katakana
     this in 0x3100..0x312F || // Bopomofo
     this in 0x31A0..0x31BF ||
@@ -120,3 +125,43 @@ fun Int.isCjkMathTextScalar(): Boolean = this in 0x2E80..0x2FFF ||
     this in 0xAC00..0xD7AF || // Hangul syllables
     this in 0xF900..0xFAFF ||
     this in 0x20000..0x323AF
+
+/**
+ * CjkClauseSeparatorPunctuationAtom: a fullwidth clause separator inside a formula behaves as a
+ * TeX Punctuation atom — it yields a trailing line-break opportunity and starts a clause
+ * continuation in responsive display — while still rendering through the host CJK text run.
+ */
+fun Int.isCjkClauseSeparatorScalar(): Boolean = when (this) {
+    0x3001, // 、
+    0xFF0C, // ，
+    0xFF1B, // ；
+    -> true
+    else -> false
+}
+
+private fun Int.isCjkMathTextPunctuationScalar(): Boolean = when (this) {
+    in 0x3001..0x303F, // CJK symbols and punctuation; U+3000 remains tokenizer whitespace.
+    in 0xFE10..0xFE19, // Vertical punctuation forms.
+    in 0xFE30..0xFE4F, // CJK compatibility punctuation forms.
+    in 0xFF61..0xFF65, // Halfwidth ideographic punctuation.
+    0xFF01, // ！
+    0xFF02, // ＂
+    0xFF05, // ％
+    0xFF07, // ＇
+    0xFF08, // （
+    0xFF09, // ）
+    0xFF0C, // ，
+    0xFF0E, // ．
+    0xFF1A, // ：
+    0xFF1B, // ；
+    0xFF1F, // ？
+    0xFF3B, // ［
+    0xFF3D, // ］
+    0xFF5B, // ｛
+    0xFF5D, // ｝
+    0xFF5E, // ～
+    0xFF5F, // ｟
+    0xFF60, // ｠
+    -> true
+    else -> false
+}

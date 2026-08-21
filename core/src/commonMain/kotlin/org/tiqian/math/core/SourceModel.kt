@@ -93,7 +93,6 @@ enum class DiagnosticCode {
     MultipleEquationTags,
     MisplacedEquationTag,
     MissingEquationTagDisplayWidth,
-    EquationTagDoesNotFit,
     UnclosedBboxOptions,
     InvalidBboxOption,
     DuplicateBboxOption,

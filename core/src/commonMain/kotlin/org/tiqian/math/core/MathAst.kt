@@ -38,6 +38,8 @@ data class MathColorDeclaration(
 data class MathBoxed(
     val body: MathNode,
     val commandRange: SourceRange,
+    /** Source-only empty final row accepted at the end of a Markdown-hosted boxed field. */
+    val terminalRowSeparator: MathExplicitRowBreak? = null,
     override val range: SourceRange,
 ) : MathNode
 
@@ -408,6 +410,12 @@ data class MathText(
     val origin: MathTextOrigin = MathTextOrigin.TextCommand,
 ) : MathNode {
     val text: String get() = segments.joinToString("") { it.text }
+
+    /** Single fullwidth clause separator rendered as host text; see [isCjkClauseSeparatorScalar]. */
+    val isCjkClauseSeparator: Boolean
+        get() = origin == MathTextOrigin.ImplicitCjk &&
+            text.length == 1 &&
+            text[0].code.isCjkClauseSeparatorScalar()
 }
 
 enum class MathTextOrigin { TextCommand, ImplicitCjk, EquationTag }

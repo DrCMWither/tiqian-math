@@ -22,6 +22,7 @@ class MathLayoutResultTest {
             lineMetrics = MathFormulaLineMetrics(8f, 2f, 0f, 0f, 8f, 2f, 8f, 2f),
             decisions = emptyList(),
             debugDumpRenderer = renderer,
+            fontSizePx = 24f,
         )
 
         assertEquals(0, renderCount)

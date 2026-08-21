@@ -209,6 +209,24 @@ enum class MathBreakKind {
     PunctuationTrailing,
     BinaryOperatorTrailing,
     RelationTrailing,
+    BinaryOperatorLeading,
+    RelationLeading,
+}
+
+/** Named line-breaking dialect; inline TeX and responsive display intentionally differ. */
+enum class MathLineBreakPolicy {
+    /** Existing Markdown-inline contract: a visible binary/relation operator ends the line. */
+    InlineTrailingOperators,
+
+    /** Electronic-display extension: break before explicit binary/relation operators. */
+    ResponsiveDisplayLeadingOperators,
+}
+
+/** Semantic continuation anchor selected without inspecting rendered pixels. */
+enum class MathContinuationAlignment {
+    None,
+    FirstRelation,
+    FirstBinaryOperator,
 }
 
 enum class MathGlueKind {
@@ -311,12 +329,28 @@ data class MathBrokenLine(
     val baselineFromTop: Float,
     /** True only when one indivisible legal-break segment is wider than the host constraint. */
     val unbreakableOverflow: Boolean,
+    /** Logical x in the display viewport. Responsive display lines consume this directly. */
+    val horizontalOffsetPx: Float = 0f,
+    /** Boundary that starts this line, absent for the first line. */
+    val breakKind: MathBreakKind? = null,
+    /** True for a clause continuation (depth-0 punctuation break), e.g. a domain condition. */
+    val isClause: Boolean = false,
+    /**
+     * Engine-decided PinnedClauseLikeTag outcome: this clause line anchors to the viewport while
+     * the rest of the block scrolls. Renderers consume this flag; they never re-derive it.
+     */
+    val pinned: Boolean = false,
 )
 
 data class MathBrokenLayout(
     val lines: List<MathBrokenLine>,
     val width: Float,
     val height: Float,
+    val policy: MathLineBreakPolicy = MathLineBreakPolicy.InlineTrailingOperators,
+    val targetWidthPx: Float = width,
+    val continuationAlignment: MathContinuationAlignment = MathContinuationAlignment.None,
+    /** Shared painted operator anchor actually used by every continuation line. */
+    val continuationAnchorPx: Float = 0f,
 )
 
 data class MathFormulaLineMetrics(
@@ -345,6 +379,52 @@ data class MathLayoutDecision(
     val details: Map<String, String>,
 )
 
+/** Semantic placement of an explicit equation tag inside a completed display formula. */
+enum class MathEquationTagPlacement {
+    SameLineRight,
+    ShiftedBelowRight,
+    CenteredBesideMultiline,
+}
+
+/**
+ * A clause line (domain condition) pinned to the display viewport like a tag: when the body
+ * scrolls as one block, the clause stays anchored at the viewport's right edge instead of
+ * traveling with the scrolled content.
+ */
+data class MathPinnedClauseReplay(
+    val box: MathBox,
+    val sourceRange: SourceRange,
+    val logicalX: Float,
+    val baselineY: Float,
+)
+
+/** One independently replayable tag anchored to the display viewport, not to scroll content. */
+data class MathEquationTagReplay(
+    val box: MathBox,
+    val sourceRange: SourceRange,
+    val logicalX: Float,
+    val baselineY: Float,
+    val placement: MathEquationTagPlacement,
+)
+
+/**
+ * Separates completed body and tag geometry into independently replayable paint regions.
+ * A frontend can clip or move the body without reconstructing tag placement.
+ */
+data class MathTaggedDisplayReplay(
+    val body: MathBox,
+    val bodyLogicalX: Float,
+    val viewportWidthPx: Float,
+    val tags: List<MathEquationTagReplay>,
+    /** Clause lines pinned to the viewport; empty when every line travels with the body. */
+    val pinnedClauses: List<MathPinnedClauseReplay> = emptyList(),
+) {
+    init {
+        require(viewportWidthPx >= 0f)
+        require(tags.isNotEmpty())
+    }
+}
+
 /**
  * Builds the human-readable layout dump on first access. Structured [MathLayoutDecision] data
  * remains eager and authoritative; production callers that never inspect [MathLayoutResult.debugDump]
@@ -365,6 +445,9 @@ data class MathLayoutResult(
     val lineMetrics: MathFormulaLineMetrics,
     val decisions: List<MathLayoutDecision>,
     val debugDumpRenderer: MathLayoutDebugDumpRenderer,
+    val taggedDisplayReplay: MathTaggedDisplayReplay? = null,
+    /** Formula text-style em in layout pixels; script styles derive from this value. */
+    val fontSizePx: Float,
 ) {
     /** Human-readable diagnostic projection, memoized only when a caller requests it. */
     val debugDump: String by lazy { debugDumpRenderer.render(this) }
@@ -381,6 +464,7 @@ data class MathLayoutResult(
         lineMetrics: MathFormulaLineMetrics,
         decisions: List<MathLayoutDecision>,
         debugDump: String,
+        fontSizePx: Float,
     ) : this(
         source = source,
         mode = mode,
@@ -392,5 +476,7 @@ data class MathLayoutResult(
         lineMetrics = lineMetrics,
         decisions = decisions,
         debugDumpRenderer = MathLayoutDebugDumpRenderer { debugDump },
+        taggedDisplayReplay = null,
+        fontSizePx = fontSizePx,
     )
 }
