@@ -46,6 +46,7 @@ import org.tiqian.math.layout.MathTextRunRequest
 import org.tiqian.math.layout.MathTextRunProviderResult
 import org.tiqian.math.layout.MeasuredMathRun
 import org.tiqian.math.layout.breakIntoLines
+import org.tiqian.math.layout.breakResponsiveDisplayLines
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -173,6 +174,38 @@ class TiqianMathComposeMeasureTest {
             )
             assertTrue(ink.top >= 8 && ink.bottom < snapshot.height - 8, "vertical ink is not cropped")
             assertTrue(darkRowBands(pixels, snapshot.width, snapshot.height).size >= 2, "raster contains multiple separated math lines")
+        }
+    }
+
+    @Test
+    fun responsiveDisplayMeasuresAndRastersLeadingOperatorLinesWithoutScrolling() {
+        val source = "E_k=(n-1)E_{k-1}+E_{k-2}+\\frac{a+b}{c+d}=y_2^3"
+        val scrollState = androidx.compose.foundation.ScrollState(0)
+        var measured: MeasureSnapshot? = null
+        var observed: MathLayoutResult? = null
+        ImageComposeScene(width = 240, height = 320, density = Density(1f)) {
+            Box(Modifier.fillMaxSize().background(Color.White)) {
+                MeasureProbe(onMeasured = { measured = it }) {
+                    TiqianMath(
+                        source = source,
+                        modifier = Modifier.width(200.dp),
+                        mode = MathMode.Display,
+                        fontSizePx = 32f,
+                        displayScrollState = scrollState,
+                        softWrap = true,
+                        onMathLayout = { observed = it },
+                    )
+                }
+            }
+        }.use { scene ->
+            val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+            val layout = assertNotNull(observed)
+            val broken = layout.breakResponsiveDisplayLines(200f)
+            val snapshot = assertNotNull(measured)
+            assertTrue(broken.lines.size > 1)
+            assertEquals(0, scrollState.maxValue, "legal display breaks avoid horizontal scrolling")
+            assertTrue(snapshot.height >= broken.height.toInt())
+            assertTrue(darkRowBands(pixels, snapshot.width, snapshot.height).size >= 2)
         }
     }
 
@@ -322,10 +355,12 @@ class TiqianMathComposeMeasureTest {
                 assertTrue(ink.left >= 12 && ink.right < snapshot.width - 12, "radical ink is not horizontally cropped")
                 assertTrue(ink.top >= 12 && ink.bottom < snapshot.height - 12, "radical ink is not vertically cropped")
                 val outerRule = layout.box.rules.minBy { it.top }
+                val contentWidth = snapshot.width - 24f
+                val displayCenterOffset = ((contentWidth - layout.box.visualWidth) / 2f).coerceAtLeast(0f)
                 assertRuleRasterMatchesPlacement(
                     pixels = pixels,
-                    ruleLeft = 12f - layout.box.visualLeft + outerRule.left,
-                    ruleRight = 12f - layout.box.visualLeft + outerRule.right,
+                    ruleLeft = 12f + displayCenterOffset - layout.box.visualLeft + outerRule.left,
+                    ruleRight = 12f + displayCenterOffset - layout.box.visualLeft + outerRule.right,
                     ruleTop = snapshot.firstBaseline + outerRule.top,
                     ruleBottom = snapshot.firstBaseline + outerRule.bottom,
                 )

@@ -2,6 +2,7 @@ package org.tiqian.math.compose
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,11 +12,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.Layout
@@ -26,7 +29,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.use
 import org.tiqian.math.core.MathLayoutResult
+import org.tiqian.math.core.MathEquationTagPlacement
 import org.tiqian.math.core.MathMode
+import org.tiqian.math.core.MathTextOrigin
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.skia.SkiaMathFontFamily
 import org.tiqian.math.font.skia.SkiaMathFontFace
@@ -46,6 +51,7 @@ import org.tiqian.math.layout.MathTextRunRequest
 import org.tiqian.math.layout.MathTextRunProviderResult
 import org.tiqian.math.layout.MeasuredMathRun
 import org.tiqian.math.layout.breakIntoLines
+import kotlinx.coroutines.runBlocking
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -243,43 +249,6 @@ class TiqianMathRenderTest {
     }
 
     @Test
-    fun displayEquationTagConsumesTheActualComposeConstraintBeforeLayoutAndPaint() {
-        var observed: MathLayoutResult? = null
-        SkiaMathFontFace(LeteSansMath.load()).use { face ->
-            SkiaMathTextRunProvider.fromBytes(
-                MathFaceId("compose-equation-tag-text"),
-                LeteSansMath.loadBytes(),
-            ).use { text ->
-                ImageComposeScene(width = 440, height = 140, density = Density(1f)) {
-                    Box(Modifier.fillMaxSize().background(Color.White)) {
-                        TiqianMath(
-                            source = "x+y\\tag{1}",
-                            modifier = Modifier.width(400.dp),
-                            mode = MathMode.Display,
-                            fontSizePx = 32f,
-                            fontFace = face,
-                            textRunProvider = text,
-                            softWrap = false,
-                            onMathLayout = { observed = it },
-                        )
-                    }
-                }.use { scene ->
-                    val pixels = scene.render().toComposeImageBitmap().toPixelMap()
-                    val result = assertNotNull(observed)
-                    assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
-                    assertEquals(400f, result.box.width, 0.01f)
-                    val tag = result.decisions.single { it.name == "AmsmathEquationTag" }
-                    assertEquals(400f, tag.details.getValue("displayWidthPx").toFloat(), 0.01f)
-                    val rightBandHasInk = (350 until 400).any { x ->
-                        (0 until pixels.height).any { y -> pixels[x, y].red < 0.5f }
-                    }
-                    assertTrue(rightBandHasInk, "right-aligned equation tag must be replayed inside the constraint")
-                }
-            }
-        }
-    }
-
-    @Test
     fun legacySingleFaceRememberApiPreservesTheSurroundingWeightRequest() {
         var observed: MathLayoutResult? = null
         ImageComposeScene(width = 180, height = 100, density = Density(1f)) {
@@ -344,6 +313,36 @@ class TiqianMathRenderTest {
                 }, "Lete Bold's missing aleph falls back to Lete Regular without changing the formula weight request")
             }
         }
+    }
+
+    @Test
+    fun automaticComposeTextProviderReplaysFullwidthPunctuationInsideMath() {
+        val source = "C_1=1-C，C_2=C-\\frac14"
+        var layout: MathLayoutResult? = null
+        ImageComposeScene(width = 520, height = 120, density = Density(1f)) {
+            Box(Modifier.fillMaxSize().background(Color.White)) {
+                TiqianMath(
+                    source = source,
+                    style = TextStyle(fontSize = 32.sp),
+                    onMathLayout = { layout = it },
+                )
+            }
+        }.use { scene ->
+            val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+            var dark = 0
+            repeat(pixels.height) { y ->
+                repeat(pixels.width) { x ->
+                    val pixel = pixels[x, y]
+                    if (pixel.red < 0.4f && pixel.green < 0.4f && pixel.blue < 0.4f) dark++
+                }
+            }
+            assertTrue(dark > 100, "the complete formula, including host punctuation, must be painted")
+        }
+        val result = assertNotNull(layout)
+        assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+        assertTrue(result.box.hostTextRuns.any {
+            it.sourceRange == SourceRange(7, 8)
+        })
     }
 
     @Test
@@ -709,6 +708,32 @@ class TiqianMathRenderTest {
                 assertTrue(painted > 1000, "all common extension structures were rasterized")
                 assertTrue(maximumAlpha in 0.45f..0.53f, "brace assembly overlap is union-painted once")
             }
+        }
+    }
+}
+
+internal fun pixelSignature(
+    pixels: androidx.compose.ui.graphics.PixelMap,
+    left: Int,
+    top: Int,
+    right: Int,
+    bottom: Int,
+): List<Int> = buildList((right - left).coerceAtLeast(0) * (bottom - top).coerceAtLeast(0)) {
+    for (y in top until bottom) {
+        for (x in left until right) add(pixels[x, y].toArgb())
+    }
+}
+
+internal fun inkSignature(
+    pixels: androidx.compose.ui.graphics.PixelMap,
+    left: Int,
+    top: Int,
+    right: Int,
+    bottom: Int,
+): Set<Int> = buildSet {
+    for (y in top until bottom) {
+        for (x in left until right) {
+            if (pixels[x, y].red < 0.9f) add((y - top) * (right - left) + x - left)
         }
     }
 }

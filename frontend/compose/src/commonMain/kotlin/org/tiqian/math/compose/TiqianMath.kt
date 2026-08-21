@@ -1,14 +1,17 @@
 package org.tiqian.math.compose
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.FirstBaseline
@@ -18,11 +21,14 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import org.tiqian.math.core.MathBox
 import org.tiqian.math.core.MathBrokenLayout
 import org.tiqian.math.core.MathLayoutResult
+import org.tiqian.math.core.MathLineBreakPolicy
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathFontFamilySpec
 import org.tiqian.math.core.MathFontWeight
@@ -121,6 +127,7 @@ class TiqianMathFormulaPreparer internal constructor(
         color: Color = Color.Black,
         textLocale: String? = null,
         displayWidthPx: Float? = null,
+        softWrapDisplay: Boolean = false,
     ): TiqianMathFormula {
         require(fontSizePx.isFinite() && fontSizePx > 0f) { "fontSizePx must be finite and positive" }
         val requestedWeight = MathFontWeight.nearest(fontWeight)
@@ -143,6 +150,7 @@ class TiqianMathFormulaPreparer internal constructor(
                     delimiterShortfallPx = delimiterShortfallPx,
                     textLocale = textLocale,
                     displayWidthPx = displayWidthPx,
+                    softWrapDisplay = softWrapDisplay,
                 ),
             )
         }
@@ -154,6 +162,7 @@ class TiqianMathFormulaPreparer internal constructor(
                 requestedLineHeightPx = requestedLineHeightPx,
                 resolvedFontSizePx = fontSizePx,
                 color = color,
+                displayWidthPx = displayWidthPx,
             ),
         )
     }
@@ -191,6 +200,7 @@ fun rememberTiqianMathFormula(
     textLocale: String? = null,
     /** Required by explicit equation tags when measuring outside a constrained Compose layout. */
     displayWidthPx: Float? = null,
+    softWrapDisplay: Boolean = false,
 ): TiqianMathFormula = TiqianMathFormula(
     rememberResolvedFormulaCapability(
         source = source,
@@ -206,6 +216,7 @@ fun rememberTiqianMathFormula(
         textRunProvider = textRunProvider,
         textLocale = textLocale,
         displayWidthPx = displayWidthPx,
+        softWrapDisplay = softWrapDisplay,
     ),
 )
 
@@ -278,10 +289,21 @@ fun TiqianMath(
     fontFace: MathComposeFontFace? = null,
     textRunProvider: MathTextRunProvider? = null,
     textLocale: String? = null,
+    /** Observes or controls horizontal overflow for display formulas. */
+    displayScrollState: ScrollState? = null,
+    /** Content inset inside the display scroll viewport; useful when the host outsets that viewport. */
+    displayHorizontalContentInset: Dp = 0.dp,
     onMathLayout: (MathLayoutResult) -> Unit = {},
     onMathError: (MathFormulaCapabilityResult.FallbackRequired) -> Unit = {},
 ) {
     BoxWithConstraints(modifier = modifier) {
+        val density = LocalDensity.current
+        val displayInsetPx = if (mode == MathMode.Display && constraints.hasBoundedWidth) {
+            with(density) { displayHorizontalContentInset.toPx() }
+                .coerceIn(0f, constraints.maxWidth / 2f)
+        } else {
+            0f
+        }
         val resolved = rememberResolvedFormulaCapability(
             source,
             mode,
@@ -296,16 +318,24 @@ fun TiqianMath(
             textRunProvider,
             textLocale,
             displayWidthPx = constraints.takeIf { mode == MathMode.Display && it.hasBoundedWidth }
-                ?.maxWidth?.toFloat(),
+                ?.let { (it.maxWidth - displayInsetPx * 2f).coerceAtLeast(1f) },
+            softWrapDisplay = softWrap,
         )
         FormulaCapabilityContent(
             resolved = resolved,
             modifier = Modifier,
             softWrap = softWrap,
+            displayScrollState = displayScrollState,
+            displayHorizontalInsetPx = displayInsetPx,
             onMathLayout = onMathLayout,
             fallback = { failure ->
                 LaunchedEffect(failure) { onMathError(failure) }
-                TiqianMathError(failure, Modifier, style)
+                TiqianMathError(
+                    failure = failure,
+                    modifier = Modifier,
+                    style = style,
+                    horizontalInsetPx = displayInsetPx,
+                )
             },
         )
     }
@@ -324,9 +354,18 @@ fun StrictTiqianMath(
     fontFace: MathComposeFontFace? = null,
     textRunProvider: MathTextRunProvider? = null,
     textLocale: String? = null,
+    displayScrollState: ScrollState? = null,
+    displayHorizontalContentInset: Dp = 0.dp,
     onMathLayout: (MathLayoutResult) -> Unit = {},
 ) {
     BoxWithConstraints(modifier = modifier) {
+        val density = LocalDensity.current
+        val displayInsetPx = if (mode == MathMode.Display && constraints.hasBoundedWidth) {
+            with(density) { displayHorizontalContentInset.toPx() }
+                .coerceIn(0f, constraints.maxWidth / 2f)
+        } else {
+            0f
+        }
         val resolved = rememberResolvedFormulaCapability(
             source,
             mode,
@@ -341,9 +380,18 @@ fun StrictTiqianMath(
             textRunProvider,
             textLocale,
             displayWidthPx = constraints.takeIf { mode == MathMode.Display && it.hasBoundedWidth }
-                ?.maxWidth?.toFloat(),
+                ?.let { (it.maxWidth - displayInsetPx * 2f).coerceAtLeast(1f) },
+            softWrapDisplay = softWrap,
         )
-        FormulaCapabilityContent(resolved, Modifier, softWrap, onMathLayout, fallback = null)
+        FormulaCapabilityContent(
+            resolved,
+            Modifier,
+            softWrap,
+            onMathLayout,
+            fallback = null,
+            displayScrollState = displayScrollState,
+            displayHorizontalInsetPx = displayInsetPx,
+        )
     }
 }
 
@@ -367,10 +415,19 @@ fun TiqianMathOrFallback(
     fontFace: MathComposeFontFace? = null,
     textRunProvider: MathTextRunProvider? = null,
     textLocale: String? = null,
+    displayScrollState: ScrollState? = null,
+    displayHorizontalContentInset: Dp = 0.dp,
     onMathLayout: (MathLayoutResult) -> Unit = {},
     fallback: @Composable (MathFormulaCapabilityResult.FallbackRequired) -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier) {
+        val density = LocalDensity.current
+        val displayInsetPx = if (mode == MathMode.Display && constraints.hasBoundedWidth) {
+            with(density) { displayHorizontalContentInset.toPx() }
+                .coerceIn(0f, constraints.maxWidth / 2f)
+        } else {
+            0f
+        }
         val resolved = rememberResolvedFormulaCapability(
             source,
             mode,
@@ -385,9 +442,18 @@ fun TiqianMathOrFallback(
             textRunProvider,
             textLocale,
             displayWidthPx = constraints.takeIf { mode == MathMode.Display && it.hasBoundedWidth }
-                ?.maxWidth?.toFloat(),
+                ?.let { (it.maxWidth - displayInsetPx * 2f).coerceAtLeast(1f) },
+            softWrapDisplay = softWrap,
         )
-        FormulaCapabilityContent(resolved, Modifier, softWrap, onMathLayout, fallback)
+        FormulaCapabilityContent(
+            resolved,
+            Modifier,
+            softWrap,
+            onMathLayout,
+            fallback,
+            displayScrollState,
+            displayInsetPx,
+        )
     }
 }
 
@@ -435,6 +501,8 @@ private fun FormulaCapabilityContent(
     softWrap: Boolean,
     onMathLayout: (MathLayoutResult) -> Unit,
     fallback: (@Composable (MathFormulaCapabilityResult.FallbackRequired) -> Unit)?,
+    displayScrollState: ScrollState? = null,
+    displayHorizontalInsetPx: Float = 0f,
 ) {
     when (val capability = resolved.capability) {
         is MathFormulaCapabilityResult.Ready -> ReadyTiqianMath(
@@ -446,6 +514,9 @@ private fun FormulaCapabilityContent(
             resolved.face,
             resolved.textRunProvider,
             onMathLayout,
+            displayScrollState,
+            displayHorizontalInsetPx,
+            resolved.displayWidthPx,
         )
         is MathFormulaCapabilityResult.FallbackRequired -> {
             val errorPresentation = fallback ?: throw MathFormulaStrictException(capability)
@@ -459,13 +530,17 @@ private fun TiqianMathError(
     failure: MathFormulaCapabilityResult.FallbackRequired,
     modifier: Modifier,
     style: TextStyle,
+    horizontalInsetPx: Float = 0f,
 ) {
     val label = failure.reasons.joinToString { it.category.name }
+    val horizontalInset = with(LocalDensity.current) { horizontalInsetPx.toDp() }
     BasicText(
         text = failure.source.ifEmpty { "∅" },
-        modifier = modifier.semantics {
-            contentDescription = "Math formula error: $label"
-        },
+        modifier = modifier
+            .padding(horizontal = horizontalInset)
+            .semantics {
+                contentDescription = "Math formula error: $label"
+            },
         style = style.copy(
             color = if (style.color != Color.Unspecified) style.color else Color.Red,
         ),
@@ -479,6 +554,7 @@ internal data class ResolvedFormulaCapability(
     val requestedLineHeightPx: Float?,
     val resolvedFontSizePx: Float,
     val color: Color,
+    val displayWidthPx: Float?,
 )
 
 /**
@@ -487,6 +563,10 @@ internal data class ResolvedFormulaCapability(
  * math font's full line box on every formula-bearing line.
  */
 private const val InlineInkLeadingEm = 0.05f
+private const val CssPixelsPerInch = 96f
+private const val TeXPointsPerInch = 72.27f
+private const val LatexFboxSeparationAtDensityOne = 3f * CssPixelsPerInch / TeXPointsPerInch
+private const val LatexFboxRuleAtDensityOne = 0.4f * CssPixelsPerInch / TeXPointsPerInch
 
 @Composable
 private fun rememberResolvedFormulaCapability(
@@ -504,6 +584,7 @@ private fun rememberResolvedFormulaCapability(
     textLocale: String?,
     capabilityEngineOverride: MathFormulaCapabilityEngine? = null,
     displayWidthPx: Float? = null,
+    softWrapDisplay: Boolean = false,
 ): ResolvedFormulaCapability {
     val density = LocalDensity.current
     val resolvedFontSizePx = fontSizePx ?: with(density) {
@@ -514,6 +595,10 @@ private fun rememberResolvedFormulaCapability(
     } else {
         null
     }
+    // MathLayoutOptions uses physical pixels. Convert LaTeX's absolute fbox dimensions into the
+    // same density-scaled coordinate system as the surrounding Compose TextStyle.
+    val defaultFboxSeparationPx = with(density) { LatexFboxSeparationAtDensityOne.dp.toPx() }
+    val defaultFboxRuleThicknessPx = with(density) { LatexFboxRuleAtDensityOne.dp.toPx() }
     val composeTextRunProvider = rememberComposeMathTextRunProvider(style, density)
     val resolvedTextRunProvider = textRunProvider ?: composeTextRunProvider
     val resolvedColor = when {
@@ -540,8 +625,11 @@ private fun rememberResolvedFormulaCapability(
         scriptSpacePx,
         delimiterFactor,
         delimiterShortfallPx,
+        defaultFboxSeparationPx,
+        defaultFboxRuleThicknessPx,
         textLocale,
         displayWidthPx,
+        softWrapDisplay,
         capabilityEngine,
     ) {
         tiqianMathTraceSection("TiqianMath.evaluate") {
@@ -554,8 +642,11 @@ private fun rememberResolvedFormulaCapability(
                     scriptSpacePx = scriptSpacePx,
                     delimiterFactor = delimiterFactor,
                     delimiterShortfallPx = delimiterShortfallPx,
+                    fboxSeparationPx = defaultFboxSeparationPx,
+                    fboxRuleThicknessPx = defaultFboxRuleThicknessPx,
                     textLocale = textLocale,
                     displayWidthPx = displayWidthPx,
+                    softWrapDisplay = softWrapDisplay,
                 ),
             )
         }
@@ -567,6 +658,7 @@ private fun rememberResolvedFormulaCapability(
         requestedLineHeightPx,
         resolvedFontSizePx,
         resolvedColor,
+        displayWidthPx,
     )
 }
 
@@ -580,8 +672,41 @@ private fun ReadyTiqianMath(
     face: MathComposeFontFace,
     textRunProvider: MathTextRunProvider?,
     onMathLayout: (MathLayoutResult) -> Unit,
+    displayScrollState: ScrollState?,
+    displayHorizontalInsetPx: Float,
+    displayContentWidthPx: Float?,
 ) {
     SideEffect { onMathLayout(result) }
+
+    if (result.mode == MathMode.Display) {
+        val resolvedDisplayScrollState = displayScrollState ?: rememberScrollState()
+        if (result.taggedDisplayReplay != null) {
+            TaggedDisplayTiqianMath(
+                result = result,
+                requestedLineHeightPx = requestedLineHeightPx,
+                color = color,
+                face = face,
+                textRunProvider = textRunProvider,
+                scrollState = resolvedDisplayScrollState,
+                horizontalInsetPx = displayHorizontalInsetPx,
+                modifier = modifier,
+            )
+        } else {
+            ScrollableDisplayTiqianMath(
+                result = result,
+                requestedLineHeightPx = requestedLineHeightPx,
+                color = color,
+                softWrap = softWrap,
+                face = face,
+                textRunProvider = textRunProvider,
+                scrollState = resolvedDisplayScrollState,
+                horizontalInsetPx = displayHorizontalInsetPx,
+                displayContentWidthPx = displayContentWidthPx,
+                modifier = modifier,
+            )
+        }
+        return
+    }
 
     var renderPlan = RenderPlan.unbroken(result, requestedLineHeightPx)
     Layout(
@@ -616,7 +741,7 @@ private fun ReadyTiqianMath(
 }
 
 @Composable
-private fun FixedTiqianMathPlan(
+internal fun FixedTiqianMathPlan(
     plan: RenderPlan,
     modifier: Modifier,
     color: Color,
@@ -656,6 +781,23 @@ internal data class RenderPlan(
     val height: Float,
     val firstBaseline: Float,
 ) {
+    fun centeredIn(containerWidth: Float): RenderPlan {
+        if (width >= containerWidth) return this
+        val offset = (containerWidth - width) / 2f
+        return copy(
+            boxes = boxes.map { it.copy(x = it.x + offset) },
+            width = containerWidth,
+        )
+    }
+
+    fun insetHorizontally(insetPx: Float): RenderPlan {
+        if (insetPx <= 0f) return this
+        return copy(
+            boxes = boxes.map { it.copy(x = it.x + insetPx) },
+            width = width + insetPx * 2f,
+        )
+    }
+
     companion object {
         fun unbroken(result: MathLayoutResult, minimumLineHeightPx: Float? = null): RenderPlan {
             val metrics = result.lineMetrics.forInk(result.box.ascent, result.box.descent)
@@ -775,24 +917,65 @@ internal data class RenderPlan(
             result: MathLayoutResult,
             broken: MathBrokenLayout,
             minimumLineHeightPx: Float? = null,
-        ): RenderPlan {
-            var top = 0f
+            containerWidthPx: Float? = null,
+        ): RenderPlan = brokenWithPinnedClauses(result, broken, minimumLineHeightPx, containerWidthPx).first
+
+        /**
+         * PinnedClauseLikeTag: when the block scrolls, fitting clause lines split into the second
+         * plan at identical coordinates, so a frontend can anchor them to the viewport while the
+         * first plan scrolls. The second plan is null when nothing needs pinning.
+         */
+        fun brokenWithPinnedClauses(
+            result: MathLayoutResult,
+            broken: MathBrokenLayout,
+            minimumLineHeightPx: Float? = null,
+            containerWidthPx: Float? = null,
+        ): Pair<RenderPlan, RenderPlan?> {
+            // Display rows: host line-height pads the block once, like the engine-replayed
+            // tagged path — the advance between rows is engine truth (ink metrics + DisplayRowJot)
+            // and never stretches with the host style. Inline soft-wrap keeps the original
+            // per-line minimum: every wrapped line of running text meets the host line grid.
+            val perLineLeading = broken.policy != MathLineBreakPolicy.ResponsiveDisplayLeadingOperators
+            val intrinsicHeight = broken.lines.sumOf { (it.ascent + it.descent).toDouble() }.toFloat()
+            val blockLeading = if (perLineLeading) {
+                0f
+            } else {
+                ((minimumLineHeightPx ?: 0f) - intrinsicHeight).coerceAtLeast(0f)
+            }
+            var top = blockLeading / 2f
             var firstBaseline = 0f
-            val boxes = broken.lines.flatMapIndexed { lineIndex, line ->
-                val intrinsicHeight = line.ascent + line.descent
-                val extraLeading = ((minimumLineHeightPx ?: 0f) - intrinsicHeight).coerceAtLeast(0f)
-                val baseline = top + line.ascent + extraLeading / 2f
+            val scrollingBoxes = mutableListOf<PositionedBox>()
+            val pinnedBoxes = mutableListOf<PositionedBox>()
+            broken.lines.forEachIndexed { lineIndex, line ->
+                val lineExtra = if (perLineLeading) {
+                    ((minimumLineHeightPx ?: 0f) - (line.ascent + line.descent)).coerceAtLeast(0f)
+                } else {
+                    0f
+                }
+                val baseline = top + line.ascent + lineExtra / 2f
                 if (lineIndex == 0) firstBaseline = baseline
-                top += intrinsicHeight + extraLeading
-                line.fragments.map { placement ->
-                    PositionedBox(
+                top += line.ascent + line.descent + lineExtra
+                val lineOffset = if (broken.policy == MathLineBreakPolicy.ResponsiveDisplayLeadingOperators) {
+                    line.horizontalOffsetPx
+                } else {
+                    containerWidthPx?.let { width ->
+                        ((width - line.width) / 2f).coerceAtLeast(0f)
+                    } ?: 0f
+                }
+                // The pin decision is engine layout truth on the line; the renderer only routes.
+                val target = if (line.pinned) pinnedBoxes else scrollingBoxes
+                line.fragments.forEach { placement ->
+                    target += PositionedBox(
                         box = result.fragments[placement.fragmentIndex].box,
-                        x = -line.visualLeft + placement.x,
+                        x = lineOffset - line.visualLeft + placement.x,
                         baselineFromTop = baseline,
                     )
                 }
             }
-            return RenderPlan(boxes, broken.width, top, firstBaseline)
+            val width = maxOf(broken.width, containerWidthPx ?: 0f)
+            val height = top + blockLeading / 2f
+            return RenderPlan(scrollingBoxes, width, height, firstBaseline) to
+                pinnedBoxes.takeIf { it.isNotEmpty() }?.let { RenderPlan(it, width, height, firstBaseline) }
         }
     }
 }
