@@ -1,0 +1,67 @@
+e \sin E=E-M \tag{1}\\
+e \sinh F=F+N \tag{2} \\
+E=M+\frac{e}{z}\\ \omega=\frac{1}{e}\tag{3}\\ \xi=\frac{M}{e} \\
+\Lambda (z)=1+\xi z-\omega z \sin^{-1}(1/z)\tag{4}\\
+\sin^{-1}(1/z)=k\pi +(-1)^k\left[\frac{\pi}{2}-i \log \left[f(z)+\frac{1}{z}\right]\right],k=0,\pm1,\pm2,...\tag{5}\\
+f(z)=\sqrt{\frac{1}{z^2}-1},f(\infty)=i\tag{6}\\
+\Lambda _k(z)=1+\xi z-\omega z \left[k\pi+(-1)^k \frac{\pi}{2}-i(-1)^k \log \left[f(z)+\frac{1}{z}\right]\right],\\k=0,\pm1,\pm2,...\tag{7}\\
+\hat \Lambda _k(z)=1+\zeta z-\omega z \left[k\pi+(-1)^k \frac{\pi}{2}-i(-1)^k \log\left[f(z)+\frac{1}{z} \right]\right],\\k=0,\pm1,\pm2,...\tag{8}\\
+F=-N+i\frac{e}{z}\\ \omega=\frac{1}{e}\\ \zeta=i\frac{N}{e}\tag{9}\\
+\Lambda ^\pm_k(z)=1+t[\xi-\omega \pi \Delta(k)]+(-1)^k\omega \frac{\pi}{2} \left| t\right| \mp i(-1)^k \omega t C(t) \tag{10}\\
+\Delta(k)=k+(-1)^k\tag{11}\\
+C(t)=\log\left[f(t)+\frac{1}{\left| t \right|}\right] \tag{12}\\
+\Omega_k(z)=\Lambda_k(z) \Lambda_k(-z) \tag{13} \\
+\Phi_k^+(t)=G_k(t) \Phi_k^-(t),t \in(0,1) \tag{14}\\
+G_k(t)=\frac{\Phi_k^+(t)}{\Phi_k^-(t)}=\exp[2i \arg \Phi_k^+(t)] \tag{15}\\
+\Phi_k(z)=(1-z)^{-\aleph_k} \exp\left[\frac{1}{\pi} \int_0^1 \arg \Phi_k^+(t)\frac{\mathrm{d} t}{t-z}\right] \tag{16}\\
+\{e,M\}\in R_1 \Rightarrow k=1 ,\aleph_1=2\\ \{e,M\}\in R_2 \Rightarrow k=0 ,\aleph_0=0\\ \{e,M\}\in R_3 \Rightarrow k=3 ,\aleph_3=2\\
+R_1:e<\frac{\pi}{2}-M\\R_2:e>\frac{\pi}{2}-M \wedge e>M-\frac{3\pi}{2}\\R_3:e<M-\frac{3\pi}{2}
+\Omega_k(z)=\Omega_k(-z),\Omega_k(z)=\overline {\Omega_k(\bar z)}\tag{17}\\
+\Omega_k(z) \Phi_k^{-1}(-z)=\Phi_k(z)P_k(z)\tag{18}\\
+P_k(z)=B_k^2 \prod_{\alpha=1}^{\aleph_k+1} [z_{k\alpha}^2-z^2]\tag{19}\\
+B_k=\xi-\omega \pi \Delta(k) \tag{20}\\
+\Omega_k(z)=\Phi_k(z)\Phi_k(-z)B_k^2 \prod_{\alpha=1}^{\aleph_k+1} [z_{k\alpha}^2-z^2]\tag{21}\\
+\hat \Omega_1(z)=\hat \Lambda_1(z) \hat \Lambda_1(-z) \tag{22}\\
+\hat \Omega_1(z)=\hat \Phi_1(z) \hat \Phi_1(-z)\zeta^2 \prod_{\alpha=1}^{\hat \aleph_1+1} [z_{1\alpha}^2-z^2]\tag{23}\\
+\hat \Phi_1(z)=(1-z)^{-\hat\aleph_1}\exp\left[\frac{1}{\pi}\int_0^1\arg \hat\Omega_1^+(t)\frac{\mathrm{d}t}{t-z}\right]\tag{24}\\
+\{e,N\}\in\hat R_1 \Rightarrow \hat \aleph_1=0\\\{e,N\}\in\hat R_2 \Rightarrow \hat \aleph _1=2
+\hat R_1:e\cosh N>\frac{\pi}{2}\\\hat R_2:e\cosh N<\frac{\pi}{2}\\
+\hat G_k(t)=\frac{\hat \Phi_k^+(t)}{\hat \Phi_k^-(t)} \tag{26}
+\hat \Phi_1^+(t)=\hat G_1(t)\hat\Phi_1^-(t),t\in(0,1)\tag{27}\\
+t=t_0=\frac{2e}{\pi}\tag{28}
+F=-N\pm i \frac{\pi}{2},\{e,N\}\in R_s \tag{29}
+\hat \Phi_1(z)=(t_0-z)^{-1}\exp\left[\frac{1}{\pi}\int_0^1\arg \hat\Omega_1^+(t)\frac{\mathrm{d}t}{t-z}\right]，\{e,N\}\in \hat R_s\tag{30}\\
+\hat \Omega_1(z)=\hat \Phi_1(z)\hat \Omega_1(-z) \zeta^2[t_0^2-z^2][z_{11}^2-z^2],\{e,N\}\in R_s \tag{31}
+z_{01}^2=z^2+\Omega_0(z)[B_0^2\Phi_0(z)\Phi_0(-z)]^{-1},\{e,M\}\in R_2\tag{32}\\
+e^2\Omega_k(iy)=\left[e+(-1)^ky \log\left[\sqrt{\frac{1}{y^2}+1}+\frac{1}{y}\right]\right]^2+y^2\left[M-\pi\Delta(k)\right]^2\tag{33}\\
+E_k(iy)=\exp\left[-\frac{1}{\pi}\int_0^1t\arg \Omega_k^+(t)\frac{\mathrm{d}t}{t^2+y^2}\right]\tag{34}\\
+\arg \Omega_k^+(t)=\tan^{-1}\left[\frac{2(-1)^{k+1}tC(t)\left[e+(-1)^k\frac{\pi}{2}\left| t \right| \right]}{\left[e+(-1)^k\frac{\pi}{2}\left| t \right|\right]^2-t^2[M-\pi\Delta(k)]^2-t^2C^2(t)}\right] \tag{35}\\
+E=M-e(M-\pi)[e^2\Omega_0(iy)E_0^2(iy)-y^2(M-\pi)^2]^{-1/2},\{e,M\}\in R_2 \tag{36}\\
+E=M-(M-\pi)\exp\left[\frac{1}{\pi}\int_0^1\arg\Omega_0^+(t)\frac{\mathrm{d}t}{t}\right],\{e,M\}\in R_2 \tag{37}\\
+\boxed{E=M-e(M-\pi)\left[(e+1)^2-(M-\pi)^2\frac{2}{\pi}\int_0^1t\arg \Omega_0^+(t)\mathrm{d}t\right]^{-1/2},\{e,M\}\in R_2 \tag {38}}
+F_k(i\alpha)=[z_{k1}^2+\alpha^2][z_{k2}^2+\alpha^2][z_{k3}^2+\alpha^2]\tag {39a}\\
+F_k(i\beta)=[z_{k1}^2+\beta^2][z_{k2}^2+\beta^2][z_{k3}^2+\beta^2]\tag {39b}\\
+F_k(i\gamma)=[z_{k1}^2+\gamma^2][z_{k2}^2+\gamma^2][z_{k3}^2+\gamma^2]\tag {39c}\\
+F_k(iy)=\frac{e^2\Omega_k(iy)[1+y^2]^2E_k^2(iy)}{[M-\pi\Delta(k)]^2}\tag{40}\\
+E=M+e(2-k)\left[S_{1k}(\alpha,\beta,\gamma)+S_{2k}(\alpha,\beta,\gamma)-\frac{1}{3}A_{2k}(\alpha,\beta,\gamma)\right]^{-1/2},\\\{e,M\}\in R_k,k=1 \ or \ 3 \tag{41}\\
+S_{jk}(\alpha,\beta,\gamma)=[D_k(\alpha,\beta,\gamma)-(-1)^j\left[D_k^2(\alpha,\beta,\gamma)+Q_k^3(\alpha,\beta,\gamma)\right]^{1/2}]^{1/3} \tag{42}
+D_k(\alpha,\beta,\gamma)=\frac{1}{6}\left[A_{1k}(\alpha,\beta,\gamma)A_{2k}(\alpha,\beta,\gamma)-3A_{0k}(\alpha,\beta,\gamma)\right]-[\frac{1}{3}A_{2k}(\alpha,\beta,\gamma)]^3 \tag{43}\\
+Q_{k}(\alpha,\beta,\gamma)=\frac{1}{3}A_{1k}(\alpha,\beta,\gamma)-[\frac{1}{3}A_{2k}(\alpha,\beta,\gamma)]^2 \tag{44}\\
+A_{0k}(\alpha,\beta,\gamma)=\alpha^2\beta^2\gamma^2+\beta^2\gamma^2(\beta^2-\gamma^2)TF_k(i\alpha)+\\\gamma^2\alpha^2(\gamma^2-\alpha^2)TF_k(i\beta)+\alpha^2\beta^2(\alpha^2-\beta^2)TF_k(i\gamma)\tag{45a}\\
+A_{1k}(\alpha,\beta,\gamma)=\alpha^2\beta^2+\beta^2\gamma^2+\gamma^2\alpha^2+(\beta^4-\gamma^4)TF_k(i\alpha)+\\(\gamma^4-\alpha^4)TF_k(i\beta)+(\alpha^4-\beta^4)TF_k(i\gamma)\tag{45b}\\
+A_{2k}(\alpha,\beta,\gamma)=\alpha^2+\beta^2+\gamma^2+(\beta^2-\gamma^2)TF_k(i\alpha)+\\(\gamma^2-\alpha^2)TF_k(i\beta)+(\alpha^2-\beta^2)TF_k(i\gamma) \tag{45c}\\
+T=[(\alpha^2-\beta^2)(\beta^2-\gamma^2)(\gamma^2-\alpha^2)]^{-1} \tag{46}\\
+A_{0k}(0,1,2)=-F_k(0) \tag{47a}\\
+A_{1k}(0,1,2)=4-\frac{5}{4}F_k(0)+\frac{4}{3}F_k(i)-\frac{1}{12}F_k(2i) \tag{47b}
+A_{2k}(0,1,2)=5-\frac{1}{4}F_k(0)+\frac{1}{3}F_k(i)-\frac{1}{12}F_k(2i) \tag{47c}\\
+E=M+e(2-k)\left[S_{1k}(0,1,2)+S_{2k}(0,1,2)-\frac{1}{3}A_{2k}(0,1,2)\right]^{-1/2},\\ \{e,M\}\in R_k,k=1 \ or\ 3 \tag{48}\\
+\boxed{E=M+e(2-k)\left[S_{1k}+S_{2k}-\frac{1}{3}A_{2k}\right]^{-1/2}, \{e,M\}\in R_k,k=1 \ or\ 3 \tag{49}\\}
+S_{jk}=[D_k-(-1)^j[D_k^2+Q_k^3]^{1/2}]^{1/3}\tag{50}\\
+D_k=\frac{1}{6}[A_{1k}A_{2k}-3A_{0k}]-[\frac{1}{3}A_{2k}]^3 \tag{51}\\
+Q_{k}=\frac{1}{3}A_{1k}-[\frac{1}{3}A_{2k}]^2 \tag{52}\\
+A_{0k}=\frac{4}{3}I_{1k}^3+4I_{1k}I_{3k}+2I_{5k}+J(k)[M-\pi\Delta(k)]^{-2} \tag{53a}\\
+A_{1k}=2I_{1k}^2+2I_{3k}+[-2(e-1)^2I_{1k}+\frac{1}{3}(e-1)][M-\pi\Delta(k)]^{-2} \tag{53b}\\
+A_{2k}=2I_{1k}-(e-1)^2[M-\pi\Delta(k)]^{-2} \tag{53c}\\
+J(k)=-2(e-1)^2[I_{1k}^2+I_{3k}]+(e-1)[\frac{2}{3}I_{1k}+\frac{3}{20}]-\frac{1}{36} \tag{54}\\
+I_{\alpha k}=\frac{1}{\pi} \int_0^1t^{\alpha}\arg \Omega_k^+(t) \mathrm{d}t-\frac{2}{\alpha+1} \tag{55}\\
+\boxed{x=\frac{\pi}{2}+\frac{\pi}{2}\exp \left( \frac{1}{\pi}\int_0^1 \tan^{-1}\left(\frac{t\log \left( \frac{\sqrt{1-t^2}+1}{t}\right)(\pi t+2)}{t^2 \log^2 \left(\frac{\sqrt{1-t^2}+1}{t}\right)-\pi t-1}\right)\frac{\mathrm{d}t}{t}\right)}\\

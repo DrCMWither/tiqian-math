@@ -3,6 +3,7 @@ package org.tiqian.math.font.skia
 import org.tiqian.math.core.*
 import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathLayoutEngine
+import org.tiqian.math.layout.breakResponsiveDisplayLines
 import org.tiqian.math.layout.MathLayoutOptions
 import org.tiqian.math.layout.MathGlyphBoundsSource
 import org.tiqian.math.layout.MathTextRunProvider
@@ -89,6 +90,93 @@ class MathFontFamilyFallbackTest {
             val fallback = assertIs<MathFormulaCapabilityResult.FallbackRequired>(missing)
             assertTrue(fallback.diagnostics.any { it.code == DiagnosticCode.MissingTextRunProvider })
             assertTrue(fallback.reasons.any { it.category == org.tiqian.math.layout.MathFormulaCapabilityCategory.MissingTextProvider })
+        }
+    }
+
+    @Test
+    fun fullwidthClauseSeparatorBreaksAsTrailingPunctuationWithoutExtraGlue() {
+        SkiaMathFontFamily.loadBundledLete().use { math ->
+            val hostFaceId = MathFaceId("test-host-clause-separator")
+            TestHostTextProvider(
+                SkiaMathFontFace(
+                    org.tiqian.math.font.opentype.LeteSansMath.load(),
+                    hostFaceId,
+                ),
+            ).use { provider ->
+                val source = "C_1=1-C，C_2=C-\\frac14"
+                val result = MathLayoutEngine(math, textRunProvider = provider).layout(
+                    source,
+                    MathLayoutOptions(fontSizePx = 32f, textLocale = "zh-Hans"),
+                )
+                assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+
+                val separator = result.fragments.single { it.sourceRange == SourceRange(7, 8) }
+                assertEquals(MathAtomClass.Punctuation, separator.atomClass)
+                assertEquals(MathBreakKind.PunctuationTrailing, separator.breakAfter?.kind)
+                // FullwidthClauseSeparatorCarriesOwnSpace: no pair glue stacked on the glyph.
+                assertEquals(0f, separator.trailingGlue.naturalPx)
+
+                // With no relation/binary competitor, the separator is the only legal boundary.
+                val commaOnly = MathLayoutEngine(math, textRunProvider = provider).layout(
+                    "abc，def",
+                    MathLayoutOptions(fontSizePx = 32f, textLocale = "zh-Hans"),
+                )
+                assertTrue(commaOnly.diagnostics.isEmpty(), commaOnly.diagnostics.toString())
+                val narrow = commaOnly.breakResponsiveDisplayLines(
+                    maxWidthPx = commaOnly.box.visualWidth * 0.7f,
+                )
+                assertEquals(2, narrow.lines.size)
+                assertEquals(MathBreakKind.PunctuationTrailing, narrow.lines[1].breakKind)
+            }
+        }
+    }
+
+    @Test
+    fun fullwidthCjkPunctuationUsesReplayableHostTextInsteadOfTheMathFontNotdefGlyph() {
+        SkiaMathFontFamily.loadBundledLete().use { math ->
+            val hostFaceId = MathFaceId("test-host-cjk-punctuation")
+            TestHostTextProvider(
+                SkiaMathFontFace(
+                    org.tiqian.math.font.opentype.LeteSansMath.load(),
+                    hostFaceId,
+                ),
+            ).use { provider ->
+                val source = "C_1=1-C，C_2=C-\\frac14"
+                val result = MathLayoutEngine(math, textRunProvider = provider).layout(
+                    source,
+                    MathLayoutOptions(fontSizePx = 32f, textLocale = "zh-Hans"),
+                )
+
+                assertTrue(result.diagnostics.isEmpty(), result.diagnostics.toString())
+                val request = provider.requests.single { it.text == "，" }
+                assertEquals(SourceRange(7, 8), request.sourceRange)
+                assertEquals(MathTextOrigin.ImplicitCjk, request.origin)
+                assertTrue(result.box.glyphs.any {
+                    it.faceId == hostFaceId && it.sourceRange == SourceRange(7, 8)
+                })
+                assertTrue(result.box.glyphs.none {
+                    it.faceId.value.startsWith("lete-sans-math") && it.sourceRange == SourceRange(7, 8)
+                })
+                assertIs<MathFormulaCapabilityResult.Ready>(
+                    math.formulaCapabilityEngine(provider).evaluate(
+                        source,
+                        MathLayoutOptions(fontSizePx = 32f, textLocale = "zh-Hans"),
+                    ),
+                )
+
+                val withoutHostText = assertIs<MathFormulaCapabilityResult.FallbackRequired>(
+                    math.formulaCapabilityEngine().evaluate(
+                        source,
+                        MathLayoutOptions(fontSizePx = 32f, textLocale = "zh-Hans"),
+                    ),
+                )
+                assertTrue(withoutHostText.diagnostics.any {
+                    it.code == DiagnosticCode.MissingTextRunProvider && it.range == SourceRange(7, 8)
+                })
+                assertTrue(withoutHostText.diagnostics.none {
+                    it.code == DiagnosticCode.MissingGlyph && it.range == SourceRange(7, 8)
+                })
+            }
         }
     }
 
@@ -312,7 +400,7 @@ private class FixtureMultiFaceHostProvider(
     override fun close() = faces.forEach(SkiaMathFontFace::close)
 }
 
-private class TestHostTextProvider(
+internal class TestHostTextProvider(
     private val face: SkiaMathFontFace,
 ) : org.tiqian.math.layout.MathTextRunProvider, SkiaReplayCatalog, AutoCloseable {
     val requests = mutableListOf<org.tiqian.math.layout.MathTextRunRequest>()

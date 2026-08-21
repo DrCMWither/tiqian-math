@@ -166,6 +166,108 @@ class MathVerticalSliceTest {
     }
 
     @Test
+    fun responsiveDisplayBreaksBeforeOperatorsAndUsesSemanticContinuationAnchor() =
+        withRealFaces { label, face ->
+            val result = MathLayoutEngine(face).layout(
+                "E=a+b+c+d=e+f+g+h",
+                MathLayoutOptions(MathMode.Display, 40f),
+            )
+            val targetWidth = result.box.visualWidth * 0.62f
+            val broken = result.breakResponsiveDisplayLines(targetWidth)
+
+            assertEquals(MathLineBreakPolicy.ResponsiveDisplayLeadingOperators, broken.policy, label)
+            assertEquals(MathContinuationAlignment.FirstRelation, broken.continuationAlignment, label)
+            assertTrue(broken.lines.size > 1, label)
+            val firstLineRelation = broken.lines.first().fragments.first {
+                result.fragments[it.fragmentIndex].atomClass == MathAtomClass.Relation
+            }
+            val firstLineRelationInkLeft = broken.lines.first().horizontalOffsetPx -
+                broken.lines.first().visualLeft +
+                firstLineRelation.x +
+                result.fragments[firstLineRelation.fragmentIndex].box.inkBounds.left
+            assertNear(broken.continuationAnchorPx, firstLineRelationInkLeft, label)
+            broken.lines.drop(1).forEach { line ->
+                val first = result.fragments[line.fragments.first().fragmentIndex]
+                assertTrue(
+                    first.atomClass == MathAtomClass.Relation ||
+                        first.atomClass == MathAtomClass.Binary,
+                    "$label continuation begins with a visible operator: ${first.atomClass}",
+                )
+                assertTrue(
+                    line.breakKind == MathBreakKind.RelationLeading ||
+                        line.breakKind == MathBreakKind.BinaryOperatorLeading,
+                    "$label records the leading boundary",
+                )
+                val continuationOperatorInkLeft = line.horizontalOffsetPx - line.visualLeft +
+                    line.fragments.first().x + first.box.inkBounds.left
+                assertNear(
+                    broken.continuationAnchorPx,
+                    continuationOperatorInkLeft,
+                    "$label aligns the painted continuation operator with the rendered first-line relation",
+                )
+                assertNear(0f, line.fragments.first().x, "$label has no visible leading glue")
+                assertNear(
+                    0f,
+                    line.fragments.last().resolvedTrailingAdvancePx,
+                    "$label has no visible trailing glue",
+                )
+            }
+            assertTrue(
+                broken.lines.drop(1).any {
+                    !it.unbreakableOverflow
+                },
+                "$label replays at least one semantic continuation anchor",
+            )
+
+            // The existing inline contract is intentionally unchanged.
+            val inline = result.breakIntoLines(targetWidth)
+            assertEquals(MathLineBreakPolicy.InlineTrailingOperators, inline.policy, label)
+            assertTrue(
+                inline.lines.dropLast(1).all { line ->
+                    val last = result.fragments[line.fragments.last().fragmentIndex]
+                    last.atomClass == MathAtomClass.Relation || last.atomClass == MathAtomClass.Binary
+                },
+                "$label inline operators remain at line ends",
+            )
+        }
+
+    @Test
+    fun responsiveDisplayNeverInventsBreaksInsideCompoundAtoms() = withRealFaces { label, face ->
+        val result = MathLayoutEngine(face).layout(
+            "\\boxed{abcdefghijklmnopqrstuvwxyz}",
+            MathLayoutOptions(MathMode.Display, 32f),
+        )
+        val broken = result.breakResponsiveDisplayLines(result.box.visualWidth / 3f)
+        assertEquals(1, broken.lines.size, label)
+        assertTrue(broken.lines.single().unbreakableOverflow, label)
+        assertEquals(listOf(0), broken.lines.single().fragments.map { it.fragmentIndex }, label)
+    }
+
+    @Test
+    fun responsiveDisplayPreservesIndentWhenNaturalGlueMustShrink() = withRealFaces { label, face ->
+        val result = MathLayoutEngine(face).layout(
+            "E_k=(n-1)E_{k-1}+E_{k-2}+\\frac{\\sum_{i=1}^{n}i^2}{\\binom{2n}{n}}+" +
+                "\\sqrt{\\frac{a+b}{c+d}}=y_2^3",
+            MathLayoutOptions(MathMode.Display, 32f),
+        )
+        val broken = result.breakResponsiveDisplayLines(300f)
+
+        assertTrue(broken.lines.size > 1, label)
+        assertTrue(broken.continuationAnchorPx > 0f, label)
+        broken.lines.drop(1).forEach { line ->
+            val first = result.fragments[line.fragments.first().fragmentIndex]
+            val continuationOperatorInkLeft = line.horizontalOffsetPx - line.visualLeft +
+                line.fragments.first().x + first.box.inkBounds.left
+            assertNear(
+                broken.continuationAnchorPx,
+                continuationOperatorInkLeft,
+                "$label keeps the painted operator column while shrinking adjustable glue",
+            )
+            assertFalse(line.unbreakableOverflow, label)
+        }
+    }
+
+    @Test
     fun extremeSyntheticMathConstantsControlNamedGeometryWithoutFontIdentityBranches() {
         SkiaMathFontFace(LeteSansMath.load()).use { realFace ->
             val size = 100f
