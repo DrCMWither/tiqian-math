@@ -218,7 +218,6 @@ object MathFormulaCapabilityClassifier {
         -> MathFormulaCapabilityCategory.MalformedSource
 
         DiagnosticCode.MissingEquationTagDisplayWidth,
-        DiagnosticCode.EquationTagDoesNotFit,
         -> MathFormulaCapabilityCategory.MissingLayoutConstraint
 
         DiagnosticCode.MissingGlyph -> MathFormulaCapabilityCategory.MissingGlyph

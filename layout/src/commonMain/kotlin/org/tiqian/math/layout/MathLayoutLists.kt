@@ -79,12 +79,16 @@ internal fun MathLayoutPass.layoutList(
     }
 
     val spacedItems = raw.mapIndexed { index, item ->
-        val leftClass = previousNoadIndex[index].takeIf { it >= 0 }?.let(classes::get)
+        val leftIndex = previousNoadIndex[index].takeIf { it >= 0 }
+        val leftClass = leftIndex?.let(classes::get)
         val rightClass = classes[index]
-        val glue = if (!item.participatesInNoadSpacing || leftClass == null) {
-            MathGlueAdjustment.Zero
-        } else {
-            atomGlue(leftClass, rightClass, item.laid.style, item.node.range)
+        val glue = when {
+            !item.participatesInNoadSpacing || leftClass == null -> MathGlueAdjustment.Zero
+            // FullwidthClauseSeparatorCarriesOwnSpace: the fullwidth glyph already ends with its
+            // blank half, so the Punctuation pair glue is not stacked on top of it.
+            (raw[checkNotNull(leftIndex)].node as? MathText)?.isCjkClauseSeparator == true ->
+                MathGlueAdjustment.Zero
+            else -> atomGlue(leftClass, rightClass, item.laid.style, item.node.range)
         }
         item.copy(glueBefore = glue, atomClass = rightClass)
     }

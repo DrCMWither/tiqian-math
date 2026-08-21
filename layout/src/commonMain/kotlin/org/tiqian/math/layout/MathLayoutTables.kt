@@ -18,12 +18,12 @@ import org.tiqian.math.parser.MathMacroDefinition
 import org.tiqian.math.parser.MathParser
 import kotlin.math.floor
 import kotlin.math.max
+import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_ALIGNED_ROW_GAP_EM
 import org.tiqian.math.layout.MathLayoutPass.Companion.BIG_POINT_TO_PX
 import org.tiqian.math.layout.MathLayoutPass.Companion.CENTIMETERS_PER_INCH
 import org.tiqian.math.layout.MathLayoutPass.Companion.CSS_PIXELS_PER_INCH
 import org.tiqian.math.layout.MathLayoutPass.Companion.MILLIMETERS_PER_INCH
 import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_ALIGNED_PAIR_GAP_EM
-import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_ALIGNED_ROW_GAP_EM
 import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_ARRAY_COLUMN_SEPARATION_EM
 import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_ARRAY_INTERCOLUMN_EM
 import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_ARRAY_STRUT_ASCENT_EM
@@ -40,6 +40,7 @@ internal fun MathLayoutPass.layoutTable(
     node: MathTable,
     style: MathStyle,
     alphabetOverride: MathAlphabetOverride?,
+    prelaidCells: Map<MathTableCell, MathBox> = emptyMap(),
 ): LaidNode {
     val substack = node.environment == MathTableEnvironment.Substack
     val smallMatrix = node.environment == MathTableEnvironment.SmallMatrix
@@ -63,6 +64,7 @@ internal fun MathLayoutPass.layoutTable(
     }
     val rowLayouts = node.rows.map { row ->
         row.cells.mapIndexed { column, cell ->
+            prelaidCells[cell]?.let { return@mapIndexed it }
             val horizontal = layoutList(cell.body, cellStyle, alphabetOverride)
             val needsAlignedRelationAnchor = preservesEntryStyle && column % 2 == 1
             val preambleGlue = if (needsAlignedRelationAnchor) {
@@ -156,13 +158,18 @@ internal fun MathLayoutPass.layoutTable(
             else -> TEX_ARRAY_INTERCOLUMN_EM * size
         }
     }
-    val rowGapEm = if (preservesEntryStyle && node.rows.size > 1) TEX_ALIGNED_ROW_GAP_EM else 0f
+    // DisplayRowJot: in the electronic-reading extension (softWrapDisplay) display alignment
+    // rows share one inter-row leading whether the engine broke the lines or the author wrote
+    // `\\`. Without it the tectonic-measured TeX gap stands, and matrices, substacks and small
+    // matrices always keep their TeX-exact spacing.
+    val alignedRowGapEm = if (softWrapDisplay) DISPLAY_ROW_JOT_EM else TEX_ALIGNED_ROW_GAP_EM
+    val rowGapEm = if (preservesEntryStyle && node.rows.size > 1) alignedRowGapEm else 0f
     val baseRowGap = if (substack) {
         scale(constants.stackGapMin, MathStyle.Script)
     } else if (smallMatrix) {
         TEX_SMALL_MATRIX_LINE_SKIP_EM * fontSize(style)
     } else if (gathered && node.rows.size > 1) {
-        TEX_ALIGNED_ROW_GAP_EM * fontSize(style)
+        alignedRowGapEm * fontSize(style)
     } else {
         rowGapEm * size
     }
@@ -194,6 +201,7 @@ internal fun MathLayoutPass.layoutTable(
     val paintGroups = mutableListOf<MathConstructionPaintGroup>()
     val positionedChildren = mutableListOf<Pair<MathBox, Float>>()
     val rowBaselines = mutableListOf<Float>()
+    val rowLogicalExtents = mutableListOf<ClosedFloatingPointRange<Float>>()
     fun placeHorizontalRules(boundaryIndex: Int) {
         horizontalRulesByBoundary[boundaryIndex].orEmpty().forEach { horizontalRule ->
             rules += MathRulePlacement(
@@ -224,19 +232,29 @@ internal fun MathLayoutPass.layoutTable(
         val baselineY = rowTop + rowAscents[rowIndex]
         rowBaselines += baselineY
         var columnLeft = outerPadding
+        var rowLogicalLeft = Float.POSITIVE_INFINITY
+        var rowLogicalRight = Float.NEGATIVE_INFINITY
         row.forEachIndexed { column, cell ->
             val offset = when (alignments[column]) {
                 MathTableColumnAlignment.Left -> 0f
                 MathTableColumnAlignment.Center -> (columnWidths[column] - cell.width) / 2f
                 MathTableColumnAlignment.Right -> columnWidths[column] - cell.width
             }
-            val shifted = cell.translated(columnLeft + offset, baselineY)
+            val cellLeft = columnLeft + offset
+            rowLogicalLeft = minOf(rowLogicalLeft, cellLeft)
+            rowLogicalRight = maxOf(rowLogicalRight, cellLeft + cell.width)
+            val shifted = cell.translated(cellLeft, baselineY)
             glyphs += shifted.glyphs
             hostTextRuns += shifted.hostTextRuns
             rules += shifted.rules
             paintGroups += shifted.constructionPaintGroups
             positionedChildren += cell to baselineY
             columnLeft += columnWidths[column] + columnGaps.getOrElse(column) { 0f }
+        }
+        rowLogicalExtents += if (rowLogicalLeft.isFinite() && rowLogicalRight.isFinite()) {
+            rowLogicalLeft..rowLogicalRight
+        } else {
+            0f..0f
         }
         rowTop += rowAscents[rowIndex] + rowDescents[rowIndex] +
             rowGaps.getOrElse(rowIndex) { 0f }
@@ -269,6 +287,7 @@ internal fun MathLayoutPass.layoutTable(
             rows = node.rows,
             tagBoxes = rowTagLayouts,
             rowBaselines = rowBaselines,
+            rowLogicalExtents = rowLogicalExtents,
             range = node.range,
             layoutRole = "AlignmentRows",
         )
@@ -307,7 +326,9 @@ internal fun MathLayoutPass.layoutTable(
         "rowAdditionalSpacingPx" to rowAdditionalSpacingPx.joinToString(","),
         "rowGapsPx" to rowGaps.joinToString(","),
         "trailingExplicitRowSpacingPx" to trailingExplicitRowSpacing,
-        "rowSpacingPolicy" to if (preservesEntryStyle) {
+        "rowSpacingPolicy" to if (preservesEntryStyle && softWrapDisplay) {
+            "DisplayRowJotInterRowGlue"
+        } else if (preservesEntryStyle) {
             "AmsmathExtraInterRowGlue"
         } else {
             "LaTeXArrayPreviousRowStrutDepthExtension"
@@ -354,6 +375,8 @@ internal fun MathLayoutPass.layoutDisplayEnvironment(
             style = displayStyle,
             range = node.range,
             layoutRole = "SingleDisplayEnvironment",
+            centeredBesideMultiline = node.body.isSplitDisplayBody(),
+            shiftedTagMustClearCompletedBody = node.body.isCompletedBoxedField(),
         )
     }
     decision(
@@ -379,6 +402,70 @@ internal fun MathLayoutPass.layoutDisplayEnvironment(
     )
 }
 
+private fun MathNode.isSplitDisplayBody(): Boolean = when (this) {
+    is MathTable -> environment == MathTableEnvironment.Split
+    is MathList -> children.singleOrNull()?.isSplitDisplayBody() == true
+    is MathGroup -> body.isSplitDisplayBody()
+    else -> false
+}
+
+private fun MathNode.isCompletedBoxedField(): Boolean = when (this) {
+    is MathBoxed -> true
+    is MathList -> children.singleOrNull()?.isCompletedBoxedField() == true
+    is MathGroup -> body.isCompletedBoxedField()
+    else -> false
+}
+
+/**
+ * OperatorJunctionRowsRejoin: TeX has no automatic display line breaking, so an author's `\\`
+ * inside a single formula is a print-width workaround — recognizable by a binary or relation
+ * operator at the junction (the previous row trails with one, or the next row leads with one).
+ * Under the electronic-reading extension such rows are rejoined into one logical formula and
+ * re-broken responsively for the actual viewport; the junction's row separator and explicit
+ * `\\[dim]` spacing are print hints subsumed by that re-break. A junction without an explicit
+ * operator separates genuinely parallel formulas and is always preserved, as is any junction
+ * after a tagged row — the tag completes its formula.
+ */
+private fun joinedRowCovers(joinedRows: List<MathDisplayRow>, row: MathDisplayRow): Boolean =
+    joinedRows.any { joined ->
+        joined.range.start <= row.range.start && joined.range.endExclusive >= row.range.endExclusive &&
+            (joined.range.start < row.range.start || joined.range.endExclusive > row.range.endExclusive)
+    }
+
+private fun rejoinOperatorJunctionRows(authorRows: List<MathDisplayRow>): List<MathDisplayRow> {
+    fun MathList.edgeOperator(last: Boolean): Boolean {
+        val meaningful = children.filter { it !is MathStyleDeclaration && it !is MathAlphabetDeclaration }
+        val edge = if (last) meaningful.lastOrNull() else meaningful.firstOrNull()
+        if (edge !is MathSymbol) return false
+        // A trailing comma is a clause junction: the author split one formula from its condition
+        // for print width; rejoined, the comma becomes a responsive clause boundary again.
+        if (last && edge.atomClass == MathAtomClass.Punctuation) return true
+        return edge.atomClass == MathAtomClass.Binary || edge.atomClass == MathAtomClass.Relation
+    }
+
+    val joined = mutableListOf<MathDisplayRow>()
+    authorRows.forEach { row ->
+        val previous = joined.lastOrNull()
+        val operatorJunction = previous != null && previous.tag == null &&
+            (previous.body.edgeOperator(last = true) || row.body.edgeOperator(last = false))
+        if (operatorJunction) {
+            joined[joined.lastIndex] = MathDisplayRow(
+                body = MathList(
+                    children = checkNotNull(previous).body.children + row.body.children,
+                    range = SourceRange(previous.body.range.start, row.body.range.endExclusive),
+                ),
+                rowSeparatorRange = row.rowSeparatorRange,
+                additionalSpacing = row.additionalSpacing,
+                range = SourceRange(previous.range.start, row.range.endExclusive),
+                tag = row.tag,
+            )
+        } else {
+            joined += row
+        }
+    }
+    return joined
+}
+
 internal fun MathLayoutPass.layoutDisplayRows(
     node: MathDisplayRows,
     alphabetOverride: MathAlphabetOverride?,
@@ -390,9 +477,34 @@ internal fun MathLayoutPass.layoutDisplayRows(
             node.range,
         )
     }
+    val authorRows = node.rows
+    // Rejoin is a repair, not a normalization: author rows stand whenever they all fit the
+    // viewport, and rejoin fires only when some author row cannot. The probe layout below is
+    // measurement-only — its decisions and diagnostics are rolled back, and the surviving
+    // pipeline lays whichever row set wins exactly once.
+    val joinedRows = if (softWrapDisplay && authorRows.size > 1) {
+        rejoinOperatorJunctionRows(authorRows)
+    } else {
+        authorRows
+    }
+    val rows = if (joinedRows.size < authorRows.size) {
+        val viewport = displayWidthPx
+        val someAuthorRowOverflows = viewport != null && probeLayout {
+            // Only rows inside a joinable run can change the outcome; rows outside every run wrap
+            // internally the same way whether or not the runs rejoin.
+            val runMembers = authorRows.filter { joinedRowCovers(joinedRows, it) }.ifEmpty { authorRows }
+            runMembers.any { row ->
+                layoutList(row.body, MathStyle.Display, alphabetOverride)
+                    .laid.box.visualWidth > viewport + DISPLAY_GEOMETRY_EPSILON_PX
+            }
+        }
+        if (someAuthorRowOverflows) joinedRows else authorRows
+    } else {
+        authorRows
+    }
     var carriedStyle: MathStyleDeclaration? = null
     var carriedAlphabet: MathAlphabetDeclaration? = null
-    val tableRows = node.rows.map { row ->
+    val tableRows = rows.map { row ->
         val inherited = listOfNotNull(carriedStyle, carriedAlphabet)
         val syntheticBody = MathList(
             children = inherited + row.body.children,
@@ -424,20 +536,73 @@ internal fun MathLayoutPass.layoutDisplayRows(
         endNameRange = null,
         range = node.range,
     )
-    val table = layoutTable(syntheticTable, MathStyle.Display, alphabetOverride)
-    decision(
-        "MarkdownExplicitDisplayRows",
-        node.range,
-        "rowCount" to node.rows.size,
-        "entryMode" to formulaMode,
-        "entryStyle" to MathStyle.Display,
-        "rowAlignment" to "CenteredIndependentlyAtMaximumAdvance",
-        "rowKernel" to "AmsmathAlignedStrutAndBaselineGap",
-        "styleDeclarationPolicy" to "ContainingListDeclarationsCarryAcrossRows",
-        "trailingSeparatorCreatesVisibleRow" to false,
-        "groupBreakPolicy" to "ExplicitRowsOnlyNoAutomaticInternalBreak",
-        "dialect" to "MarkdownDisplayKaTeXCompatibilityExtension",
+    val prelaidCells = mutableMapOf<MathTableCell, MathBox>()
+    var responsiveRowCount = 0
+    tableRows.forEachIndexed { rowIndex, tableRow ->
+        val cell = tableRow.cells.single()
+        // The single tagged row is completed by completeTaggedEquationBox below, which drains
+        // pinned clauses; only under that guarantee may nested producers pin.
+        taggedDisplayReplayExpected = rows.size == 1 && rows[rowIndex].tag != null
+        val horizontal = layoutList(cell.body, MathStyle.Display, alphabetOverride)
+        val unbroken = horizontal.laid.box
+        val viewportWidth = displayWidthPx
+        val sourceRow = rows[rowIndex]
+        val sourceTag = sourceRow.tag
+        // An overwide row wraps within itself regardless of a row tag: the author's row
+        // structure is preserved, and completeTaggedRows already clears a shifted tag below the
+        // completed table bottom, which covers a row that became a multi-line block.
+        val mayWrapThisRow = softWrapDisplay && viewportWidth != null &&
+            unbroken.visualWidth > viewportWidth + DISPLAY_GEOMETRY_EPSILON_PX
+        val resolved = if (mayWrapThisRow) {
+            responsiveRowCount++
+            resolveSoftWrappedDisplayBody(
+                horizontal = horizontal,
+                style = MathStyle.Display,
+                range = sourceRow.body.range,
+                targetWidthPx = viewportWidth,
+                decisionName = if (sourceTag == null) {
+                    "ExplicitDisplayRowLineBreak"
+                } else {
+                    "TaggedDisplayBodyLineBreak"
+                },
+                recordTaggedDisplayBaseline = sourceTag != null,
+                // Only a single-row display owns the tagged replay that can host pinned clauses;
+                // rows inside a multi-row table keep their clause lines in the scrolled body.
+                pinClausesToViewport = rows.size == 1 && sourceTag != null,
+            )
+        } else {
+            unbroken
+        }
+        if (mayWrapThisRow && rows.size == 1 && sourceTag != null) {
+            val completed = completeTaggedEquationBox(
+                body = resolved,
+                tag = sourceTag,
+                style = MathStyle.Display,
+                range = node.range,
+                layoutRole = "MarkdownExplicitDisplayRows",
+                centeredBesideMultiline = false,
+                responsiveBodyViewportWidthPx = viewportWidth,
+                shiftedTagMustClearCompletedBody = sourceRow.body.isCompletedBoxedField(),
+            )
+            explicitDisplayRowsDecision(node, rows.size, responsiveRowCount)
+            return LaidNode(
+                node = node,
+                box = completed.copy(range = node.range),
+                atomClass = MathAtomClass.Ordinary,
+                italicCorrectionPx = 0f,
+                style = MathStyle.Display,
+                scriptBaseKind = ScriptBaseKind.CompoundBox,
+            )
+        }
+        prelaidCells[cell] = resolved
+    }
+    val table = layoutTable(
+        syntheticTable,
+        MathStyle.Display,
+        alphabetOverride,
+        prelaidCells,
     )
+    explicitDisplayRowsDecision(node, rows.size, responsiveRowCount)
     return table.copy(
         node = node,
         box = table.box.copy(range = node.range),
@@ -447,18 +612,64 @@ internal fun MathLayoutPass.layoutDisplayRows(
     )
 }
 
+private fun MathLayoutPass.explicitDisplayRowsDecision(
+    node: MathDisplayRows,
+    layoutRowCount: Int,
+    responsiveRowCount: Int,
+) {
+    decision(
+        "MarkdownExplicitDisplayRows",
+        node.range,
+        "authorRowCount" to node.rows.size,
+        "rowCount" to layoutRowCount,
+        "rowJoinPolicy" to if (layoutRowCount < node.rows.size) {
+            "OperatorJunctionRowsRejoin"
+        } else {
+            "AuthorRowsPreserved"
+        },
+        "entryMode" to formulaMode,
+        "entryStyle" to MathStyle.Display,
+        "rowAlignment" to "CenteredIndependentlyAtMaximumAdvance",
+        "rowKernel" to "AmsmathAlignedStrutAndBaselineGap",
+        "styleDeclarationPolicy" to "ContainingListDeclarationsCarryAcrossRows",
+        "trailingSeparatorCreatesVisibleRow" to false,
+        "responsiveRowCount" to responsiveRowCount,
+        "groupBreakPolicy" to if (responsiveRowCount > 0) {
+            "ExplicitRowsWithResponsiveLegalBreaksInsideOverwideRows"
+        } else {
+            "ExplicitRowsOnlyNoAutomaticInternalBreak"
+        },
+        "dialect" to "MarkdownDisplayKaTeXCompatibilityExtension",
+    )
+}
+
 internal fun MathLayoutPass.layoutTaggedEquation(
     node: MathTaggedEquation,
     alphabetOverride: MathAlphabetOverride?,
 ): LaidNode {
     val style = MathStyle.Display
-    val body = layoutList(node.body, style, alphabetOverride).laid.box
+    val tagBox = layoutEquationTagBox(node.tag, style)
+    taggedDisplayReplayExpected = true
+    val bodyLayout = layoutList(node.body, style, alphabetOverride)
+    val body = resolveSoftWrappedDisplayBody(
+        horizontal = bodyLayout,
+        style = style,
+        range = node.body.range,
+        targetWidthPx = displayWidthPx,
+        decisionName = "TaggedDisplayBodyLineBreak",
+        recordTaggedDisplayBaseline = true,
+        pinClausesToViewport = true,
+    )
     val box = completeTaggedEquationBox(
         body = body,
         tag = node.tag,
+        tagBox = tagBox,
         style = style,
         range = node.range,
         layoutRole = "TopLevelMarkdownDisplay",
+        centeredBesideMultiline = false,
+        responsiveBodyViewportWidthPx = displayWidthPx.takeIf { softWrapDisplay },
+        shiftedTagMustClearCompletedBody = node.body.isCompletedBoxedField(),
     )
     return LaidNode(
         node = node,
@@ -470,285 +681,8 @@ internal fun MathLayoutPass.layoutTaggedEquation(
     )
 }
 
-internal fun MathLayoutPass.layoutMisplacedEquationTag(node: MathEquationTag, style: MathStyle): LaidNode {
-    diagnostics += MathDiagnostic(
-        DiagnosticCode.MisplacedEquationTag,
-        "Equation tag is only valid at the top level of a display row",
-        node.range,
-    )
-    return LaidNode(
-        node,
-        emptyBox(node.range),
-        MathAtomClass.Ordinary,
-        0f,
-        style,
-        ScriptBaseKind.CompoundBox,
-    )
-}
-
-private fun MathLayoutPass.completeTaggedRows(
-    body: MathBox,
-    rows: List<MathTableRow>,
-    tagBoxes: List<MathBox?>,
-    rowBaselines: List<Float>,
-    range: SourceRange,
-    layoutRole: String,
-): MathBox {
-    val width = resolvedEquationTagDisplayWidth(range) ?: body.width
-    val bodyX = (width - body.width) / 2f
-    val shiftedBody = body.translated(bodyX, 0f)
-    val glyphs = shiftedBody.glyphs.toMutableList()
-    val hostTextRuns = shiftedBody.hostTextRuns.toMutableList()
-    val rules = shiftedBody.rules.toMutableList()
-    val groups = shiftedBody.constructionPaintGroups.toMutableList()
-    val children = mutableListOf(body to 0f)
-    rows.forEachIndexed { index, row ->
-        val tag = row.tag ?: return@forEachIndexed
-        val tagBox = checkNotNull(tagBoxes[index])
-        val tagX = width - tagBox.width
-        val baselineY = rowBaselines.getOrElse(index) { 0f }
-        checkEquationTagFit(bodyX, body.width, tagX, tag, width, layoutRole)
-        val shifted = tagBox.translated(tagX, baselineY)
-        glyphs += shifted.glyphs
-        hostTextRuns += shifted.hostTextRuns
-        rules += shifted.rules
-        groups += shifted.constructionPaintGroups
-        children += tagBox to baselineY
-        equationTagDecision(tag, tagBox, body.width, width, bodyX, tagX, baselineY, layoutRole)
-    }
-    return geometryExtentsPreservingLogicalChildren(
-        width.coerceAtLeast(0f),
-        glyphs,
-        rules,
-        range,
-        children,
-        groups,
-        hostTextRuns,
-    )
-}
-
-private fun MathLayoutPass.completeTaggedEquationBox(
-    body: MathBox,
-    tag: MathEquationTag,
-    style: MathStyle,
-    range: SourceRange,
-    layoutRole: String,
-): MathBox {
-    if (formulaMode != MathMode.Display) {
-        diagnostics += MathDiagnostic(
-            DiagnosticCode.MisplacedEquationTag,
-            "Equation tag requires display math mode",
-            tag.range,
-        )
-    }
-    val tagBox = layoutEquationTagBox(tag, style)
-    val width = resolvedEquationTagDisplayWidth(tag.range)
-        ?: (body.width + tagBox.width + baseFontSizePx / 2f)
-    val bodyX = (width - body.width) / 2f
-    val tagX = width - tagBox.width
-    checkEquationTagFit(bodyX, body.width, tagX, tag, width, layoutRole)
-    val shiftedBody = body.translated(bodyX, 0f)
-    val shiftedTag = tagBox.translated(tagX, 0f)
-    equationTagDecision(tag, tagBox, body.width, width, bodyX, tagX, 0f, layoutRole)
-    return geometryExtentsPreservingLogicalChildren(
-        width,
-        shiftedBody.glyphs + shiftedTag.glyphs,
-        shiftedBody.rules + shiftedTag.rules,
-        range,
-        listOf(body to 0f, tagBox to 0f),
-        shiftedBody.constructionPaintGroups + shiftedTag.constructionPaintGroups,
-        shiftedBody.hostTextRuns + shiftedTag.hostTextRuns,
-    )
-}
-
-private fun MathLayoutPass.resolvedEquationTagDisplayWidth(range: SourceRange): Float? {
-    val width = displayWidthPx
-    if (width == null) {
-        diagnostics += MathDiagnostic(
-            DiagnosticCode.MissingEquationTagDisplayWidth,
-            "Equation tag layout requires an explicit completed display width",
-            range,
-        )
-    }
-    return width
-}
-
-private fun MathLayoutPass.checkEquationTagFit(
-    bodyX: Float,
-    bodyWidth: Float,
-    tagX: Float,
-    tag: MathEquationTag,
-    width: Float,
-    layoutRole: String,
-) {
-    val minimumSeparation = baseFontSizePx / 2f
-    if (bodyX < 0f || bodyX + bodyWidth + minimumSeparation > tagX) {
-        diagnostics += MathDiagnostic(
-            DiagnosticCode.EquationTagDoesNotFit,
-            "Equation body and tag do not fit the supplied display width",
-            tag.range,
-        )
-    }
-    decision(
-        "AmsmathEquationTagFit",
-        tag.range,
-        "displayWidthPx" to width,
-        "bodyLeftPx" to bodyX,
-        "bodyRightPx" to (bodyX + bodyWidth),
-        "tagLeftPx" to tagX,
-        "minimumSeparationPx" to minimumSeparation,
-        "fits" to (bodyX >= 0f && bodyX + bodyWidth + minimumSeparation <= tagX),
-        "layoutRole" to layoutRole,
-        "policy" to "AmsmathMinTagSeparationHalfEmOrFormulaFallback",
-    )
-}
-
-private fun MathLayoutPass.layoutEquationTagBox(tag: MathEquationTag, style: MathStyle): MathBox {
-    val textStyle = styleForLevel(MathStyleLevel.Text)
-    val wrapperLeftRange = SourceRange(tag.commandRange.start, tag.commandRange.start + 1)
-    val wrapperRightRange = SourceRange(tag.commandRange.endExclusive - 1, tag.commandRange.endExclusive)
-    val segments = if (tag.starred) {
-        tag.segments
-    } else {
-        listOf(MathTextSegment("(", wrapperLeftRange)) + tag.segments +
-            MathTextSegment(")", wrapperRightRange)
-    }
-    return layoutTextSegments(
-        segments = segments,
-        style = textStyle,
-        range = tag.range,
-        origin = MathTextOrigin.EquationTag,
-    )
-}
-
-private fun MathLayoutPass.equationTagDecision(
-    tag: MathEquationTag,
-    tagBox: MathBox,
-    bodyWidth: Float,
-    width: Float,
-    bodyX: Float,
-    tagX: Float,
-    tagBaselineY: Float,
-    layoutRole: String,
-) = decision(
-    "AmsmathEquationTag",
-    tag.range,
-    "text" to tag.text,
-    "starred" to tag.starred,
-    "commandRange" to tag.commandRange,
-    "contentRange" to tag.contentRange,
-    "argumentRange" to tag.argumentRange,
-    "displayWidthPx" to width,
-    "bodyWidthPx" to bodyWidth,
-    "bodyX" to bodyX,
-    "tagWidthPx" to tagBox.width,
-    "tagAscentPx" to tagBox.ascent,
-    "tagDescentPx" to tagBox.descent,
-    "tagInkTopPx" to tagBox.inkBounds.top,
-    "tagInkBottomPx" to tagBox.inkBounds.bottom,
-    "tagFaceIds" to tagBox.glyphs.map { it.faceId }.distinct().joinToString(","),
-    "tagX" to tagX,
-    "tagBaselineY" to tagBaselineY,
-    "tagTextStyle" to MathStyle.Text,
-    "wrapperPolicy" to if (tag.starred) "TagStarUnwrapped" else "TagParenthesesFromOperatorsFamily",
-    "layoutRole" to layoutRole,
-    "policy" to "AmsmathDisplayBodyCenteredTagRightAlignedAtHostDisplayWidth",
-)
-
-private fun MathLayoutPass.resolveTeXDimension(dimension: MathTeXDimension, emSizePx: Float): Float {
-    val pixels = when (dimension.unit) {
-        MathTeXDimensionUnit.Point -> dimension.value * TEX_POINT_TO_PX
-        MathTeXDimensionUnit.BigPoint -> dimension.value * BIG_POINT_TO_PX
-        MathTeXDimensionUnit.Em -> dimension.value * emSizePx
-        MathTeXDimensionUnit.Centimeter -> dimension.value * CSS_PIXELS_PER_INCH / CENTIMETERS_PER_INCH
-        MathTeXDimensionUnit.Millimeter -> dimension.value * CSS_PIXELS_PER_INCH / MILLIMETERS_PER_INCH
-        MathTeXDimensionUnit.Inch -> dimension.value * CSS_PIXELS_PER_INCH
-    }
-    decision(
-        "TeXExplicitRowSpacing",
-        dimension.range,
-        "sourceText" to dimension.sourceText,
-        "value" to dimension.value,
-        "unit" to dimension.unit.sourceName,
-        "emSizePx" to emSizePx,
-        "resolvedPx" to pixels,
-        "policy" to "TeXDimensionAt96CssPixelsPerInch",
-    )
-    return pixels
-}
-
-private fun MathLayoutPass.wrapTableDelimiters(
-    node: MathTable,
-    body: MathBox,
-    style: MathStyle,
-): MathBox {
-    val environment = node.environment ?: return body
-    val leftIdentity = environment.leftDelimiter
-    val rightIdentity = environment.rightDelimiter
-    if (leftIdentity == null && rightIdentity == null) return body
-    val size = fontSize(style)
-    val axisHeight = glyphSource.mathFont.scaleDesignUnits(constants.axisHeight, size)
-    val maxAxisDistance = maxOf(body.descent + axisHeight, body.ascent - axisHeight).coerceAtLeast(0f)
-    val factorTarget = maxAxisDistance * delimiterFactor / 500f
-    val shortfallTarget = 2f * maxAxisDistance - delimiterShortfallPx
-    val target = DelimiterTargetEvidence(
-        innerCleanAscentPx = body.texCleanBoxMetrics.ascent,
-        innerCleanDescentPx = body.texCleanBoxMetrics.descent,
-        axisHeightPx = axisHeight,
-        maxAxisDistancePx = maxAxisDistance,
-        factor = delimiterFactor,
-        shortfallPx = delimiterShortfallPx,
-        factorTargetPx = factorTarget,
-        shortfallTargetPx = shortfallTarget,
-        targetPx = maxOf(factorTarget, shortfallTarget).coerceAtLeast(0f),
-    )
-    fun spec(identity: MathDelimiterIdentity, side: MathDelimiterSide): MathDelimiterSpec {
-        val range = if (side == MathDelimiterSide.Left) {
-            node.beginCommandRange.cover(node.beginNameRange)
-        } else {
-            node.endCommandRange?.let { command ->
-                node.endNameRange?.let(command::cover) ?: command
-            } ?: SourceRange(node.range.endExclusive, node.range.endExclusive)
-        }
-        return MathDelimiterSpec(
-            sourceText = node.environmentName,
-            identity = identity,
-            side = side,
-            commandRange = if (side == MathDelimiterSide.Left) node.beginCommandRange else node.endCommandRange ?: range,
-            delimiterRange = if (side == MathDelimiterSide.Left) node.beginNameRange else node.endNameRange ?: range,
-            range = range,
-        )
-    }
-    val left = leftIdentity?.let { layoutDelimiter(spec(it, MathDelimiterSide.Left), style, target) }
-    val right = rightIdentity?.let { layoutDelimiter(spec(it, MathDelimiterSide.Right), style, target) }
-    var x = 0f
-    val glyphs = mutableListOf<MathGlyphPlacement>()
-    val hostTextRuns = mutableListOf<MathHostTextPlacement>()
-    val rules = mutableListOf<MathRulePlacement>()
-    val groups = mutableListOf<MathConstructionPaintGroup>()
-    fun append(box: MathBox?) {
-        if (box == null) return
-        val shifted = box.translated(x, 0f)
-        glyphs += shifted.glyphs
-        hostTextRuns += shifted.hostTextRuns
-        rules += shifted.rules
-        groups += shifted.constructionPaintGroups
-        x += box.width
-    }
-    append(left)
-    append(body)
-    append(right)
-    val painted = geometryExtents(x, glyphs, rules, node.range, groups, hostTextRuns)
-    val children = listOfNotNull(left, body, right)
-    return painted.copy(
-        ascent = children.maxOfOrNull { it.ascent } ?: 0f,
-        descent = children.maxOfOrNull { it.descent } ?: 0f,
-        texCleanBoxMetrics = MathTeXCleanBoxMetrics(
-            ascent = children.maxOfOrNull { it.texCleanBoxMetrics.ascent } ?: 0f,
-            descent = children.maxOfOrNull { it.texCleanBoxMetrics.descent } ?: 0f,
-            policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
-            evidence = children.flatMap { it.texCleanBoxMetrics.evidence }.toSet() +
-                MathTeXCleanBoxEvidence.CompletedChildBox,
-        ),
-    )
-}
+/**
+ * Automatic display wrapping is a Tiqian presentation extension, not TeX source rewriting.
+ * Binary/relation operators begin continuation lines. An indivisible segment may still be wider
+ * than the viewport and is left intact for overflow replay.
+ */

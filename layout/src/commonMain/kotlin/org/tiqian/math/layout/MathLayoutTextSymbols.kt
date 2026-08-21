@@ -224,11 +224,18 @@ internal fun MathLayoutPass.layoutText(node: MathText, style: MathStyle): LaidNo
         "logicalDescentPx" to box.descent,
         "inkTopPx" to box.inkBounds.top,
         "inkBottomPx" to box.inkBounds.bottom,
+        "atomClassPolicy" to if (node.isCjkClauseSeparator) {
+            "CjkClauseSeparatorPunctuationAtom"
+        } else {
+            "HostTextOrdinaryAtom"
+        },
     )
     return LaidNode(
         node = node,
         box = box,
-        atomClass = MathAtomClass.Ordinary,
+        // CjkClauseSeparatorPunctuationAtom: a lone fullwidth clause separator keeps host-text
+        // rendering but classifies as Punctuation so it carries a trailing break opportunity.
+        atomClass = if (node.isCjkClauseSeparator) MathAtomClass.Punctuation else MathAtomClass.Ordinary,
         italicCorrectionPx = 0f,
         style = style,
         scriptBaseKind = ScriptBaseKind.CompoundBox,

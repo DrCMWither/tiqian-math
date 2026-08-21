@@ -53,6 +53,8 @@ data class MathLayoutOptions(
     val cancelLineThicknessPx: Float? = null,
     /** Completed display-row width used to right-align explicit amsmath equation tags. */
     val displayWidthPx: Float? = null,
+    /** Whether a completed display equation may break at the engine's legal math breakpoints. */
+    val softWrapDisplay: Boolean = false,
 ) {
     init {
         require(fontSizePx > 0f) { "math font size must be positive" }
@@ -149,6 +151,42 @@ internal class MathLayoutPass(
     internal var cancelLineThicknessPx: Float = DEFAULT_CANCEL_LINE_THICKNESS_PT * TEX_POINT_TO_PX
     internal var formulaMode: MathMode = MathMode.Inline
     internal var displayWidthPx: Float? = null
+    internal var softWrapDisplay: Boolean = false
+    internal var taggedDisplayReplay: MathTaggedDisplayReplay? = null
+    internal var taggedDisplayBodyLastBaselineY: Float = 0f
+
+    /**
+     * Clause lines lifted out of a scrolled body, waiting for the tagged completion that anchors
+     * them. Producers may only run while [taggedDisplayReplayExpected] is set by the completion
+     * that will drain the list — a produced-but-undrained clause would silently vanish from
+     * paint. The pass is per-layout, so the list never crosses formulas.
+     */
+    internal val taggedDisplayPendingPinnedClauses = mutableListOf<MathPinnedClauseReplay>()
+    internal var taggedDisplayReplayExpected: Boolean = false
+
+    /**
+     * Runs a measurement-only layout and rolls back every explanation and replay side effect it
+     * produced: decisions, diagnostics, construction paint-group ids, and the tagged-display
+     * fields. Probe results may be inspected but never reused as real layout output.
+     */
+    internal inline fun <T> probeLayout(block: () -> T): T {
+        val decisionMark = decisions.size
+        val diagnosticMark = diagnostics.size
+        val paintGroupMark = nextConstructionPaintGroupId
+        val lastBaselineMark = taggedDisplayBodyLastBaselineY
+        val replayMark = taggedDisplayReplay
+        val pinnedMark = taggedDisplayPendingPinnedClauses.size
+        try {
+            return block()
+        } finally {
+            decisions.subList(decisionMark, decisions.size).clear()
+            diagnostics.subList(diagnosticMark, diagnostics.size).clear()
+            nextConstructionPaintGroupId = paintGroupMark
+            taggedDisplayBodyLastBaselineY = lastBaselineMark
+            taggedDisplayReplay = replayMark
+            taggedDisplayPendingPinnedClauses.subList(pinnedMark, taggedDisplayPendingPinnedClauses.size).clear()
+        }
+    }
     internal var nextConstructionPaintGroupId: Int = 1
     private val outlineGlyphMeasurements = mutableMapOf<OutlineGlyphMeasurementKey, MeasuredMathRun>()
 
@@ -222,6 +260,7 @@ internal class MathLayoutPass(
         baseFontSizePx = options.fontSizePx
         formulaMode = options.mode
         displayWidthPx = options.displayWidthPx
+        softWrapDisplay = options.softWrapDisplay
         nextConstructionPaintGroupId = 1
         nullDelimiterSpacePx = options.nullDelimiterSpacePx
             ?: options.fontSizePx * DEFAULT_NULL_DELIMITER_SPACE_EM
@@ -243,34 +282,7 @@ internal class MathLayoutPass(
         diagnostics += parsed.diagnostics
         val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
         val horizontal = layoutList(parsed.root, initialStyle)
-        val fragments = horizontal.items.mapIndexed { itemIndex, item ->
-            val trailingGlue = horizontal.items.getOrNull(itemIndex + 1)?.glueBefore ?: MathGlueAdjustment.Zero
-            val breakKind = when (item.atomClass) {
-                MathAtomClass.Punctuation -> MathBreakKind.PunctuationTrailing
-                MathAtomClass.Binary -> MathBreakKind.BinaryOperatorTrailing
-                MathAtomClass.Relation -> MathBreakKind.RelationTrailing
-                else -> null
-            }
-            val opportunity = breakKind?.let {
-                MathBreakOpportunity(
-                    afterFragmentIndex = itemIndex,
-                    sourceOffset = item.node.range.endExclusive,
-                    kind = it,
-                    discardedTrailingGlue = trailingGlue,
-                    priority = adjustmentPriority(item.atomClass, null),
-                )
-            }
-            MathInlineFragment(
-                index = itemIndex,
-                sourceRange = item.node.range,
-                atomClass = item.atomClass,
-                box = item.laid.box,
-                leadingKernPx = item.leadingKernPx,
-                trailingItalicCorrectionPx = item.trailingItalicCorrectionPx,
-                trailingGlue = trailingGlue,
-                breakAfter = opportunity,
-            )
-        }
+        val fragments = inlineFragments(horizontal)
         val breaks = fragments.mapNotNull { it.breakAfter }
         val lineMetrics = formulaLineMetrics(horizontal.laid.box, initialStyle)
         decision(
@@ -308,6 +320,8 @@ internal class MathLayoutPass(
             lineMetrics = lineMetrics,
             decisions = resultDecisions,
             debugDumpRenderer = DefaultMathLayoutDebugDumpRenderer(dumpMetadata),
+            taggedDisplayReplay = taggedDisplayReplay,
+            fontSizePx = options.fontSizePx,
         )
     }
 
@@ -530,7 +544,7 @@ internal class MathLayoutPass(
         MathStyleLevel.ScriptScript -> MathStyle.ScriptScript
     }
 
-    private fun formulaLineMetrics(box: MathBox, style: MathStyle): MathFormulaLineMetrics {
+    internal fun formulaLineMetrics(box: MathBox, style: MathStyle): MathFormulaLineMetrics {
         val size = fontSize(style)
         val metrics = glyphSource.mathFont.lineMetrics
         val fontAscent = glyphSource.mathFont.scaleDesignUnits(metrics.typoAscender, size).coerceAtLeast(0f)

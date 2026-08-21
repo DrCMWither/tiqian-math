@@ -36,6 +36,19 @@ private fun buildMathLayoutDebugDump(
         "box advance=${box.width} ink=${box.inkBounds.left},${box.inkBounds.top}," +
             "${box.inkBounds.right},${box.inkBounds.bottom} visual=${box.visualLeft}..${box.visualRight}",
     )
+    result.taggedDisplayReplay?.let { replay ->
+        appendLine(
+            "taggedDisplay viewport=${replay.viewportWidthPx} bodyX=${replay.bodyLogicalX} " +
+                "bodyVisual=${replay.body.visualLeft}..${replay.body.visualRight}",
+        )
+        replay.tags.forEachIndexed { index, tag ->
+            appendLine(
+                "equationTagReplay[$index] range=${tag.sourceRange.start}..${tag.sourceRange.endExclusive} " +
+                    "placement=${tag.placement} x=${tag.logicalX} baseline=${tag.baselineY} " +
+                    "visual=${tag.box.visualLeft}..${tag.box.visualRight}",
+            )
+        }
+    }
     val lineMetrics = result.lineMetrics
     appendLine(
         "line font=${lineMetrics.fontAscentPx}/${lineMetrics.fontDescentPx}/${lineMetrics.fontLineGapPx} " +

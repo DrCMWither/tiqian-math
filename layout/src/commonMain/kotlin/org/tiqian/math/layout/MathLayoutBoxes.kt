@@ -240,6 +240,14 @@ internal fun MathLayoutPass.layoutGroup(
     alphabetOverride: MathAlphabetOverride?,
 ): LaidNode {
     val horizontal = layoutList(node.body, style, alphabetOverride)
+    return completeGroupLayout(node, style, horizontal)
+}
+
+private fun MathLayoutPass.completeGroupLayout(
+    node: MathGroup,
+    style: MathStyle,
+    horizontal: MathLayoutPass.HorizontalLayout,
+): LaidNode {
     decision(
         "TeXOrdSubMlist",
         node.range,
@@ -265,8 +273,83 @@ internal fun MathLayoutPass.layoutBoxed(
     alphabetOverride: MathAlphabetOverride?,
 ): LaidNode {
     val contentStyle = styleForLevel(MathStyleLevel.Display)
-    val content = layoutNode(node.body, contentStyle, alphabetOverride).completedTeXMathField().box
     val inset = fboxSeparationPx + fboxRuleThicknessPx
+    val responsiveGroup = node.body as? MathGroup
+    val responsiveWidth = displayWidthPx?.minus(2f * inset)?.coerceAtLeast(1f)
+    val preparesResponsiveContent =
+        formulaMode == MathMode.Display &&
+        style.level == MathStyleLevel.Display &&
+        softWrapDisplay &&
+        responsiveWidth != null &&
+        responsiveGroup != null
+    val responsiveHorizontal = if (preparesResponsiveContent) {
+        layoutList(responsiveGroup.body, contentStyle, alphabetOverride)
+    } else {
+        null
+    }
+    val ordinaryContent = if (responsiveHorizontal != null) {
+        completeGroupLayout(checkNotNull(responsiveGroup), contentStyle, responsiveHorizontal)
+            .completedTeXMathField().box
+    } else {
+        layoutNode(node.body, contentStyle, alphabetOverride).completedTeXMathField().box
+    }
+    val responsiveFragments = responsiveHorizontal?.let { inlineFragments(it) }.orEmpty()
+    val breakResolution = if (
+        responsiveHorizontal != null &&
+        responsiveFragments.size > 1 &&
+        ordinaryContent.visualWidth > checkNotNull(responsiveWidth)
+    ) {
+        resolveResponsiveDisplayBreak(
+            fragments = responsiveFragments,
+            lineMetrics = formulaLineMetrics(responsiveHorizontal.laid.box, contentStyle),
+            maxWidthPx = responsiveWidth,
+            defaultContinuationIndentPx = DISPLAY_CONTINUATION_INDENT_EM * fontSize(contentStyle),
+            displayRowJotPx = DISPLAY_ROW_JOT_EM * fontSize(contentStyle),
+        )
+    } else {
+        null
+    }
+    val broken = breakResolution?.layout
+    val content = if (
+        broken != null &&
+        (broken.lines.size > 1 || ordinaryContent.visualWidth > checkNotNull(responsiveWidth))
+    ) {
+        taggedDisplayBodyLastBaselineY = maxOf(
+            taggedDisplayBodyLastBaselineY,
+            broken.lines.last().baselineFromTop - broken.lines.first().baselineFromTop,
+        )
+        replayResponsiveDisplayBody(
+            fragments = responsiveFragments,
+            broken = broken,
+            viewportWidthPx = checkNotNull(responsiveWidth),
+            range = checkNotNull(responsiveGroup).body.range,
+            // Pin only when a tagged completion is in flight to drain the pinned clauses; an
+            // untagged boxed field keeps its clause in the frame, which scrolls as one unit.
+            pinClausesToViewport = taggedDisplayReplayExpected,
+        ).also { wrapped ->
+            // Pending pinned clauses were recorded in the frame-interior viewport; shift them by
+            // the frame inset so they anchor in the outer display viewport.
+            if (taggedDisplayPendingPinnedClauses.isNotEmpty()) {
+                val shifted = taggedDisplayPendingPinnedClauses.map { it.copy(logicalX = it.logicalX + inset) }
+                taggedDisplayPendingPinnedClauses.clear()
+                taggedDisplayPendingPinnedClauses += shifted
+            }
+            decision(
+                "BoxedResponsiveDisplayLineBreak",
+                node.range,
+                *responsiveWrapDecisionDetails(checkNotNull(breakResolution), responsiveFragments, contentStyle),
+                "availableOuterWidthPx" to displayWidthPx,
+                "frameInsetEachSidePx" to inset,
+                "contentViewportWidthPx" to responsiveWidth,
+                "unbrokenVisualWidthPx" to ordinaryContent.visualWidth,
+                "wrappedContentWidthPx" to wrapped.width,
+                "framePolicy" to "SingleFrameAroundCompletedMultilineMathField",
+                "policy" to "ResponsiveDisplayBoxedContentLeadingOperators",
+            )
+        }
+    } else {
+        ordinaryContent
+    }
     val width = content.width + 2f * inset
     val ascent = content.ascent + inset
     val descent = content.descent + inset
@@ -300,6 +383,12 @@ internal fun MathLayoutPass.layoutBoxed(
         "AmsmathBoxedNoad",
         node.range,
         "commandRange" to node.commandRange,
+        "terminalRowSeparatorRange" to node.terminalRowSeparator?.separatorRange,
+        "terminalRowSeparatorPolicy" to if (node.terminalRowSeparator == null) {
+            "None"
+        } else {
+            "IgnoreEmptyFinalMarkdownDisplayRowInsideOutermostBox"
+        },
         "outerStyle" to style,
         "contentStyle" to contentStyle,
         "fboxSeparationPx" to fboxSeparationPx,
