@@ -32,7 +32,10 @@ import org.tiqian.math.core.MathLineBreakPolicy
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathFontFamilySpec
 import org.tiqian.math.core.MathFontWeight
+import androidx.compose.ui.graphics.toArgb
+import org.tiqian.math.layout.MathAuthorColorAdapter
 import org.tiqian.math.layout.MathComposeFontFace
+import org.tiqian.math.layout.adaptAuthorColors
 import org.tiqian.math.layout.MathFormulaCapabilityEngine
 import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathFormulaStrictException
@@ -128,6 +131,9 @@ class TiqianMathFormulaPreparer internal constructor(
         textLocale: String? = null,
         displayWidthPx: Float? = null,
         softWrapDisplay: Boolean = false,
+        authorColorAdapter: MathAuthorColorAdapter? = null,
+        /** Effective page color behind the formula; required for author color adaptation. */
+        authorColorBackdrop: Color = Color.Unspecified,
     ): TiqianMathFormula {
         require(fontSizePx.isFinite() && fontSizePx > 0f) { "fontSizePx must be finite and positive" }
         val requestedWeight = MathFontWeight.nearest(fontWeight)
@@ -158,7 +164,7 @@ class TiqianMathFormulaPreparer internal constructor(
             ResolvedFormulaCapability(
                 face = face,
                 textRunProvider = textRunProvider,
-                capability = capability,
+                capability = capability.withAdaptedAuthorColors(authorColorAdapter, authorColorBackdrop, color),
                 requestedLineHeightPx = requestedLineHeightPx,
                 resolvedFontSizePx = fontSizePx,
                 color = color,
@@ -201,6 +207,9 @@ fun rememberTiqianMathFormula(
     /** Required by explicit equation tags when measuring outside a constrained Compose layout. */
     displayWidthPx: Float? = null,
     softWrapDisplay: Boolean = false,
+    authorColorAdapter: MathAuthorColorAdapter? = null,
+    /** Effective page color behind the formula; required for author color adaptation. */
+    authorColorBackdrop: Color = Color.Unspecified,
 ): TiqianMathFormula = TiqianMathFormula(
     rememberResolvedFormulaCapability(
         source = source,
@@ -217,6 +226,8 @@ fun rememberTiqianMathFormula(
         textLocale = textLocale,
         displayWidthPx = displayWidthPx,
         softWrapDisplay = softWrapDisplay,
+        authorColorAdapter = authorColorAdapter,
+        authorColorBackdrop = authorColorBackdrop,
     ),
 )
 
@@ -293,6 +304,10 @@ fun TiqianMath(
     displayScrollState: ScrollState? = null,
     /** Content inset inside the display scroll viewport; useful when the host outsets that viewport. */
     displayHorizontalContentInset: Dp = 0.dp,
+    /** Adapts author-declared TeX colors to the host theme; see [MathAuthorColorAdapter]. */
+    authorColorAdapter: MathAuthorColorAdapter? = null,
+    /** Effective page color behind the formula; required for author color adaptation. */
+    authorColorBackdrop: Color = Color.Unspecified,
     onMathLayout: (MathLayoutResult) -> Unit = {},
     onMathError: (MathFormulaCapabilityResult.FallbackRequired) -> Unit = {},
 ) {
@@ -320,6 +335,8 @@ fun TiqianMath(
             displayWidthPx = constraints.takeIf { mode == MathMode.Display && it.hasBoundedWidth }
                 ?.let { (it.maxWidth - displayInsetPx * 2f).coerceAtLeast(1f) },
             softWrapDisplay = softWrap,
+            authorColorAdapter = authorColorAdapter,
+            authorColorBackdrop = authorColorBackdrop,
         )
         FormulaCapabilityContent(
             resolved = resolved,
@@ -547,6 +564,23 @@ private fun TiqianMathError(
     )
 }
 
+/** AuthorColorAdaptation entry: rewrites Ready evidence once; measurement geometry is untouched. */
+private fun MathFormulaCapabilityResult.withAdaptedAuthorColors(
+    adapter: MathAuthorColorAdapter?,
+    backdrop: Color,
+    formulaColor: Color,
+): MathFormulaCapabilityResult {
+    if (adapter == null || backdrop == Color.Unspecified) return this
+    val ready = this as? MathFormulaCapabilityResult.Ready ?: return this
+    return ready.copy(
+        layoutResult = ready.layoutResult.adaptAuthorColors(
+            adapter,
+            backdropArgb = backdrop.toArgb(),
+            formulaArgb = formulaColor.toArgb(),
+        ),
+    )
+}
+
 internal data class ResolvedFormulaCapability(
     val face: MathComposeFontFace,
     val textRunProvider: MathTextRunProvider?,
@@ -585,6 +619,8 @@ private fun rememberResolvedFormulaCapability(
     capabilityEngineOverride: MathFormulaCapabilityEngine? = null,
     displayWidthPx: Float? = null,
     softWrapDisplay: Boolean = false,
+    authorColorAdapter: MathAuthorColorAdapter? = null,
+    authorColorBackdrop: Color = Color.Unspecified,
 ): ResolvedFormulaCapability {
     val density = LocalDensity.current
     val resolvedFontSizePx = fontSizePx ?: with(density) {
@@ -651,10 +687,13 @@ private fun rememberResolvedFormulaCapability(
             )
         }
     }
+    val adaptedCapability = remember(capability, authorColorAdapter, authorColorBackdrop, resolvedColor) {
+        capability.withAdaptedAuthorColors(authorColorAdapter, authorColorBackdrop, resolvedColor)
+    }
     return ResolvedFormulaCapability(
         resolvedFace,
         resolvedTextRunProvider,
-        capability,
+        adaptedCapability,
         requestedLineHeightPx,
         resolvedFontSizePx,
         resolvedColor,
