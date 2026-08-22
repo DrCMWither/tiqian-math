@@ -49,6 +49,59 @@ internal fun MathLayoutPass.layoutTable(
         MathTableEnvironment.Aligned,
         MathTableEnvironment.Split,
     )
+    // SingleRowAlignmentFlattensForResponsiveBreaking: a one-row align has nothing to align its
+    // & against — the tab only fences the content into unbreakable cells. When the row cannot
+    // fit the electronic viewport, the cells flatten into one list and take the responsive
+    // break, whose relation anchor reproduces the align-at-= intent across the broken lines.
+    // Multi-row alignments are genuine alignment groups and always keep table layout.
+    if (preservesEntryStyle && softWrapDisplay && formulaMode == MathMode.Display &&
+        node.rows.size == 1 && prelaidCells.isEmpty()
+    ) {
+        val viewport = displayWidthPx
+        val row = node.rows.single()
+        if (viewport != null && row.cells.isNotEmpty()) {
+            val joined = MathList(
+                children = row.cells.flatMap { it.body.children },
+                range = node.range,
+            )
+            val overwide = probeLayout {
+                layoutList(joined, style, alphabetOverride)
+                    .laid.box.visualWidth > viewport + DISPLAY_GEOMETRY_EPSILON_PX
+            }
+            if (overwide) {
+                taggedDisplayReplayExpected = row.tag != null
+                val horizontal = layoutList(joined, style, alphabetOverride)
+                val body = resolveSoftWrappedDisplayBody(
+                    horizontal = horizontal,
+                    style = style,
+                    range = node.range,
+                    targetWidthPx = viewport,
+                    decisionName = "SingleRowAlignmentLineBreak",
+                    recordTaggedDisplayBaseline = row.tag != null,
+                    pinClausesToViewport = row.tag != null,
+                )
+                val completed = row.tag?.let { tag ->
+                    completeTaggedEquationBox(
+                        body = body,
+                        tag = tag,
+                        style = style,
+                        range = node.range,
+                        layoutRole = "SingleRowAlignment",
+                        centeredBesideMultiline = false,
+                        responsiveBodyViewportWidthPx = viewport,
+                    )
+                } ?: body
+                return LaidNode(
+                    node = node,
+                    box = completed.copy(range = node.range),
+                    atomClass = MathAtomClass.Ordinary,
+                    italicCorrectionPx = 0f,
+                    style = style,
+                    scriptBaseKind = ScriptBaseKind.CompoundBox,
+                )
+            }
+        }
+    }
     val cellStyle = if (substack || smallMatrix) {
         MathStyle.Script
     } else if (gathered) {
@@ -269,7 +322,7 @@ internal fun MathLayoutPass.layoutTable(
         paintGroups,
         hostTextRuns,
     )
-    val bodyBox = paintedBody.copy(
+    val axisCenteredBodyBox = paintedBody.copy(
         ascent = (-bodyTop).coerceAtLeast(0f),
         descent = bodyBottom.coerceAtLeast(0f),
         texCleanBoxMetrics = MathTeXCleanBoxMetrics(
@@ -280,6 +333,45 @@ internal fun MathLayoutPass.layoutTable(
                 MathTeXCleanBoxEvidence.CompletedChildBox,
         ),
     )
+    // Baseline exposure applies to the top-level inline line regardless of explicit style: the
+    // default text style and an author's \displaystyle are the two uncramped Text/Display styles a
+    // top-level inline line ever carries. Genuine script nesting (Script/ScriptScript) and cramped
+    // nestings (under a radical, in a fraction) stay axis-vcentered — they are not the inline line.
+    val usesSingleRowInlineBaseline =
+        node.environment == MathTableEnvironment.Aligned &&
+            formulaMode == MathMode.Inline &&
+            (style == MathStyle.Text || style == MathStyle.Display) &&
+            node.rows.size == 1 &&
+            // A tagged row is a display-equation construct; its tag is completed against the
+            // axis-centered frame below, so rebasing the body out from under it would misplace the
+            // tag. Such a row keeps the axis-centered box.
+            node.rows.first().tag == null &&
+            // Defensive: a degenerate empty row produces no baseline — keep axis-centered, not crash.
+            rowBaselines.isNotEmpty()
+    val bodyBox = if (usesSingleRowInlineBaseline) {
+        val rowBaseline = rowBaselines.first()
+        val rebasedAscent = (axisCenteredBodyBox.ascent + rowBaseline).coerceAtLeast(0f)
+        val rebasedDescent = (axisCenteredBodyBox.descent - rowBaseline).coerceAtLeast(0f)
+        decision(
+            "SingleRowInlineAlignmentBaseline",
+            node.range,
+            "rowBaselineBeforePx" to rowBaseline,
+            "appliedShiftPx" to -rowBaseline,
+            "ascentAfterPx" to rebasedAscent,
+            "descentAfterPx" to rebasedDescent,
+            "policy" to "ExposeOnlyRowBaselineToInlineHost",
+        )
+        axisCenteredBodyBox.translated(0f, -rowBaseline).copy(
+            ascent = rebasedAscent,
+            descent = rebasedDescent,
+            texCleanBoxMetrics = axisCenteredBodyBox.texCleanBoxMetrics.copy(
+                ascent = rebasedAscent,
+                descent = rebasedDescent,
+            ),
+        )
+    } else {
+        axisCenteredBodyBox
+    }
     val fenced = wrapTableDelimiters(node, bodyBox, style)
     val completed = if (node.rows.any { it.tag != null }) {
         completeTaggedRows(
@@ -340,6 +432,11 @@ internal fun MathLayoutPass.layoutTable(
         "bodyWidthPx" to bodyWidth,
         "bodyAscentPx" to bodyBox.ascent,
         "bodyDescentPx" to bodyBox.descent,
+        "baselinePolicy" to if (usesSingleRowInlineBaseline) {
+            "SingleRowInlineAlignmentBaseline"
+        } else {
+            "AxisCenteredVcenter"
+        },
         "logicalAdvancePx" to completed.width,
         "groupBreakPolicy" to "UnbreakableTeXTableInnerNoad",
         "policy" to when {
@@ -506,8 +603,9 @@ internal fun MathLayoutPass.layoutDisplayRows(
     var carriedAlphabet: MathAlphabetDeclaration? = null
     val tableRows = rows.map { row ->
         val inherited = listOfNotNull(carriedStyle, carriedAlphabet)
+        val breakableBody = unwrapWholeFormulaGroups(row.body)
         val syntheticBody = MathList(
-            children = inherited + row.body.children,
+            children = inherited + breakableBody.children,
             range = row.body.range,
         )
         row.body.children.forEach { child ->

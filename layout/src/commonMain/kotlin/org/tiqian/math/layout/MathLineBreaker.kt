@@ -9,13 +9,30 @@ import org.tiqian.math.core.MathBrokenLine
 import org.tiqian.math.core.MathContinuationAlignment
 import org.tiqian.math.core.MathFormulaLineMetrics
 import org.tiqian.math.core.MathGlueAdjustment
+import org.tiqian.math.core.MathGroup
 import org.tiqian.math.core.MathInlineFragment
 import org.tiqian.math.core.MathLayoutResult
+import org.tiqian.math.core.MathList
 import org.tiqian.math.core.MathLineAdjustmentMode
 import org.tiqian.math.core.MathLineBreakPolicy
 import org.tiqian.math.core.MathLineFragmentPlacement
 import org.tiqian.math.core.MathRect
 import kotlin.math.abs
+
+/**
+ * WholeFormulaGroupTransparentForBreaking: an author (or exporter) wrapping the entire formula in
+ * braces creates one Ord atom, which would leave the responsive breaker with no legal boundary at
+ * all. A group whose scope already spans the whole list changes nothing but style scoping, so it
+ * is unwrapped before layout and the top-level boundaries are restored. Delimited fields
+ * (\left...\right) are real atoms and are never unwrapped.
+ */
+internal fun unwrapWholeFormulaGroups(root: MathList): MathList {
+    var current = root
+    while (true) {
+        val single = current.children.singleOrNull() as? MathGroup ?: return current
+        current = single.body
+    }
+}
 
 internal fun MathLayoutPass.inlineFragments(
     horizontal: MathLayoutPass.HorizontalLayout,
@@ -471,7 +488,10 @@ internal fun resolveResponsiveDisplayBreak(
         continuationFenceDepths = selected.drop(1).map { it.startingBoundary?.fenceDepth ?: 0 },
         layout = MathBrokenLayout(
             lines = pinnedLines,
-            width = pinnedLines.maxOfOrNull { it.horizontalOffsetPx + it.width } ?: 0f,
+            // Sub-epsilon float noise from block centering must not round up into a phantom
+            // scrollable pixel: a block that fits reports exactly the viewport width or less.
+            width = (pinnedLines.maxOfOrNull { it.horizontalOffsetPx + it.width } ?: 0f)
+                .let { if (it <= maxWidthPx + GEOMETRY_EPSILON_PX) minOf(it, maxWidthPx) else it },
             height = height,
             policy = MathLineBreakPolicy.ResponsiveDisplayLeadingOperators,
             targetWidthPx = maxWidthPx,

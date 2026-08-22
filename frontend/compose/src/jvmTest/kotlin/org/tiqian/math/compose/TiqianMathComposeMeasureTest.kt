@@ -178,6 +178,32 @@ class TiqianMathComposeMeasureTest {
     }
 
     @Test
+    fun fractionalDensityDisplayFitKeepsZeroScrollRange() {
+        // NoScrollForSubpixelExcess: constraints -> Dp -> px round trips at fractional densities
+        // leave sub-pixel noise on the plan width; a fitting formula must still report zero
+        // horizontal scroll range instead of a phantom scrollable pixel.
+        val source = "E_k=(n-1)E_{k-1}+E_{k-2}+\\frac{a+b}{c+d}=y_2^3"
+        listOf(2.625f, 2.75f, 3.5f).forEach { densityValue ->
+            val scrollState = androidx.compose.foundation.ScrollState(0)
+            ImageComposeScene(width = 1080, height = 900, density = Density(densityValue)) {
+                Box(Modifier.fillMaxSize().background(Color.White)) {
+                    TiqianMath(
+                        source = source,
+                        modifier = Modifier.padding(horizontal = 7.dp),
+                        mode = MathMode.Display,
+                        fontSizePx = 32f * densityValue,
+                        displayScrollState = scrollState,
+                        softWrap = true,
+                    )
+                }
+            }.use { scene ->
+                scene.render()
+                assertEquals(0, scrollState.maxValue, "phantom scroll range at density $densityValue")
+            }
+        }
+    }
+
+    @Test
     fun responsiveDisplayMeasuresAndRastersLeadingOperatorLinesWithoutScrolling() {
         val source = "E_k=(n-1)E_{k-1}+E_{k-2}+\\frac{a+b}{c+d}=y_2^3"
         val scrollState = androidx.compose.foundation.ScrollState(0)

@@ -242,6 +242,42 @@ class TectonicEquationTagOracleTest {
     }
 
     @Test
+    fun overwideSingleRowAlignmentFlattensIntoResponsiveLines() {
+        // Real corpus: a one-row align whose & only fences the chain into unbreakable cells.
+        // The cells must flatten and break at the top-level relations instead of scrolling.
+        val source = "\\begin{align}I=\\int\\frac{{\\rm d}x}{y^{5}} &=\\int\\frac{y^{4}-x^{4}}{y^{5}}{\\rm d}x " +
+            "=\\int\\frac{y^{4}{\\rm d}x-x\\cdot \\color{red}{x^{3}{\\rm d}x}}{y^{5}} " +
+            "=\\int\\frac{y{\\rm d}x-x\\color{red}{{\\rm d}y}}{y^{2}} " +
+            "=\\frac{x}{y}=\\bbox[#fc5,7px]{\\frac{x}{\\sqrt[4]{x^{4}+1}}+C} \\end{align}"
+        oracles.forEach { oracle ->
+            SkiaMathFontFace(oracle.mathFont).use { face ->
+                val result = MathLayoutEngine(face).layout(
+                    source,
+                    MathLayoutOptions(
+                        mode = MathMode.Display,
+                        fontSizePx = 60f,
+                        displayWidthPx = 1248f,
+                        softWrapDisplay = true,
+                    ),
+                )
+                assertTrue(result.diagnostics.isEmpty(), "${oracle.label}: ${result.diagnostics}")
+                val wrapping = result.decisions.single { it.name == "SingleRowAlignmentLineBreak" }
+                assertTrue(
+                    wrapping.details.getValue("lineCount").toInt() >= 2,
+                    "${oracle.label}: the flattened chain must break responsively",
+                )
+                assertEquals("0", wrapping.details["overfullLineCount"], oracle.label)
+                val kinds = wrapping.details.getValue("continuationBreakKinds")
+                    .split(",").filter { it.isNotEmpty() }
+                assertTrue(
+                    kinds.all { it == "RelationLeading" },
+                    "${oracle.label}: expected align-at-relation breaks, got $kinds",
+                )
+            }
+        }
+    }
+
+    @Test
     fun parallelEquationRowsWithoutOperatorJunctionAreNeverRejoined() {
         val source = "a=b\\\\c=d\\\\"
         oracles.forEach { oracle ->

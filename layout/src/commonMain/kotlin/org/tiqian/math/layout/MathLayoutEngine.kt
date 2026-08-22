@@ -281,7 +281,15 @@ internal class MathLayoutPass(
         cancelLineThicknessPx = options.cancelLineThicknessPx ?: DEFAULT_CANCEL_LINE_THICKNESS_PT * TEX_POINT_TO_PX
         diagnostics += parsed.diagnostics
         val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
-        val horizontal = layoutList(parsed.root, initialStyle)
+        val breakableRoot = unwrapWholeFormulaGroups(parsed.root)
+        if (breakableRoot !== parsed.root) {
+            decision(
+                "WholeFormulaGroupTransparentForBreaking",
+                parsed.root.range,
+                "policy" to "OutermostWholeFormulaBracesUnwrappedToRestoreTopLevelBoundaries",
+            )
+        }
+        val horizontal = layoutList(breakableRoot, initialStyle)
         val fragments = inlineFragments(horizontal)
         val breaks = fragments.mapNotNull { it.breakAfter }
         val lineMetrics = formulaLineMetrics(horizontal.laid.box, initialStyle)

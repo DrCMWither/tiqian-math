@@ -103,6 +103,39 @@ class MathTableEnvironmentLayoutTest {
     }
 
     @Test
+    fun singleRowInlineAlignedExportsItsRowBaselineInsteadOfTheTableAxis() = withTableFaces { label, face ->
+        val source = "\\begin{aligned}L=\\int\\sqrt{1+(f'(x))^2}\\,dx\\end{aligned}"
+        val engine = MathLayoutEngine(face)
+        val inline = engine.layout(source, tectonicTableOptions().copy(mode = MathMode.Inline))
+        assertTrue(inline.diagnostics.isEmpty(), "$label ${inline.diagnostics}")
+        val lOffset = source.indexOf('L')
+        val inlineL = inline.box.glyphs.single {
+            lOffset >= it.sourceRange.start && lOffset < it.sourceRange.endExclusive
+        }
+        assertNear(0f, inlineL.baselineY, "$label inline aligned row baseline", 0.01f)
+        val baseline = inline.decisions.single { it.name == "SingleRowInlineAlignmentBaseline" }
+        assertTrue(abs(baseline.details.getValue("rowBaselineBeforePx").toFloat()) > 0.1f, label)
+
+        val display = engine.layout(source, tectonicTableOptions())
+        assertTrue(display.decisions.none { it.name == "SingleRowInlineAlignmentBaseline" }, label)
+    }
+
+    @Test
+    fun explicitDisplayStyleInlineAlignedStillExportsItsRowBaseline() = withTableFaces { label, face ->
+        // \displaystyle sets Display style on the inline line; it must not bypass the baseline fix.
+        val source = "\\displaystyle\\begin{aligned}L=\\int\\sqrt{1+(f'(x))^2}\\,dx\\end{aligned}"
+        val engine = MathLayoutEngine(face)
+        val inline = engine.layout(source, tectonicTableOptions().copy(mode = MathMode.Inline))
+        assertTrue(inline.diagnostics.isEmpty(), "$label ${inline.diagnostics}")
+        val lOffset = source.indexOf('L')
+        val inlineL = inline.box.glyphs.single {
+            lOffset >= it.sourceRange.start && lOffset < it.sourceRange.endExclusive
+        }
+        assertNear(0f, inlineL.baselineY, "$label displaystyle inline aligned row baseline", 0.01f)
+        assertTrue(inline.decisions.any { it.name == "SingleRowInlineAlignmentBaseline" }, label)
+    }
+
+    @Test
     fun optionalRowSpacingMatchesTheSameFontTectonicBoxTrace() = withTableFaces { label, face ->
         val engine = MathLayoutEngine(face)
         val alignedBase = engine.layout(

@@ -15,6 +15,7 @@ import org.tiqian.math.layout.MathComposeFontFace
 import org.tiqian.math.layout.MathTextRunProvider
 import org.tiqian.math.layout.breakResponsiveDisplayLines
 import kotlin.math.ceil
+import kotlin.math.floor
 
 /** Display-only presentation: legal math breaks first, then horizontal overflow when necessary. */
 @Composable
@@ -51,11 +52,26 @@ internal fun ScrollableDisplayTiqianMath(
     val renderPlan = plans.first.insetHorizontally(horizontalInsetPx)
     val pinnedPlan = plans.second?.insetHorizontally(horizontalInsetPx)
     val requestedViewportWidth = contentWidth + horizontalInsetPx * 2f
+    // NoScrollForSubpixelExcess: when every line fits the engine viewport, the scrolled
+    // content must not measure wider than the container. The container width is an Int from
+    // the parent constraint while the plan width made a constraints -> Dp -> px round trip,
+    // so a positive float epsilon would ceil into a phantom pixel of scrollable range.
+    // Flooring the fitting plan to the viewport keeps it at or below the container Int.
+    val contentFits = if (broken != null) {
+        broken.lines.none { it.unbreakableOverflow }
+    } else {
+        unbroken.width <= contentWidth + PhantomScrollTolerancePx
+    }
+    val boundedPlan = if (contentFits) {
+        renderPlan.copy(width = minOf(renderPlan.width, floor(requestedViewportWidth)))
+    } else {
+        renderPlan
+    }
     Layout(
         modifier = modifier,
         content = {
             Box(Modifier.horizontalScroll(scrollState)) {
-                FixedTiqianMathPlan(renderPlan, Modifier, color, face, textRunProvider)
+                FixedTiqianMathPlan(boundedPlan, Modifier, color, face, textRunProvider)
             }
             if (pinnedPlan != null) {
                 FixedTiqianMathPlan(pinnedPlan, Modifier, color, face, textRunProvider)
@@ -137,11 +153,19 @@ internal fun TaggedDisplayTiqianMath(
         height = whole.height,
         firstBaseline = whole.firstBaseline,
     )
+    // NoScrollForSubpixelExcess: see ScrollableDisplayTiqianMath.
+    val bodyFits = rawVisualLeft >= -PhantomScrollTolerancePx &&
+        rawVisualRight <= replay.viewportWidthPx + PhantomScrollTolerancePx
+    val boundedBodyPlan = if (bodyFits) {
+        bodyPlan.copy(width = minOf(bodyPlan.width, floor(replay.viewportWidthPx + horizontalInsetPx * 2f)))
+    } else {
+        bodyPlan
+    }
     Layout(
         modifier = modifier,
         content = {
             Box(Modifier.horizontalScroll(scrollState)) {
-                FixedTiqianMathPlan(bodyPlan, Modifier, color, face, textRunProvider)
+                FixedTiqianMathPlan(boundedBodyPlan, Modifier, color, face, textRunProvider)
             }
             FixedTiqianMathPlan(tagPlan, Modifier, color, face, textRunProvider)
         },
@@ -165,3 +189,4 @@ internal fun TaggedDisplayTiqianMath(
 }
 
 private const val DisplayGeometryEpsilonPx = 0.01f
+private const val PhantomScrollTolerancePx = 0.5f
