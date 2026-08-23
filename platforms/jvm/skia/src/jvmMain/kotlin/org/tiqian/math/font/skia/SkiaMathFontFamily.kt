@@ -49,6 +49,27 @@ class SkiaMathFontFamily private constructor(
         return selected.value.copy(run = selected.value.run.tag(requestedWeight, selected.reason))
     }
 
+    override fun resolveSymbolWithRequiredGlyph(
+        request: MathSymbolGlyphRequest,
+        requiredScalar: Int,
+        fontSizePx: Float,
+    ): ResolvedMathSymbolWithRequiredGlyph {
+        val selected = owner.firstSuccessfulMathFace(
+            requestedWeight,
+            resolve = { it.resolveSymbolWithRequiredGlyph(request, requiredScalar, fontSizePx) },
+            run = { it.symbol.run },
+            accept = { _, resolved ->
+                resolved.symbol.supported && !resolved.symbol.run.missingGlyph &&
+                    resolved.owningFaceId != null && resolved.requiredGlyphId != null
+            },
+        )
+        return selected.value.copy(
+            symbol = selected.value.symbol.copy(
+                run = selected.value.symbol.run.tag(requestedWeight, selected.reason),
+            ),
+        )
+    }
+
     override fun resolveOperator(request: MathOperatorGlyphRequest, fontSizePx: Float): ResolvedMathOperator {
         val selected = owner.firstSuccessfulMathFace(
             requestedWeight,
@@ -193,6 +214,7 @@ class SkiaMathFontFamily private constructor(
             weight: MathFontWeight,
             resolve: (SkiaMathFontFace) -> T,
             run: (T) -> MeasuredMathRun,
+            accept: (SkiaMathFontFace, T) -> Boolean = { _, value -> !run(value).missingGlyph },
         ): SelectedMathFace<T> {
             val ordered = mathFallbackOrder(weight)
             var first: SelectedMathFace<T>? = null
@@ -200,7 +222,7 @@ class SkiaMathFontFamily private constructor(
                 val resolved = resolve(face)
                 val selected = SelectedMathFace(face, resolved, reason(face, weight))
                 if (first == null) first = selected
-                if (!run(resolved).missingGlyph) return selected
+                if (accept(face, resolved)) return selected
             }
             return checkNotNull(first)
         }
@@ -265,6 +287,20 @@ class SkiaMathFontFamily private constructor(
                 ),
             ).associateBy { it.faceId }
             return SkiaMathFontFamily(Owner(MathFontClass.SansSerif, faces), MathFontWeight.Regular)
+        }
+
+        /** Takes ownership of already-loaded faces; used by deterministic capability fixtures. */
+        internal fun fromLoadedFaces(
+            fontClass: MathFontClass,
+            faces: List<SkiaMathFontFace>,
+            requestedWeight: MathFontWeight = MathFontWeight.Regular,
+        ): SkiaMathFontFamily {
+            require(faces.isNotEmpty()) { "a math family needs at least one loaded face" }
+            require(faces.map { it.faceId }.toSet().size == faces.size) { "face ids must be unique" }
+            require(faces.all { it.fontClass == fontClass }) {
+                "font fallback cannot silently cross Serif/SansSerif class"
+            }
+            return SkiaMathFontFamily(Owner(fontClass, faces.associateBy { it.faceId }), requestedWeight)
         }
     }
 }

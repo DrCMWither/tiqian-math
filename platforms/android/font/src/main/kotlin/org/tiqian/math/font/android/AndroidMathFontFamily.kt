@@ -39,6 +39,27 @@ class AndroidMathFontFamily private constructor(
         )
     }
 
+    override fun resolveSymbolWithRequiredGlyph(
+        request: MathSymbolGlyphRequest,
+        requiredScalar: Int,
+        fontSizePx: Float,
+    ): ResolvedMathSymbolWithRequiredGlyph {
+        val selected = owner.firstSuccessful(
+            requestedWeight,
+            resolve = { it.resolveSymbolWithRequiredGlyph(request, requiredScalar, fontSizePx) },
+            run = { it.symbol.run },
+            accept = { _, resolved ->
+                resolved.symbol.supported && !resolved.symbol.run.missingGlyph &&
+                    resolved.owningFaceId != null && resolved.requiredGlyphId != null
+            },
+        )
+        return selected.value.copy(
+            symbol = selected.value.symbol.copy(
+                run = selected.value.symbol.run.withFaceDecision(requestedWeight, selected.reason),
+            ),
+        )
+    }
+
     override fun resolveOperator(request: MathOperatorGlyphRequest, fontSizePx: Float): ResolvedMathOperator {
         val selected = owner.firstSuccessful(
             requestedWeight,

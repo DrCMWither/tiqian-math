@@ -30,6 +30,9 @@ import org.tiqian.math.core.MathFontWeight
 import org.tiqian.math.core.MathFaceId
 import org.tiqian.math.core.MathHostTextFaceDecision
 import org.tiqian.math.core.MathFontFallbackReason
+import org.tiqian.math.core.MathAlphabet
+import org.tiqian.math.core.MathFamily
+import org.tiqian.math.core.MathSymbolIdentity
 import org.tiqian.math.layout.MathFormulaCapabilityResult
 import org.tiqian.math.layout.MathGlyphBoundsSource
 import org.tiqian.math.layout.MathLayoutEngine
@@ -38,6 +41,7 @@ import org.tiqian.math.layout.MathTextRunProvider
 import org.tiqian.math.layout.MathTextRunRequest
 import org.tiqian.math.layout.MathTextRunProviderResult
 import org.tiqian.math.layout.MeasuredMathRun
+import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.font.opentype.VerifiedOpenTypeMathSnapshotLoader
 
 @RunWith(AndroidJUnit4::class)
@@ -156,6 +160,48 @@ class AndroidMathBackendInstrumentedTest {
                     "remaining corpus commands",
                 )
             }
+        }
+    }
+
+    @Test
+    fun negationOverlayAndArticleKernReplayIndependentlyOnAndroid() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AndroidMathFontFamily.loadBundledLete(context).use { math ->
+            fun ready(source: String, options: MathLayoutOptions = MathLayoutOptions(fontSizePx = 32f)) =
+                assertIs<MathFormulaCapabilityResult.Ready>(
+                    math.formulaCapabilityEngine().evaluate(source, options),
+                    source,
+                ).layoutResult
+
+            listOf(
+                Triple("\\not p", "p", "valid unicode-math overlay"),
+                Triple("\\not\\!p", "\\!p", "article negative-thin-kern compatibility"),
+            ).forEach { (source, control, label) ->
+                val result = ready(source)
+                val overlay = result.box.glyphs.single { it.sourceRange == SourceRange(0, 4) }
+                assertEquals(157u.toUShort(), overlay.glyphId, "$label U+0338 glyph")
+                assertTrue(kotlin.math.abs(overlay.inkBounds.bottom) <= 0.001f, "$label $overlay")
+                val overlayInk = rasterInkCount(math, result)
+                val controlInk = rasterInkCount(math, ready(control))
+                assertTrue(
+                    overlayInk >= controlInk + 12,
+                    "$label must independently replay U+0338: overlay=$overlayInk control=$controlInk",
+                )
+            }
+
+            val article = "\\Sigma(\\not\\!p) = -ie^2 \\int\\frac{d^4k}{(2\\pi)^4} \\gamma^\\mu " +
+                "\\frac{i}{\\not\\!k - m + i\\epsilon} \\gamma_\\mu " +
+                "\\frac{i}{(\\not\\!p - \\not\\!k) - m + i\\epsilon}\\\\"
+            val articleResult = ready(
+                article,
+                MathLayoutOptions(
+                    mode = MathMode.Display,
+                    initialStyle = MathStyle.Display,
+                    fontSizePx = 32f,
+                ),
+            )
+            assertEquals(4, articleResult.decisions.count { it.name == "TeXNotRelation" })
+            assertTrue(rasterInkCount(math, articleResult) > 100)
         }
     }
 
@@ -279,6 +325,33 @@ class AndroidMathBackendInstrumentedTest {
                 }
                 assertRasterHasInk(CombinedAndroidReplayCatalog(bold, provider), result, "Lete weighted family")
             }
+        }
+    }
+
+    @Test
+    fun requiredCompanionGlyphFallsBackTheWholeAndroidMathAtom() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AndroidMathFontFamily.loadBundledLete(context).use { regular ->
+            val bold = regular.selectWeight(MathFontWeight.Bold) as AndroidMathFontFamily
+            val resolved = bold.resolveSymbolWithRequiredGlyph(
+                request = MathSymbolGlyphRequest(
+                    identity = MathSymbolIdentity.Literal('x'.code),
+                    family = MathFamily.Letters,
+                    alphabet = MathAlphabet.MathNormal,
+                    style = MathStyle.Text,
+                    sourceRange = SourceRange(0, 1),
+                ),
+                requiredScalar = 0x2135,
+                fontSizePx = 32f,
+            )
+            val base = resolved.symbol.run.glyphs.single()
+
+            assertEquals(MathFaceId("lete-sans-math-regular"), resolved.owningFaceId)
+            assertEquals(resolved.owningFaceId, base.faceId)
+            assertEquals(MathFontWeight.Bold, base.requestedWeight)
+            assertEquals(MathFontWeight.Regular, base.resolvedWeight)
+            assertEquals(MathFontFallbackReason.MissingGlyphInRequestedWeight, base.fallbackReason)
+            assertNotNull(resolved.requiredGlyphId)
         }
     }
 
@@ -523,6 +596,14 @@ private fun assertRasterHasInk(
     result: MathLayoutResult,
     label: String,
 ) {
+    val nonWhite = rasterInkCount(face, result)
+    assertTrue(nonWhite > 20, "$label rendered only $nonWhite non-white pixels")
+}
+
+private fun rasterInkCount(
+    face: AndroidReplayCatalog,
+    result: MathLayoutResult,
+): Int {
     val ink = result.box.inkBounds
     val width = ceil(ink.width + RasterPadding * 2f).toInt().coerceAtLeast(1)
     val height = ceil(ink.height + RasterPadding * 2f).toInt().coerceAtLeast(1)
@@ -539,8 +620,8 @@ private fun assertRasterHasInk(
     val pixels = IntArray(width * height)
     bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
     val nonWhite = pixels.count { it != Color.WHITE }
-    assertTrue(nonWhite > 20, "$label rendered only $nonWhite non-white pixels")
     bitmap.recycle()
+    return nonWhite
 }
 
 private fun assertNear(expected: Float, actual: Float, label: String, epsilon: Float = 0.02f) {

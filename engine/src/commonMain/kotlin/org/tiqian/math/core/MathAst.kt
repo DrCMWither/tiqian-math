@@ -555,12 +555,26 @@ data class MathExtensibleArrow(
     val atomClass: MathAtomClass get() = MathAtomClass.Relation
 }
 
-/** Plain-TeX `\not`: a relation modifier kept separate from the following symbol identity. */
+/**
+ * TeX `\not` semantic field.
+ *
+ * [interveningSpaces] preserves the explicit negative thin kern in real-world `\not\!p`
+ * input without turning that kern into the negated atom. Other spacing commands are not part of
+ * this compatibility bridge. The font adapter resolves the actual U+0338 overlay only after
+ * [base] has selected its math-family glyph.
+ */
 data class MathNegation(
     val base: MathNode,
     val commandRange: SourceRange,
     override val range: SourceRange,
-) : MathNode
+    val interveningSpaces: List<MathExplicitSpace> = emptyList(),
+) : MathNode {
+    init {
+        require(interveningSpaces.all { it.command == "\\!" && it.mu == -3f }) {
+            "MathNegation only preserves the article compatibility bridge \\! (-3mu)"
+        }
+    }
+}
 
 /** The public-domain LaTeX cancel package's single rising cancellation stroke. */
 data class MathCancel(

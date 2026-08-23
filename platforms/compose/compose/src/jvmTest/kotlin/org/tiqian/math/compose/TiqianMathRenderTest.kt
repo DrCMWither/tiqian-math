@@ -172,6 +172,49 @@ class TiqianMathRenderTest {
     }
 
     @Test
+    fun negationOverlayAndExplicitKernReplayAsMeasuredGlyphs() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            fun render(source: String): Pair<MathLayoutResult, Int> {
+                var observed: MathLayoutResult? = null
+                return ImageComposeScene(width = 220, height = 100, density = Density(1f)) {
+                    Box(Modifier.fillMaxSize().background(Color.White)) {
+                        TiqianMath(
+                            source = source,
+                            fontSizePx = 32f,
+                            fontFace = face,
+                            softWrap = false,
+                            onMathLayout = { observed = it },
+                        )
+                    }
+                }.use { scene ->
+                    val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                    val darkPixels = (0 until pixels.height).sumOf { y ->
+                        (0 until pixels.width).count { x -> pixels[x, y].red < 0.45f }
+                    }
+                    assertNotNull(observed) to darkPixels
+                }
+            }
+
+            listOf(
+                Triple("\\not p", "p", "valid unicode-math overlay"),
+                Triple("\\not\\!p", "\\!p", "explicit-kern article compatibility"),
+            ).forEach { (source, control, label) ->
+                val (result, overlayPixels) = render(source)
+                val (_, controlPixels) = render(control)
+                assertTrue(result.diagnostics.isEmpty(), "$label: ${result.debugDump}")
+                assertEquals(1, result.decisions.count { it.name == "TeXNotRelation" }, label)
+                val overlay = result.box.glyphs.single { it.sourceRange == SourceRange(0, 4) }
+                assertTrue(abs(overlay.inkBounds.bottom) <= 0.001f, "$label: $overlay")
+                assertTrue(
+                    overlayPixels >= controlPixels + 12,
+                    "$label U+0338 replay must independently add visible raster coverage: " +
+                        "overlay=$overlayPixels control=$controlPixels",
+                )
+            }
+        }
+    }
+
+    @Test
     fun basicCommandExtensionsReplayFromTheSharedLayoutResult() {
         var observed: MathLayoutResult? = null
         SkiaMathFontFace(LeteSansMath.load()).use { face ->

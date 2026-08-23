@@ -2,6 +2,7 @@ package org.tiqian.math.font.skia
 
 import org.tiqian.math.core.*
 import org.tiqian.math.layout.MathFormulaCapabilityResult
+import org.tiqian.math.layout.MathSymbolGlyphRequest
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.breakResponsiveDisplayLines
 import org.tiqian.math.layout.MathLayoutOptions
@@ -34,6 +35,89 @@ class MathFontFamilyFallbackTest {
             assertEquals(MathFontWeight.Regular, alephGlyph.resolvedWeight)
             assertEquals(MathFontFallbackReason.MissingGlyphInRequestedWeight, alephGlyph.fallbackReason)
             assertIs<MathFormulaCapabilityResult.Ready>(bold.formulaCapabilityEngine().evaluate("\\aleph_0"))
+        }
+    }
+
+    @Test
+    fun requiredCompanionGlyphFallsBackTheWholeMathAtomToOneFace() {
+        SkiaMathFontFamily.loadBundledLete().use { regular ->
+            val bold = regular.selectWeight(MathFontWeight.Bold) as SkiaMathFontFamily
+            val resolved = bold.resolveSymbolWithRequiredGlyph(
+                request = MathSymbolGlyphRequest(
+                    identity = MathSymbolIdentity.Literal('x'.code),
+                    family = MathFamily.Letters,
+                    alphabet = MathAlphabet.MathNormal,
+                    style = MathStyle.Text,
+                    sourceRange = SourceRange(0, 1),
+                ),
+                requiredScalar = 0x2135, // Lete Bold lacks aleph; Regular owns both glyphs.
+                fontSizePx = 32f,
+            )
+
+            val base = resolved.symbol.run.glyphs.single()
+            assertEquals(MathFaceId("lete-sans-math-regular"), resolved.owningFaceId)
+            assertEquals(resolved.owningFaceId, base.faceId)
+            assertEquals(MathFontWeight.Bold, base.requestedWeight)
+            assertEquals(MathFontWeight.Regular, base.resolvedWeight)
+            assertEquals(MathFontFallbackReason.MissingGlyphInRequestedWeight, base.fallbackReason)
+            assertEquals(
+                bold.mathFontFor(base.faceId).glyphForScalar(0x2135),
+                resolved.requiredGlyphId,
+            )
+        }
+    }
+
+    @Test
+    fun negationFallsBackBaseAndOverlayTogetherWhenRequestedFaceLacksOverlay() {
+        val regularFace = SkiaMathFontFace(
+            org.tiqian.math.font.opentype.LeteSansMath.load(),
+            MathFaceId("fixture-regular-with-not-overlay"),
+            MathFontClass.SansSerif,
+            MathFontWeight.Regular,
+            MathFontWeight.Regular,
+        )
+        val boldWithoutOverlay = org.tiqian.math.font.opentype.LeteSansMath.loadBold().let { font ->
+            font.copy(characterGlyphs = font.characterGlyphs - 0x0338)
+        }
+        val requestedFace = SkiaMathFontFace(
+            boldWithoutOverlay,
+            MathFaceId("fixture-bold-without-not-overlay"),
+            MathFontClass.SansSerif,
+            MathFontWeight.Bold,
+            MathFontWeight.Bold,
+        )
+        SkiaMathFontFamily.fromLoadedFaces(
+            MathFontClass.SansSerif,
+            listOf(regularFace, requestedFace),
+            requestedWeight = MathFontWeight.Bold,
+        ).use { family ->
+            val ready = assertIs<MathFormulaCapabilityResult.Ready>(
+                family.formulaCapabilityEngine().evaluate(
+                    "\\not p",
+                    MathLayoutOptions(fontSizePx = 32f),
+                ),
+            )
+            val base = ready.layoutResult.box.glyphs.single { it.sourceRange == SourceRange(5, 6) }
+            val overlay = ready.layoutResult.box.glyphs.single { it.sourceRange == SourceRange(0, 4) }
+
+            assertEquals(regularFace.faceId, base.faceId)
+            assertEquals(base.faceId, overlay.faceId)
+            assertEquals(MathFontWeight.Bold, base.requestedWeight)
+            assertEquals(MathFontWeight.Regular, base.resolvedWeight)
+            assertEquals(MathFontFallbackReason.MissingGlyphInRequestedWeight, base.fallbackReason)
+            assertEquals(base.requestedWeight, overlay.requestedWeight)
+            assertEquals(base.resolvedWeight, overlay.resolvedWeight)
+            assertEquals(base.fallbackReason, overlay.fallbackReason)
+            val decision = ready.layoutResult.decisions.single { it.name == "TeXNotRelation" }
+            assertEquals(regularFace.faceId.toString(), decision.details["overlayFaceId"])
+            assertEquals(regularFace.faceId.toString(), decision.details["nucleusFaceIds"])
+            assertEquals(
+                MathFontFallbackReason.MissingGlyphInRequestedWeight.toString(),
+                decision.details["nucleusFallbackReason"],
+            )
+            assertEquals(decision.details["nucleusRequestedWeight"], decision.details["overlayRequestedWeight"])
+            assertEquals(decision.details["nucleusResolvedWeight"], decision.details["overlayResolvedWeight"])
+            assertEquals(decision.details["nucleusFallbackReason"], decision.details["overlayFallbackReason"])
         }
     }
 

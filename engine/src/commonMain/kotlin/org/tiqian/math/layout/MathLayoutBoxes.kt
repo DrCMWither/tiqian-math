@@ -25,10 +25,14 @@ import org.tiqian.math.layout.MathLayoutPass.Companion.CENTIMETERS_PER_INCH
 import org.tiqian.math.layout.MathLayoutPass.Companion.CSS_PIXELS_PER_INCH
 import org.tiqian.math.layout.MathLayoutPass.Companion.MILLIMETERS_PER_INCH
 import org.tiqian.math.layout.MathLayoutPass.Companion.NEGATED_RELATION_SCALARS
+import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_MU_PER_EM
 import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_POINT_TO_PX
+import org.tiqian.math.layout.MathLayoutPass.AccentAttachmentEvidence
 import org.tiqian.math.layout.MathLayoutPass.CancelStrokeGeometry
 import org.tiqian.math.layout.MathLayoutPass.LaidNode
 import org.tiqian.math.layout.MathLayoutPass.MathAlphabetOverride
+
+private const val NOT_ACCENT_SCALAR = 0x0338
 
 internal fun MathLayoutPass.layoutExplicitSpace(node: MathExplicitSpace, style: MathStyle): LaidNode {
     val advance = node.mu * fontSize(style) / 18f
@@ -75,44 +79,261 @@ internal fun MathLayoutPass.layoutNegation(
     alphabetOverride: MathAlphabetOverride?,
 ): LaidNode {
     val base = node.base as? MathSymbol
-    val negatedScalar = base?.identity?.baseScalar?.let(NEGATED_RELATION_SCALARS::get)
-    if (base == null || negatedScalar == null) {
+    val negatedScalar = if (node.interveningSpaces.isEmpty()) {
+        base?.identity?.baseScalar?.let(NEGATED_RELATION_SCALARS::get)
+    } else {
+        null
+    }
+    if (negatedScalar != null) {
+        val synthetic = MathSymbol(
+            sourceText = "\\not${base?.sourceText.orEmpty()}",
+            identity = MathSymbolIdentity.Literal(negatedScalar),
+            atomClass = checkNotNull(base).atomClass,
+            family = MathFamily.Symbols,
+            familyBinding = MathFamilyBinding.Fixed,
+            range = node.range,
+        )
+        val laid = layoutSymbol(synthetic, style, alphabetOverride)
+        decision(
+            "TeXNotRelation",
+            node.range,
+            "commandRange" to node.commandRange,
+            "baseIdentity" to base.identity.debugName,
+            "baseScalar" to unicodeLabel(base.identity.baseScalar),
+            "precomposedScalar" to unicodeLabel(negatedScalar),
+            "atomClass" to base.atomClass,
+            "interveningSpaceCount" to 0,
+            "policy" to "XeTeXUnicodeMathPrecomposedNegatedRelation",
+        )
+        return laid.copy(node = node)
+    }
+
+    if (node.base is MathExplicitSpace) {
         diagnostics += MathDiagnostic(
             DiagnosticCode.UnsupportedNegatedSymbol,
-            "The current TeX \\not slice requires a relation with a standard precomposed negation",
-            node.range,
+            "Only the real-article \\not\\!<atom> compatibility form treats a spacing command as leading kern",
+            node.base.range,
         )
-        val laid = layoutNode(node.base, style, alphabetOverride)
+        val laid = layoutNode(node.base, style.cramped(), alphabetOverride)
+        decision(
+            "TeXNotRelation",
+            node.range,
+            "commandRange" to node.commandRange,
+            "baseKind" to node.base::class.simpleName,
+            "interveningSpaceCount" to 0,
+            "policy" to "UnsupportedSpacingCommandAsNegatedAtom",
+        )
+        return laid.copy(node = node)
+    }
+
+    val nucleusStyle = style.cramped()
+    val size = fontSize(style)
+    val interveningAdvancePx = node.interveningSpaces.sumOf {
+        (it.mu * size / TEX_MU_PER_EM).toDouble()
+    }.toFloat()
+    val resolvedSymbolWithOverlay = base?.let { symbol ->
+        val request = symbolRequest(symbol, nucleusStyle, alphabetOverride)
+        request to glyphSource.resolveSymbolWithRequiredGlyph(
+            request = request,
+            requiredScalar = NOT_ACCENT_SCALAR,
+            fontSizePx = size,
+        )
+    }
+    val laidTarget = if (resolvedSymbolWithOverlay == null) {
+        layoutNode(node.base, nucleusStyle, alphabetOverride)
+    } else {
+        layoutResolvedSymbol(
+            node = checkNotNull(base),
+            style = nucleusStyle,
+            request = resolvedSymbolWithOverlay.first,
+            resolved = resolvedSymbolWithOverlay.second.symbol,
+        )
+    }
+        .withNativeOutlineBoxForSideScriptPlacement()
+        .completedTeXMathField()
+    val laidBase = if (interveningAdvancePx == 0f) {
+        laidTarget
+    } else {
+        laidTarget.copy(
+            box = laidTarget.box.translated(interveningAdvancePx, 0f).copy(
+                width = (laidTarget.box.width + interveningAdvancePx).coerceAtLeast(0f),
+            ),
+        )
+    }
+    val nucleusFaceIds = laidTarget.box.glyphs.map { it.faceId }.distinct()
+    val overlayFaceId = nucleusFaceIds.singleOrNull()
+    val overlayMathFont = overlayFaceId?.let(::mathFontForFaceOrNull)
+    val overlayGlyphId = if (resolvedSymbolWithOverlay == null) {
+        val scriptStyleLevel = when (style.level) {
+            MathStyleLevel.Display, MathStyleLevel.Text -> 0
+            MathStyleLevel.Script -> 1
+            MathStyleLevel.ScriptScript -> 2
+        }
+        overlayMathFont?.glyphForScalar(NOT_ACCENT_SCALAR, scriptStyleLevel)
+    } else {
+        resolvedSymbolWithOverlay.second.requiredGlyphId.takeIf {
+            resolvedSymbolWithOverlay.second.owningFaceId == overlayFaceId
+        }
+    }
+    if (overlayFaceId == null || overlayMathFont == null || overlayGlyphId == null) {
+        diagnostics += MathDiagnostic(
+            DiagnosticCode.MissingGlyph,
+            "The negated atom must have one owning MATH face with a replayable U+0338 overlay glyph",
+            node.commandRange,
+        )
         decision(
             "TeXNotRelation",
             node.range,
             "commandRange" to node.commandRange,
             "baseKind" to node.base::class.simpleName,
             "precomposedScalar" to null,
-            "policy" to "ExplicitUnsupportedRatherThanSyntheticSlashGuess",
+            "overlayScalar" to "U+0338",
+            "nucleusFaceIds" to nucleusFaceIds.joinToString(","),
+            "interveningSpaceCount" to node.interveningSpaces.size,
+            "policy" to "MissingSameFaceOpenTypeNegationOverlayGlyph",
         )
-        return laid.copy(node = node)
+        return laidBase.copy(node = node)
     }
-    val synthetic = MathSymbol(
-        sourceText = "\\not${base.sourceText}",
-        identity = MathSymbolIdentity.Literal(negatedScalar),
-        atomClass = base.atomClass,
-        family = MathFamily.Symbols,
-        familyBinding = MathFamilyBinding.Fixed,
-        range = node.range,
+
+    val overlayMeasurement = measureGlyphOutlineForFace(
+        overlayFaceId,
+        overlayGlyphId,
+        size,
+        style,
+        node.commandRange,
     )
-    val laid = layoutSymbol(synthetic, style, alphabetOverride)
+    val measuredOverlay = overlayMeasurement.glyphs.single()
+    val overlayAttachmentEvidence = resolveTopAccentAttachment(
+        measuredOverlay.faceId,
+        measuredOverlay.glyphId,
+        size,
+        measuredOverlay.advance,
+        node.commandRange,
+        "negation overlay",
+    )
+    val baseGlyph = laidBase.box.singleGlyphOrNull()
+    val baseAttachmentEvidence = if (baseGlyph == null) {
+        AccentAttachmentEvidence(
+            interveningAdvancePx + laidTarget.box.width / 2f,
+            "CompletedNucleusLogicalCenterAfterExplicitKern",
+        )
+    } else {
+        resolveTopAccentAttachment(
+            baseGlyph.faceId,
+            baseGlyph.glyphId,
+            baseGlyph.fontSizePx,
+            baseGlyph.advance,
+            node.base.range,
+            "negated nucleus",
+        ).let { it.copy(valuePx = baseGlyph.x + it.valuePx) }
+    }
+    val overlayX = baseAttachmentEvidence.valuePx - overlayAttachmentEvidence.valuePx
+    // XeTeX's `mathaccentoverlay` box trace places the slash so its glyph bottom meets the
+    // nucleus baseline. This consumes the selected font outline instead of a visual offset.
+    val overlayBaselineY = -measuredOverlay.inkBounds.bottom
+    val positionedOverlay = MathGlyphPlacement(
+        glyphId = measuredOverlay.glyphId,
+        x = overlayX,
+        baselineY = overlayBaselineY,
+        advance = measuredOverlay.advance,
+        inkBounds = measuredOverlay.inkBounds.translated(overlayX, overlayBaselineY),
+        fontSizePx = size,
+        sourceRange = node.commandRange,
+        style = style,
+        faceId = measuredOverlay.faceId,
+        fontClass = measuredOverlay.fontClass,
+        requestedWeight = measuredOverlay.requestedWeight,
+        resolvedWeight = measuredOverlay.resolvedWeight,
+        fallbackReason = measuredOverlay.fallbackReason,
+    )
+    val glyphs = laidBase.box.glyphs + positionedOverlay
+    val geometry = geometryExtents(
+        width = laidBase.box.width,
+        glyphs = glyphs,
+        rules = laidBase.box.rules,
+        range = node.range,
+        constructionPaintGroups = laidBase.box.constructionPaintGroups,
+        hostTextRuns = laidBase.box.hostTextRuns,
+    )
+    val overlayAscent = (-positionedOverlay.inkBounds.top).coerceAtLeast(0f)
+    val overlayDescent = positionedOverlay.inkBounds.bottom.coerceAtLeast(0f)
+    val box = geometry.copy(
+        width = laidBase.box.width,
+        ascent = max(laidBase.box.ascent, overlayAscent),
+        descent = max(laidBase.box.descent, overlayDescent),
+        texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+            ascent = max(laidBase.box.texCleanBoxMetrics.ascent, overlayAscent),
+            descent = max(laidBase.box.texCleanBoxMetrics.descent, overlayDescent),
+            policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+            evidence = geometry.texCleanBoxMetrics.evidence +
+                laidBase.box.texCleanBoxMetrics.evidence + MathTeXCleanBoxEvidence.CompletedChildBox,
+        ),
+    )
+    val resultAtomClass = if (node.interveningSpaces.isEmpty()) {
+        // unicode-math's overlay fallback is a math accent box. XeTeX therefore completes it as
+        // an ordinary atom; precomposed negated relations above retain their relation class.
+        MathAtomClass.Ordinary
+    } else {
+        // The real-article compatibility bridge keeps the class of the atom following the
+        // preserved explicit kern. This is deliberately distinct from valid unicode-math `\\not`.
+        laidTarget.atomClass
+    }
     decision(
         "TeXNotRelation",
         node.range,
         "commandRange" to node.commandRange,
-        "baseIdentity" to base.identity.debugName,
-        "baseScalar" to unicodeLabel(base.identity.baseScalar),
-        "precomposedScalar" to unicodeLabel(negatedScalar),
-        "atomClass" to base.atomClass,
-        "policy" to "XeTeXUnicodeMathPrecomposedNegatedRelation",
+        "baseKind" to node.base::class.simpleName,
+        "baseIdentity" to base?.identity?.debugName,
+        "baseScalar" to base?.identity?.baseScalar?.let(::unicodeLabel),
+        "precomposedScalar" to null,
+        "overlayScalar" to "U+0338",
+        "overlayGlyphId" to measuredOverlay.glyphId,
+        "overlayFaceId" to measuredOverlay.faceId,
+        "overlayRequestedWeight" to measuredOverlay.requestedWeight,
+        "overlayResolvedWeight" to measuredOverlay.resolvedWeight,
+        "overlayFallbackReason" to measuredOverlay.fallbackReason,
+        "nucleusFaceIds" to nucleusFaceIds.joinToString(","),
+        "nucleusRequestedWeight" to laidTarget.box.glyphs.firstOrNull()?.requestedWeight,
+        "nucleusResolvedWeight" to laidTarget.box.glyphs.firstOrNull()?.resolvedWeight,
+        "nucleusFallbackReason" to laidTarget.box.glyphs.firstOrNull()?.fallbackReason,
+        "overlayAdvancePx" to measuredOverlay.advance,
+        "interveningSpaceCount" to node.interveningSpaces.size,
+        "interveningSpaceCommands" to node.interveningSpaces.joinToString(",") { it.command },
+        "interveningSpaceMu" to node.interveningSpaces.joinToString(",") { it.mu.toString() },
+        "interveningSpaceRanges" to node.interveningSpaces.joinToString(",") {
+            "${it.range.start}..${it.range.endExclusive}"
+        },
+        "interveningAdvancePx" to interveningAdvancePx,
+        "style" to style,
+        "nucleusStyle" to nucleusStyle,
+        "baseAttachmentPx" to baseAttachmentEvidence.valuePx,
+        "baseAttachmentPolicy" to baseAttachmentEvidence.policy,
+        "overlayAttachmentPx" to overlayAttachmentEvidence.valuePx,
+        "overlayAttachmentPolicy" to overlayAttachmentEvidence.policy,
+        "overlayX" to overlayX,
+        "overlayBaselineY" to overlayBaselineY,
+        "verticalPlacementPolicy" to "XeTeXMathAccentOverlayGlyphBottomAtNucleusBaseline",
+        "logicalAdvancePx" to box.width,
+        "atomClass" to resultAtomClass,
+        "atomClassPolicy" to if (node.interveningSpaces.isEmpty()) {
+            "XeTeXMathAccentCompletedAsOrdinary"
+        } else {
+            "RetainTargetAtomClassAfterArticleCompatibilityComposition"
+        },
+        "policy" to if (node.interveningSpaces.isEmpty()) {
+            "XeTeXUnicodeMathNotAccentOverlayOrdinaryAtom"
+        } else {
+            "ArticleNotNegativeThinKernOpenTypeOverlayCompatibility"
+        },
     )
-    return laid.copy(node = node)
+    return LaidNode(
+        node = node,
+        box = box,
+        atomClass = resultAtomClass,
+        italicCorrectionPx = 0f,
+        style = style,
+        scriptBaseKind = ScriptBaseKind.CompoundBox,
+    )
 }
 
 internal fun MathLayoutPass.layoutCancel(

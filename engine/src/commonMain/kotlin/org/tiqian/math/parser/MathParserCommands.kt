@@ -110,6 +110,15 @@ internal fun ParserState.parseControlWord(token: MathToken): MathNode {
         )
     }
     if (token.text == "not") {
+        val interveningSpaces = buildList {
+            while (true) {
+                skipIgnored()
+                val next = peek()
+                if (next.kind != MathTokenKind.ControlSymbol || next.text != "!") break
+                val parsed = parsePrimary()
+                if (parsed is MathExplicitSpace) add(parsed) else break
+            }
+        }
         skipIgnored()
         val next = peek()
         if (next.kind in setOf(
@@ -119,15 +128,21 @@ internal fun ParserState.parseControlWord(token: MathToken): MathNode {
                 MathTokenKind.Subscript,
             )
         ) {
+            val errorRange = interveningSpaces.lastOrNull()?.let { token.range.cover(it.range) } ?: token.range
             diagnostics += MathDiagnostic(
                 DiagnosticCode.MissingNegatedAtom,
                 "Command \\not requires a following math atom",
-                token.range,
+                errorRange,
             )
-            return MathErrorNode(sourceSlice(token.range), token.range)
+            return MathErrorNode(sourceSlice(errorRange), errorRange)
         }
         val base = parsePrimary() ?: MathErrorNode("", next.range)
-        return MathNegation(base, token.range, token.range.cover(base.range))
+        return MathNegation(
+            base = base,
+            interveningSpaces = interveningSpaces,
+            commandRange = token.range,
+            range = token.range.cover(base.range),
+        )
     }
     if (token.text == "cancel") {
         val body = parseRequiredArgument(token, "cancellation body")

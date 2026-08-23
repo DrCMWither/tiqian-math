@@ -143,23 +143,29 @@ class MathFormulaCorpusScannerTest {
                     "\\bf{0}",
                     "\\textbf{1}",
                     "\\mu\\not\\equiv\\mu",
+                    "\\Sigma(\\not\\!p) = -ie^2 \\int\\frac{d^4k}{(2\\pi)^4} \\gamma^\\mu " +
+                        "\\frac{i}{\\not\\!k - m + i\\epsilon} \\gamma_\\mu " +
+                        "\\frac{i}{(\\not\\!p - \\not\\!k) - m + i\\epsilon}\\\\",
                     "\\cancel{x+1}",
                     "\\begin{array}{c}a\\\\\\hline b\\end{array}",
                 ).joinToString("\n", postfix = "\n"),
             )
             Files.write(textFont, LeteSansMath.loadBoldBytes())
-            main(arrayOf(
-                input.toString(),
-                "--output=$output",
-                "--font=lete",
-                "--font-size=32",
-                "--text-font=$textFont",
-                "--text-font-weight=700",
-            ))
-            val report = Json.parseToJsonElement(output.readText()).jsonObject
-            assertEquals("6", report.getValue("ready").jsonPrimitive.content)
-            assertEquals("0", report.getValue("fallbackRequired").jsonPrimitive.content)
-            assertEquals(emptyMap(), report.getValue("byUnsupportedCommand").jsonObject)
+            listOf("lete", "stix").forEach { font ->
+                main(arrayOf(
+                    input.toString(),
+                    "--output=$output",
+                    "--font=$font",
+                    "--mode=display",
+                    "--font-size=32",
+                    "--text-font=$textFont",
+                    "--text-font-weight=700",
+                ))
+                val report = Json.parseToJsonElement(output.readText()).jsonObject
+                assertEquals("7", report.getValue("ready").jsonPrimitive.content, font)
+                assertEquals("0", report.getValue("fallbackRequired").jsonPrimitive.content, font)
+                assertEquals(emptyMap(), report.getValue("byUnsupportedCommand").jsonObject, font)
+            }
         } finally {
             Files.deleteIfExists(input)
             Files.deleteIfExists(output)

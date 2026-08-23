@@ -10,8 +10,11 @@ import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.font.stix.StixTwoMath
 import org.tiqian.math.layout.MathFormulaCapabilityResult
+import org.tiqian.math.layout.MathFontFace
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.MathSymbolGlyphRequest
+import org.tiqian.math.layout.ResolvedMathSymbolWithRequiredGlyph
 import org.tiqian.math.layout.constructionPaintOwnershipDiagnostics
 
 /** Reproducer: `preview/tectonic/remaining-command-oracle.tex`, Tectonic 0.17.0 at 24bp. */
@@ -99,7 +102,200 @@ class TectonicRemainingCommandsOracleTest {
         assertEquals(oracle.notGlyphId, negated.glyphId, oracle.label)
         assertEquals("U+2262", not.decisions.single { it.name == "TeXNotRelation" }.details["precomposedScalar"])
 
-        assertTrue(listOf(atop, choose, displayChoose, not, hline).all { it.diagnostics.isEmpty() }, oracle.label)
+        val overlay = engine.layout("\\not p", options())
+        assertBox(oracle.notOverlay, overlay, "${oracle.label} not overlay")
+        assertEquals(oracle.notOverlayGlyphIds, overlay.box.glyphs.map { it.glyphId }, overlay.debugDump)
+        val overlaySlash = overlay.box.glyphs.single { it.sourceRange == SourceRange(0, 4) }
+        val overlayBase = overlay.box.glyphs.single { it.sourceRange == SourceRange(5, 6) }
+        assertNear(oracle.notOverlayXPt * TEX_PT_TO_PX, overlaySlash.x, "${oracle.label} overlay x")
+        assertNear(0f, overlaySlash.inkBounds.bottom, "${oracle.label} overlay bottom")
+        assertNear(0f, overlayBase.x, "${oracle.label} overlay base x")
+        assertNear(0f, overlaySlash.advance, "${oracle.label} overlay logical advance")
+        assertEquals(
+            "XeTeXUnicodeMathNotAccentOverlayOrdinaryAtom",
+            overlay.decisions.single { it.name == "TeXNotRelation" }.details["policy"],
+        )
+
+        val overlayRelation = engine.layout("a\\not\\propto b", options())
+        val relationControl = engine.layout("a\\propto b", options())
+        assertNear(
+            oracle.notRelationControlWidthPt * TEX_PT_TO_PX,
+            relationControl.box.width,
+            "${oracle.label} relation control width",
+        )
+        assertNear(
+            oracle.notOverlayRelationWidthPt * TEX_PT_TO_PX,
+            overlayRelation.box.width,
+            "${oracle.label} not-overlay relation width",
+        )
+        assertEquals(
+            oracle.notOverlayRelationGlyphIds,
+            overlayRelation.box.glyphs.map { it.glyphId },
+            overlayRelation.debugDump,
+        )
+        val relationTarget = overlayRelation.box.glyphs.single { it.sourceRange == SourceRange(5, 12) }
+        val relationSlash = overlayRelation.box.glyphs.single { it.sourceRange == SourceRange(1, 5) }
+        val relationRight = overlayRelation.box.glyphs.single { it.sourceRange == SourceRange(13, 14) }
+        assertNear(
+            oracle.notOverlayRelationTargetXPt * TEX_PT_TO_PX,
+            relationTarget.x,
+            "${oracle.label} not-overlay relation target x",
+        )
+        assertNear(
+            oracle.notOverlayRelationSlashXPt * TEX_PT_TO_PX,
+            relationSlash.x,
+            "${oracle.label} not-overlay relation slash x",
+        )
+        assertNear(
+            oracle.notOverlayRelationRightXPt * TEX_PT_TO_PX,
+            relationRight.x,
+            "${oracle.label} not-overlay relation next glyph x",
+        )
+        assertNear(0f, relationTarget.baselineY, "${oracle.label} not-overlay relation target baseline")
+        assertNear(0f, relationRight.baselineY, "${oracle.label} not-overlay relation next baseline")
+        val overlayRelationDecision = overlayRelation.decisions.single { it.name == "TeXNotRelation" }
+        assertEquals(MathAtomClass.Ordinary.toString(), overlayRelationDecision.details["atomClass"])
+        assertEquals("XeTeXMathAccentCompletedAsOrdinary", overlayRelationDecision.details["atomClassPolicy"])
+        assertEquals(
+            "XeTeXUnicodeMathNotAccentOverlayOrdinaryAtom",
+            overlayRelationDecision.details["policy"],
+        )
+
+        val explicitKern = engine.layout("\\not\\!p", options())
+        assertEquals(oracle.notOverlayGlyphIds, explicitKern.box.glyphs.map { it.glyphId }, explicitKern.debugDump)
+        val kernSlash = explicitKern.box.glyphs.single { it.sourceRange == SourceRange(0, 4) }
+        val kernBase = explicitKern.box.glyphs.single { it.sourceRange == SourceRange(6, 7) }
+        val negativeThinSpacePx = -3f * 32f / 18f
+        // unicode-math rejects `\not\!p`: these are named compatibility invariants, not a
+        // XeTeX syntax oracle. The actual target glyph and its MATH attachment translate by the
+        // preserved -3mu kern while the valid `\not p` overlay geometry remains unchanged.
+        assertNear(overlay.box.width + negativeThinSpacePx, explicitKern.box.width, "${oracle.label} kern width")
+        assertNear(overlay.box.ascent, explicitKern.box.ascent, "${oracle.label} kern ascent")
+        assertNear(overlay.box.descent, explicitKern.box.descent, "${oracle.label} kern descent")
+        assertNear(negativeThinSpacePx, kernBase.x, "${oracle.label} explicit -3mu base x")
+        assertNear(overlaySlash.x + negativeThinSpacePx, kernSlash.x, "${oracle.label} translated overlay x")
+        assertNear(0f, kernSlash.inkBounds.bottom, "${oracle.label} kern overlay bottom")
+        val kernDecision = explicitKern.decisions.single { it.name == "TeXNotRelation" }
+        assertEquals("\\!", kernDecision.details["interveningSpaceCommands"])
+        assertEquals("4..6", kernDecision.details["interveningSpaceRanges"])
+        assertEquals(
+            "ArticleNotNegativeThinKernOpenTypeOverlayCompatibility",
+            kernDecision.details["policy"],
+        )
+
+        assertTrue(
+            listOf(atop, choose, displayChoose, not, overlay, overlayRelation, explicitKern, hline)
+                .all { it.diagnostics.isEmpty() },
+            oracle.label,
+        )
+    }
+
+    @Test
+    fun negationOverlayPropagatesAllEightMathStylesThroughBothFonts() = withFaces { oracle, engine ->
+        MathStyle.entries.forEach { style ->
+            val result = engine.layout("\\not p", options().copy(initialStyle = style))
+            assertTrue(result.diagnostics.isEmpty(), "${oracle.label} $style: ${result.debugDump}")
+            val base = result.box.glyphs.single { it.sourceRange == SourceRange(5, 6) }
+            val overlay = result.box.glyphs.single { it.sourceRange == SourceRange(0, 4) }
+            val decision = result.decisions.single { it.name == "TeXNotRelation" }
+
+            assertEquals(style, overlay.style, "${oracle.label} overlay $style")
+            assertEquals(style.cramped(), base.style, "${oracle.label} nucleus $style")
+            assertNear(base.fontSizePx, overlay.fontSizePx, "${oracle.label} font size $style")
+            assertEquals(style.toString(), decision.details["style"])
+            assertEquals(style.cramped().toString(), decision.details["nucleusStyle"])
+            assertEquals(SourceRange(0, 4), overlay.sourceRange)
+            assertEquals(SourceRange(5, 6), base.sourceRange)
+
+            val explicitKern = engine.layout("\\not\\!p", options().copy(initialStyle = style))
+            assertTrue(explicitKern.diagnostics.isEmpty(), "${oracle.label} $style: ${explicitKern.debugDump}")
+            val kernBase = explicitKern.box.glyphs.single { it.sourceRange == SourceRange(6, 7) }
+            val kernOverlay = explicitKern.box.glyphs.single { it.sourceRange == SourceRange(0, 4) }
+            val expectedKernPx = -3f * base.fontSizePx / 18f
+            assertNear(expectedKernPx, kernBase.x - base.x, "${oracle.label} base -3mu $style")
+            assertNear(expectedKernPx, kernOverlay.x - overlay.x, "${oracle.label} overlay -3mu $style")
+            assertNear(
+                expectedKernPx,
+                explicitKern.box.width - result.box.width,
+                "${oracle.label} logical width -3mu $style",
+            )
+            val kernDecision = explicitKern.decisions.single { it.name == "TeXNotRelation" }
+            assertEquals(style.toString(), kernDecision.details["style"])
+            assertEquals(style.cramped().toString(), kernDecision.details["nucleusStyle"])
+            assertNear(
+                expectedKernPx,
+                kernDecision.details.getValue("interveningAdvancePx").toFloat(),
+                "${oracle.label} decision -3mu $style",
+            )
+        }
+    }
+
+    @Test
+    fun negationCompatibilityRetainsTargetAtomClassAndRejectsOtherSpacingCommands() =
+        withFaces { oracle, engine ->
+            val plainRelation = engine.layout("a\\equiv b", options())
+            val relation = engine.layout("a\\not\\!\\equiv b", options())
+            assertTrue(relation.diagnostics.isEmpty(), "${oracle.label}: ${relation.debugDump}")
+            val decision = relation.decisions.single { it.name == "TeXNotRelation" }
+            assertEquals(MathAtomClass.Relation.toString(), decision.details["atomClass"])
+            assertEquals(
+                "RetainTargetAtomClassAfterArticleCompatibilityComposition",
+                decision.details["atomClassPolicy"],
+            )
+            assertEquals("\\!", decision.details["interveningSpaceCommands"])
+            assertNear(
+                plainRelation.box.width - 3f * 32f / 18f,
+                relation.box.width,
+                "${oracle.label} relation spacing and explicit kern",
+            )
+
+            val unsupportedSpacing = engine.layout("\\not\\,p", options())
+            assertTrue(
+                unsupportedSpacing.diagnostics.any { it.code == DiagnosticCode.UnsupportedNegatedSymbol },
+                "${oracle.label}: ${unsupportedSpacing.debugDump}",
+            )
+        }
+
+    @Test
+    fun missingOverlayInTheSelectedNucleusFaceCannotSilentlyResolveFromAnotherFace() {
+        SkiaMathFontFace(LeteSansMath.load()).use { real ->
+            val result = MathLayoutEngine(MissingNotAccentFace(real)).layout("\\not p", options())
+            assertTrue(result.diagnostics.any { it.code == DiagnosticCode.MissingGlyph }, result.debugDump)
+            assertEquals(1, result.box.glyphs.size, result.debugDump)
+            assertTrue(result.decisions.single { it.name == "TeXNotRelation" }.details["policy"] ==
+                "MissingSameFaceOpenTypeNegationOverlayGlyph")
+        }
+    }
+
+    @Test
+    fun photonSelfEnergyArticleFormulaIsReadyWithFourReplayableNegationOverlays() {
+        val source = "\\Sigma(\\not\\!p) = -ie^2 \\int\\frac{d^4k}{(2\\pi)^4} \\gamma^\\mu " +
+            "\\frac{i}{\\not\\!k - m + i\\epsilon} \\gamma_\\mu " +
+            "\\frac{i}{(\\not\\!p - \\not\\!k) - m + i\\epsilon}\\\\"
+        oracles.forEach { oracle ->
+            oracle.faceFactory().use { face ->
+                val ready = assertIs<MathFormulaCapabilityResult.Ready>(
+                    face.formulaCapabilityEngine().evaluate(
+                        source,
+                        options().copy(mode = MathMode.Display, initialStyle = MathStyle.Display),
+                    ),
+                    oracle.label,
+                )
+                assertTrue(ready.diagnostics.isEmpty(), "${oracle.label}: ${ready.diagnostics}")
+                val decisions = ready.layoutResult.decisions.filter { it.name == "TeXNotRelation" }
+                assertEquals(4, decisions.size, ready.layoutResult.debugDump)
+                assertTrue(decisions.all {
+                    it.details["policy"] == "ArticleNotNegativeThinKernOpenTypeOverlayCompatibility"
+                }, ready.layoutResult.debugDump)
+                assertEquals(
+                    listOf(SourceRange(7, 14), SourceRange(70, 77), SourceRange(116, 123), SourceRange(126, 133)),
+                    decisions.map { it.range },
+                )
+                assertTrue(ready.layoutResult.box.glyphs.count { glyph ->
+                    decisions.any { glyph.sourceRange == SourceRange(it.range.start, it.range.start + 4) }
+                } >= 4, ready.layoutResult.debugDump)
+            }
+        }
     }
 
     @Test
@@ -222,6 +418,38 @@ class TectonicRemainingCommandsOracleTest {
     }
 
     private data class Box(val widthPt: Float, val ascentPt: Float, val descentPt: Float)
+
+    private class MissingNotAccentFace(private val delegate: SkiaMathFontFace) : MathFontFace by delegate {
+        override val mathFont = delegate.mathFont.copy(
+            characterGlyphs = delegate.mathFont.characterGlyphs - 0x0338,
+        )
+
+        override fun mathFontFor(faceId: MathFaceId) = if (faceId == delegate.faceId) {
+            mathFont
+        } else {
+            error("unexpected face $faceId")
+        }
+
+        override fun mathFontForOrNull(faceId: MathFaceId) =
+            if (faceId == delegate.faceId) mathFont else null
+
+        override fun resolveSymbolWithRequiredGlyph(
+            request: MathSymbolGlyphRequest,
+            requiredScalar: Int,
+            fontSizePx: Float,
+        ): ResolvedMathSymbolWithRequiredGlyph {
+            val symbol = delegate.resolveSymbol(request, fontSizePx)
+            val owningFaceId = symbol.run.glyphs.map { it.faceId }.distinct().singleOrNull()
+            return ResolvedMathSymbolWithRequiredGlyph(
+                symbol = symbol,
+                requiredScalar = requiredScalar,
+                requiredGlyphId = owningFaceId?.let { mathFontForOrNull(it) }
+                    ?.glyphForScalar(requiredScalar),
+                owningFaceId = owningFaceId,
+            )
+        }
+    }
+
     private data class Oracle(
         val label: String,
         val faceFactory: () -> SkiaMathFontFace,
@@ -234,6 +462,15 @@ class TectonicRemainingCommandsOracleTest {
         val chooseDelimiterGlyphIds: List<UShort>,
         val not: Box,
         val notGlyphId: UShort,
+        val notOverlay: Box,
+        val notOverlayGlyphIds: List<UShort>,
+        val notOverlayXPt: Float,
+        val notRelationControlWidthPt: Float,
+        val notOverlayRelationWidthPt: Float,
+        val notOverlayRelationGlyphIds: List<UShort>,
+        val notOverlayRelationTargetXPt: Float,
+        val notOverlayRelationSlashXPt: Float,
+        val notOverlayRelationRightXPt: Float,
         val hline: Box,
     )
 
@@ -253,6 +490,15 @@ class TectonicRemainingCommandsOracleTest {
                 listOf(1836u, 1851u),
                 Box(58.89072f, 16.598f, 4.14348f),
                 629u,
+                Box(13.53859f, 18.81429f, 4.14348f),
+                listOf(3642u, 157u),
+                7.03429f,
+                56.50580f,
+                43.12110f,
+                listOf(3628u, 560u, 157u, 3629u),
+                13.41814f,
+                21.39193f,
+                29.38980f,
                 Box(23.7313f, 31.46956f, 17.97772f),
             ),
             Oracle(
@@ -267,6 +513,15 @@ class TectonicRemainingCommandsOracleTest {
                 listOf(1302u, 1314u),
                 Box(59.05934f, 16.33302f, 5.22752f),
                 1808u,
+                Box(14.40582f, 20.18742f, 5.2998f),
+                listOf(3343u, 844u),
+                15.41757f,
+                56.69853f,
+                43.31383f,
+                listOf(3326u, 1677u, 844u, 3327u),
+                13.36995f,
+                27.58302f,
+                30.71475f,
                 Box(23.36995f, 30.56613f, 18.13435f),
             ),
         )

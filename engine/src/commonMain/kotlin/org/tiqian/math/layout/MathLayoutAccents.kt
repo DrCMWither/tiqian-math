@@ -22,7 +22,7 @@ import org.tiqian.math.layout.MathLayoutPass.AccentAttachmentEvidence
 import org.tiqian.math.layout.MathLayoutPass.LaidNode
 import org.tiqian.math.layout.MathLayoutPass.MathAlphabetOverride
 
-private fun MathLayoutPass.resolveTopAccentAttachment(
+internal fun MathLayoutPass.resolveTopAccentAttachment(
     faceId: MathFaceId,
     glyphId: UShort,
     fontSizePx: Float,

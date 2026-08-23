@@ -10,6 +10,7 @@ import org.tiqian.math.core.MathAlphabet
 import org.tiqian.math.core.MathFamily
 import org.tiqian.math.core.MathLargeOperatorIdentity
 import org.tiqian.math.core.MathStyle
+import org.tiqian.math.core.MathStyleLevel
 import org.tiqian.math.core.MathSymbolIdentity
 import org.tiqian.math.core.SourceRange
 import org.tiqian.math.font.opentype.OpenTypeMathFont
@@ -135,6 +136,17 @@ data class ResolvedMathSymbol(
     val supported: Boolean,
 )
 
+/**
+ * One-face resolution for a symbol plus a companion glyph required to complete the same atom.
+ * The companion may be an overlay, but it can never be taken from a different MATH face.
+ */
+data class ResolvedMathSymbolWithRequiredGlyph(
+    val symbol: ResolvedMathSymbol,
+    val requiredScalar: Int,
+    val requiredGlyphId: UShort?,
+    val owningFaceId: MathFaceId?,
+)
+
 /** Semantic request for a TeX op noad in the fixed LargeSymbols family. */
 data class MathOperatorGlyphRequest(
     val identity: MathLargeOperatorIdentity,
@@ -194,6 +206,28 @@ interface MathFontFace {
         request: MathSymbolGlyphRequest,
         fontSizePx: Float,
     ): ResolvedMathSymbol
+
+    /** Selects one face that owns both the base symbol and [requiredScalar]. */
+    fun resolveSymbolWithRequiredGlyph(
+        request: MathSymbolGlyphRequest,
+        requiredScalar: Int,
+        fontSizePx: Float,
+    ): ResolvedMathSymbolWithRequiredGlyph {
+        val symbol = resolveSymbol(request, fontSizePx)
+        val owningFaceId = symbol.run.glyphs.map { it.faceId }.distinct().singleOrNull()
+        val scriptStyleLevel = when (request.style.level) {
+            MathStyleLevel.Display, MathStyleLevel.Text -> 0
+            MathStyleLevel.Script -> 1
+            MathStyleLevel.ScriptScript -> 2
+        }
+        return ResolvedMathSymbolWithRequiredGlyph(
+            symbol = symbol,
+            requiredScalar = requiredScalar,
+            requiredGlyphId = owningFaceId?.let { mathFontForOrNull(it) }
+                ?.glyphForScalar(requiredScalar, scriptStyleLevel),
+            owningFaceId = owningFaceId,
+        )
+    }
 
     fun resolveOperator(
         request: MathOperatorGlyphRequest,

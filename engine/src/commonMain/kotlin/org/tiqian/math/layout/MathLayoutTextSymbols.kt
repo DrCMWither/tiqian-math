@@ -81,6 +81,16 @@ internal fun MathLayoutPass.layoutSymbol(
     val size = fontSize(style)
     val request = symbolRequest(node, style, alphabetOverride)
     val resolved = glyphSource.resolveSymbol(request, size)
+    return layoutResolvedSymbol(node, style, request, resolved)
+}
+
+internal fun MathLayoutPass.layoutResolvedSymbol(
+    node: MathSymbol,
+    style: MathStyle,
+    request: MathSymbolGlyphRequest,
+    resolved: ResolvedMathSymbol,
+): LaidNode {
+    val size = fontSize(style)
     val run = resolved.run
     if (!resolved.supported) {
         diagnostics += MathDiagnostic(

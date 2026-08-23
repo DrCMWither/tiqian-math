@@ -75,6 +75,7 @@ internal data class CommonExtensionPreviewCase(
 internal val commonExtensionPreviewCases = listOf(
     CommonExtensionPreviewCase("plain TeX generalized fraction", "E_{a\\atop b}+{a\\atop b}", lineHeightSp = 145),
     CommonExtensionPreviewCase("precomposed negated relation", "\\mu\\not\\equiv\\mu"),
+    CommonExtensionPreviewCase("OpenType negation overlay / article kern bridge", "\\not p+\\not\\!p+\\not\\!k"),
     CommonExtensionPreviewCase("cancel.sty stroked overlay", "\\cancel{x+1}+\\frac{\\cancel{a}}{b}"),
     CommonExtensionPreviewCase("display fraction / centered continued fraction", "\\dfrac{a}{b}+\\cfrac{a}{b}"),
     CommonExtensionPreviewCase("continued fraction numerator alignment", "\\cfrac[l]{a}{bbbb}+\\cfrac[r]{a}{bbbb}"),

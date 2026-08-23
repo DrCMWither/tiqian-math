@@ -2,6 +2,7 @@ package org.tiqian.math.parser
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import org.tiqian.math.core.*
@@ -87,6 +88,70 @@ class MathRemainingTeXCommandsParserTest {
         val cancel = assertIs<MathCancel>(parsed.root.children[4])
         assertEquals("\\cancel", source.substring(cancel.commandRange.start, cancel.commandRange.endExclusive))
         assertIs<MathGroup>(cancel.body)
+    }
+
+    @Test
+    fun notKeepsExplicitKernsSeparateFromTheActualNegatedAtom() {
+        val source = "\\not\\!p"
+        val parsed = MathParser().parse(source)
+
+        assertTrue(parsed.diagnostics.isEmpty(), parsed.diagnostics.toString())
+        val negation = assertIs<MathNegation>(parsed.root.children.single())
+        assertEquals(SourceRange(0, 4), negation.commandRange)
+        assertEquals(SourceRange(0, 7), negation.range)
+        val kern = negation.interveningSpaces.single()
+        assertEquals("\\!", kern.command)
+        assertEquals(-3f, kern.mu)
+        assertEquals(SourceRange(4, 6), kern.range)
+        val base = assertIs<MathSymbol>(negation.base)
+        assertEquals("p", base.sourceText)
+        assertEquals(SourceRange(6, 7), base.range)
+    }
+
+    @Test
+    fun negationAstRejectsSpacingOutsideTheNamedArticleBridge() {
+        val base = MathSymbol(
+            sourceText = "p",
+            identity = MathSymbolIdentity.Literal('p'.code),
+            atomClass = MathAtomClass.Ordinary,
+            family = MathFamily.Letters,
+            familyBinding = MathFamilyBinding.Variable,
+            range = SourceRange(6, 7),
+        )
+        assertFailsWith<IllegalArgumentException> {
+            MathNegation(
+                base = base,
+                commandRange = SourceRange(0, 4),
+                range = SourceRange(0, 7),
+                interveningSpaces = listOf(MathExplicitSpace("\\,", 3f, SourceRange(4, 6))),
+            )
+        }
+    }
+
+    @Test
+    fun notCompatibilityBridgeDoesNotSwallowOtherSpacingCommands() {
+        val parsed = MathParser().parse("\\not\\,p")
+
+        assertTrue(parsed.diagnostics.isEmpty(), parsed.diagnostics.toString())
+        assertEquals(2, parsed.root.children.size)
+        val negation = assertIs<MathNegation>(parsed.root.children.first())
+        assertTrue(negation.interveningSpaces.isEmpty())
+        val spacing = assertIs<MathExplicitSpace>(negation.base)
+        assertEquals("\\,", spacing.command)
+        assertEquals(SourceRange(4, 6), spacing.range)
+        assertEquals(SourceRange(0, 6), negation.range)
+        assertEquals(SourceRange(6, 7), assertIs<MathSymbol>(parsed.root.children.last()).range)
+    }
+
+    @Test
+    fun missingNegatedAtomOwnsTheConsumedNegativeThinSpaceRange() {
+        val parsed = MathParser().parse("\\not\\!")
+
+        val diagnostic = parsed.diagnostics.single { it.code == DiagnosticCode.MissingNegatedAtom }
+        assertEquals(SourceRange(0, 6), diagnostic.range)
+        val error = assertIs<MathErrorNode>(parsed.root.children.single())
+        assertEquals("\\not\\!", error.sourceText)
+        assertEquals(SourceRange(0, 6), error.range)
     }
 
     @Test
