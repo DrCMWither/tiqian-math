@@ -1,0 +1,99 @@
+name: Publish Tiqian Math Maven snapshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Maven SNAPSHOT version
+        required: true
+        default: 0.1.0-SNAPSHOT
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-tiqian-math-maven-snapshots
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TIQIAN_VERSION: ${{ inputs.version }}
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+    steps:
+      - name: Check out Tiqian Math
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Validate snapshot inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$TIQIAN_VERSION" != *-SNAPSHOT ]]; then
+            echo "The Central snapshot repository only accepts -SNAPSHOT versions." >&2
+            exit 1
+          fi
+          for variable in MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "Required secret $variable is missing." >&2
+              exit 1
+            fi
+          done
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Compile runtime math fonts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check fonttools==4.63.0
+          output="$RUNNER_TEMP/tiqian-math-fonts"
+          script="font/metadata-generator/tools/compile_runtime_font.py"
+          lete_regular_layout="$output/lete-regular-layout.otf"
+          lete_regular_runtime="$output/lete-regular-runtime.otf"
+          lete_bold_layout="$output/lete-bold-layout.otf"
+          lete_bold_runtime="$output/lete-bold-runtime.otf"
+          stix_layout="$output/stix-regular-layout.otf"
+          stix_runtime="$output/stix-regular-runtime.otf"
+          python3 "$script" \
+            engine/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Regular.otf \
+            "$lete_regular_layout" \
+            "$lete_regular_runtime"
+          python3 "$script" \
+            engine/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Bold.otf \
+            "$lete_bold_layout" \
+            "$lete_bold_runtime"
+          python3 "$script" \
+            font/stix/src/commonMain/resources/org/tiqian/math/host-fonts/stix/regular.otf \
+            "$stix_layout" \
+            "$stix_runtime"
+          {
+            echo "TIQIAN_LETE_REGULAR_LAYOUT_FONT=$lete_regular_layout"
+            echo "TIQIAN_LETE_REGULAR_RUNTIME_FONT=$lete_regular_runtime"
+            echo "TIQIAN_LETE_BOLD_LAYOUT_FONT=$lete_bold_layout"
+            echo "TIQIAN_LETE_BOLD_RUNTIME_FONT=$lete_bold_runtime"
+            echo "TIQIAN_STIX_LAYOUT_FONT=$stix_layout"
+            echo "TIQIAN_STIX_RUNTIME_FONT=$stix_runtime"
+          } >> "$GITHUB_ENV"
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+
+      - name: Bake runtime math metadata
+        run: |
+          ./gradlew \
+            :font:metadata-generator:bakeLeteRuntimeMetadata \
+            :font:metadata-generator:bakeStixRuntimeMetadata \
+            --no-daemon
+
+      - name: Verify platform-independent tests
+        run: ./gradlew :engine:allTests -PtiqianCompiledMathResources=true --no-daemon
+
+      - name: Upload Tiqian Math snapshot modules
+        run: ./gradlew publishMathToCentralSnapshots -PtiqianCompiledMathResources=true --no-daemon
