@@ -18,7 +18,7 @@ java {
 }
 
 dependencies {
-    implementation(project(":font:skia"))
+    implementation(project(":platforms:jvm:skia"))
     implementation(project(":font:stix"))
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     testImplementation(kotlin("test-junit5"))

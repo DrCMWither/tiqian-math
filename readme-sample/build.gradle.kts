@@ -7,10 +7,10 @@ kotlin {
 }
 
 dependencies {
-    implementation(project(":font:skia"))
-    implementation(project(":layout"))
-    implementation("org.tiqian:tiqian-layout:${rootProject.version}")
-    implementation("org.tiqian:tiqian-shaping-skia:${rootProject.version}")
+    implementation(project(":platforms:jvm:skia"))
+    implementation(project(":engine"))
+    implementation("org.tiqian:tiqian-engine:${rootProject.version}")
+    implementation("org.tiqian:tiqian-jvm-skia:${rootProject.version}")
 }
 
 val blackSvg = rootProject.layout.projectDirectory.file("docs/images/sample-formulas-black.svg")

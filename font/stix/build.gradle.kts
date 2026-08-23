@@ -59,7 +59,7 @@ kotlin {
             getByName("commonMain").resources.setSrcDirs(listOf(prepared.map { it.destinationDir }))
         }
         jvmMain.dependencies {
-            api(project(":font:opentype"))
+            api(project(":engine"))
         }
         jvmTest.dependencies {
             implementation(kotlin("test"))

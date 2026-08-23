@@ -10,7 +10,7 @@ class OpenTypeMathMetadataBakerTest {
     @Test
     fun reproducesCheckedInLeteSnapshot() {
         val root = Path.of(checkNotNull(System.getProperty("tiqianMathRepositoryRoot")))
-        val resources = root.resolve("font/opentype/src/jvmMain/resources/org/tiqian/math/fonts")
+        val resources = root.resolve("engine/src/jvmMain/resources/org/tiqian/math/fonts")
         val baked = OpenTypeMathMetadataBaker.bake(
             Files.readAllBytes(resources.resolve("LeteSansMath-Regular.otf")),
         )

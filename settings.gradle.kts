@@ -48,23 +48,19 @@ dependencyResolutionManagement {
 rootProject.name = "tiqian-math"
 
 include(
-    ":core",
-    ":parser",
-    ":font:opentype",
+    ":engine",
     ":font:tooling",
     ":font:gradle-plugin",
     ":font:metadata-generator",
-    ":font:android",
     ":font:stix",
-    ":font:skia",
-    ":layout",
+    ":platforms:android:font",
+    ":platforms:jvm:skia",
+    ":platforms:compose:compose",
     ":scanner",
-    ":frontend:math-compose",
     ":preview",
     ":demo:android-app",
 )
 
-project(":frontend:math-compose").projectDir = file("frontend/compose")
 project(":demo:android-app").projectDir = file("demo/android")
 
 // README artwork is an explicit cross-repository integration check. Keep it out of the normal

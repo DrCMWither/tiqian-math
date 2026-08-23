@@ -69,11 +69,11 @@ jobs:
           stix_layout="$output/stix-regular-layout.otf"
           stix_runtime="$output/stix-regular-runtime.otf"
           python3 "$script" \
-            font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Regular.otf \
+            engine/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Regular.otf \
             "$lete_regular_layout" \
             "$lete_regular_runtime"
           python3 "$script" \
-            font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Bold.otf \
+            engine/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Bold.otf \
             "$lete_bold_layout" \
             "$lete_bold_runtime"
           python3 "$script" \
@@ -102,13 +102,10 @@ jobs:
       - name: Verify platform-independent tests and release artifacts
         run: |
           ./gradlew \
-            :core:allTests \
-            :parser:allTests \
-            :font:opentype:allTests \
+            :engine:allTests \
             :font:stix:allTests \
             :font:tooling:test \
             :font:gradle-plugin:test \
-            :layout:allTests \
             :font:metadata-generator:test \
             :scanner:test \
             assemble \
@@ -118,7 +115,7 @@ jobs:
             --no-daemon
 
       - name: Upload Tiqian Math modules
-        run: ./gradlew publishMathComposeToCentral -PtiqianCompiledMathResources=true --no-daemon
+        run: ./gradlew publishMathToCentral -PtiqianCompiledMathResources=true --no-daemon
 
       - name: Create Central Portal deployment
         env:

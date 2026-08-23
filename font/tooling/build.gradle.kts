@@ -2,7 +2,7 @@ plugins {
     kotlin("jvm")
 }
 dependencies {
-    api(project(":font:opentype"))
+    api(project(":engine"))
     testImplementation(kotlin("test"))
 }
 

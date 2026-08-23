@@ -51,6 +51,6 @@ jobs:
           disable-animations: true
           script: >-
             ./gradlew
-            :font:android:connectedDebugAndroidTest
-            :frontend:math-compose:connectedAndroidDeviceTest
+            :platforms:android:font:connectedDebugAndroidTest
+            :platforms:compose:compose:connectedAndroidDeviceTest
             --no-daemon

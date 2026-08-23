@@ -28,16 +28,18 @@ data class PublishedModule(
 )
 
 val publishedModules = mapOf(
-    ":core" to PublishedModule("math-core", "Tiqian Math Core", "Core expression and style data types for the Tiqian math engine."),
-    ":parser" to PublishedModule("math-parser", "Tiqian Math Parser", "TeX math parser for the Tiqian math engine."),
-    ":font:opentype" to PublishedModule("math-font-opentype", "Tiqian Math OpenType", "OpenType MATH table model and reader for the Tiqian math engine."),
+    ":engine" to PublishedModule(
+        "math-engine",
+        "Tiqian Math Engine",
+        "The Tiqian math engine: expression and style data types, the TeX math parser, the " +
+            "OpenType MATH table model and reader, and the OpenType MATH layout engine.",
+    ),
     ":font:stix" to PublishedModule("math-font-stix", "Tiqian Math STIX", "Optional prebaked STIX Two Math font family."),
     ":font:tooling" to PublishedModule("math-font-tooling", "Tiqian Math Font Tooling", "Build-time OpenType MATH metadata tooling."),
     ":font:gradle-plugin" to PublishedModule("math-gradle-plugin", "Tiqian Math Gradle Plugin", "Prebakes host-selected OpenType MATH fonts during application builds."),
-    ":font:android" to PublishedModule("math-font-android", "Tiqian Math Android Font", "Native Android OpenType MATH font backend."),
-    ":font:skia" to PublishedModule("math-font-skia", "Tiqian Math Skia Font", "Skia OpenType MATH font backend."),
-    ":layout" to PublishedModule("math-layout", "Tiqian Math Layout", "OpenType MATH layout engine."),
-    ":frontend:math-compose" to PublishedModule("math-compose", "Tiqian Math Compose", "Compose frontend for the Tiqian math engine."),
+    ":platforms:android:font" to PublishedModule("math-android-font", "Tiqian Math Android Font", "Native Android OpenType MATH font backend."),
+    ":platforms:jvm:skia" to PublishedModule("math-jvm-skia", "Tiqian Math Skia Font", "Skia OpenType MATH font backend."),
+    ":platforms:compose:compose" to PublishedModule("math-compose", "Tiqian Math Compose", "Compose frontend for the Tiqian math engine."),
 )
 
 fun Project.configureMavenPublishing(module: PublishedModule) {
@@ -49,6 +51,18 @@ fun Project.configureMavenPublishing(module: PublishedModule) {
             maven {
                 name = "central"
                 url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
+                credentials {
+                    username = providers.gradleProperty("mavenCentralUsername")
+                        .orElse(providers.environmentVariable("MAVEN_CENTRAL_USERNAME"))
+                        .orNull
+                    password = providers.gradleProperty("mavenCentralPassword")
+                        .orElse(providers.environmentVariable("MAVEN_CENTRAL_PASSWORD"))
+                        .orNull
+                }
+            }
+            maven {
+                name = "centralSnapshots"
+                url = uri("https://central.sonatype.com/repository/maven-snapshots/")
                 credentials {
                     username = providers.gradleProperty("mavenCentralUsername")
                         .orElse(providers.environmentVariable("MAVEN_CENTRAL_USERNAME"))
@@ -203,8 +217,14 @@ tasks.register("publishMathComposeToMavenLocal") {
     dependsOn(publishedModules.keys.map { "$it:publishToMavenLocal" })
 }
 
-tasks.register("publishMathComposeToCentral") {
+tasks.register("publishMathToCentral") {
     group = "publishing"
     description = "Uploads every public Tiqian Math module to the Central Portal staging API."
     dependsOn(publishedModules.keys.map { "$it:publishAllPublicationsToCentralRepository" })
+}
+
+tasks.register("publishMathToCentralSnapshots") {
+    group = "publishing"
+    description = "Uploads every public Tiqian Math module to the Central Portal SNAPSHOT repository."
+    dependsOn(publishedModules.keys.map { "$it:publishAllPublicationsToCentralSnapshotsRepository" })
 }

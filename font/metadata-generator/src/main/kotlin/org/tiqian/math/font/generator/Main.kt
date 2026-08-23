@@ -19,8 +19,8 @@ fun main(args: Array<String>) {
     require(args.size in 1..2) { "Usage: metadata-generator <tiqian-math repository root> [--verify]" }
     val verifyOnly = args.getOrNull(1)?.also { require(it == "--verify") } != null
     val root = Path.of(args.first()).toAbsolutePath().normalize()
-    val jvmFonts = root.resolve("font/opentype/src/jvmMain/resources/org/tiqian/math/fonts")
-    val androidFonts = root.resolve("font/android/src/main/assets/org/tiqian/math/fonts")
+    val jvmFonts = root.resolve("engine/src/jvmMain/resources/org/tiqian/math/fonts")
+    val androidFonts = root.resolve("platforms/android/font/src/main/assets/org/tiqian/math/fonts")
     val faces = listOf(
         BundledFace(LeteSansMathPrebakedData.RegularFileStem, LeteSansMathPrebakedData.RegularSourceSha256),
         BundledFace(LeteSansMathPrebakedData.BoldFileStem, LeteSansMathPrebakedData.BoldSourceSha256),

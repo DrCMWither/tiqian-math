@@ -22,7 +22,7 @@ android {
 }
 
 dependencies {
-    implementation(project(":frontend:math-compose"))
+    implementation(project(":platforms:compose:compose"))
     implementation("androidx.activity:activity-compose:1.11.0")
     implementation("org.jetbrains.compose.material3:material3:1.9.0")
 }
