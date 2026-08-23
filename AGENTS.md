@@ -1,7 +1,11 @@
 # AGENTS.md
 
-tiqian-math 是提椠（Tiqian）套件的数学排版层：TeX 子集解析（`parser`）、
-OpenType MATH 布局（`layout`、`font/*`）与 Compose 呈现（`frontend/compose`）。
+tiqian-math 是提椠（Tiqian）套件的数学排版层：TeX 子集解析、OpenType MATH 表模型与布局
+合并进单一 `engine` 模块（artifactId `math-engine`），平台后端按宿主分组在
+`platforms/jvm/skia`（`math-jvm-skia`）、`platforms/android/font`（`math-android-font`），
+Compose 呈现在 `platforms/compose/compose`（`math-compose`）。字体工具与可选字体保留在
+`font/{tooling,gradle-plugin,metadata-generator,stix}`。合并与重组的取舍见
+[docs/adr/0002-engine-merge-and-platform-reorg.md](docs/adr/0002-engine-merge-and-platform-reorg.md)。
 套件级的事实来源与完整约束见主仓库 [tiqian/AGENTS.md](../tiqian/AGENTS.md)。
 布局结果必须可解释、可回放；golden/oracle 测试是行为基准，重构不得引起 diff。
 
@@ -14,6 +18,10 @@ OpenType MATH 布局（`layout`、`font/*`）与 Compose 呈现（`frontend/comp
 所有 Android Gradle 任务需要 `ANDROID_HOME`。本地联调经
 `../tiqian-markdown/scripts/enable-local-suite.sh` 发布 SNAPSHOT 到 mavenLocal；
 单独发布用 `./gradlew publishMathComposeToMavenLocal -PtiqianVersion=<ver>-SNAPSHOT`。
+
+正式版走 Central staging（`publishMathToCentral`）；alpha / 开发版走 Central Portal SNAPSHOT
+通道（`publishMathToCentralSnapshots`，端点 `central.sonatype.com/repository/maven-snapshots/`，
+凭证同 staging）。配额取舍见 [docs/adr/0002-engine-merge-and-platform-reorg.md](docs/adr/0002-engine-merge-and-platform-reorg.md)。
 
 ## 代码组织
 

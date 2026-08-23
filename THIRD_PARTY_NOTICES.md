@@ -2,8 +2,8 @@
 
 ## Lete Sans Math
 
-`font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Regular.otf` and
-`font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Bold.otf`
+`engine/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Regular.otf` and
+`engine/src/jvmMain/resources/org/tiqian/math/fonts/LeteSansMath-Bold.otf`
 are Lete Sans Math v0.61, copyright its upstream contributors and distributed
 under the SIL Open Font License 1.1.
 
@@ -11,7 +11,7 @@ under the SIL Open Font License 1.1.
 - Upstream revision: `9b4e62d8ad0a8cb9fe4c84f97b0589bf972620c4` (`v0.61`)
 - Regular SHA-256: `ead643895be03f42f6fa201fb1176323f60dd330d4109387bac90bdf980fcf3e`
 - Bold SHA-256: `a521f128db0821a9943e4f703103204d8982aeb39c933e12344c43e9d3b0907a`
-- Complete license: `font/opentype/src/jvmMain/resources/org/tiqian/math/fonts/OFL.txt`
+- Complete license: `engine/src/jvmMain/resources/org/tiqian/math/fonts/OFL.txt`
 
 No parser, AST, layout, or renderer source code is copied from the migration
 backends used for comparison.
