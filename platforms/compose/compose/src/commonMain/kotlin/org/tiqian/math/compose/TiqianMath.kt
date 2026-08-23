@@ -308,6 +308,8 @@ fun TiqianMath(
     authorColorAdapter: MathAuthorColorAdapter? = null,
     /** Effective page color behind the formula; required for author color adaptation. */
     authorColorBackdrop: Color = Color.Unspecified,
+    /** Paints `\tag` equation labels; unspecified inherits the formula color. */
+    displayEquationTagColor: Color = Color.Unspecified,
     onMathLayout: (MathLayoutResult) -> Unit = {},
     onMathError: (MathFormulaCapabilityResult.FallbackRequired) -> Unit = {},
 ) {
@@ -344,6 +346,7 @@ fun TiqianMath(
             softWrap = softWrap,
             displayScrollState = displayScrollState,
             displayHorizontalInsetPx = displayInsetPx,
+            displayEquationTagColor = displayEquationTagColor,
             onMathLayout = onMathLayout,
             fallback = { failure ->
                 LaunchedEffect(failure) { onMathError(failure) }
@@ -520,6 +523,7 @@ private fun FormulaCapabilityContent(
     fallback: (@Composable (MathFormulaCapabilityResult.FallbackRequired) -> Unit)?,
     displayScrollState: ScrollState? = null,
     displayHorizontalInsetPx: Float = 0f,
+    displayEquationTagColor: Color = Color.Unspecified,
 ) {
     when (val capability = resolved.capability) {
         is MathFormulaCapabilityResult.Ready -> ReadyTiqianMath(
@@ -527,6 +531,7 @@ private fun FormulaCapabilityContent(
             modifier,
             resolved.requestedLineHeightPx,
             resolved.color,
+            displayEquationTagColor,
             softWrap,
             resolved.face,
             resolved.textRunProvider,
@@ -707,6 +712,7 @@ private fun ReadyTiqianMath(
     modifier: Modifier,
     requestedLineHeightPx: Float?,
     color: Color,
+    displayEquationTagColor: Color,
     softWrap: Boolean,
     face: MathComposeFontFace,
     textRunProvider: MathTextRunProvider?,
@@ -724,6 +730,7 @@ private fun ReadyTiqianMath(
                 result = result,
                 requestedLineHeightPx = requestedLineHeightPx,
                 color = color,
+                tagColor = displayEquationTagColor,
                 face = face,
                 textRunProvider = textRunProvider,
                 scrollState = resolvedDisplayScrollState,

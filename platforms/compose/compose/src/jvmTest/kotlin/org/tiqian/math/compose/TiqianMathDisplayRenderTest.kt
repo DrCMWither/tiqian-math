@@ -105,6 +105,48 @@ class TiqianMathDisplayRenderTest {
     }
 
     @Test
+    fun equationTagPaintsInItsOwnSecondaryColorWhileTheBodyKeepsTheFormulaColor() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            SkiaMathTextRunProvider.fromBytes(
+                MathFaceId("compose-equation-tag-color-text"),
+                LeteSansMath.loadBytes(),
+            ).use { text ->
+                ImageComposeScene(width = 440, height = 140, density = Density(1f)) {
+                    Box(Modifier.fillMaxSize().background(Color.White)) {
+                        TiqianMath(
+                            source = "x+y\\tag{1}",
+                            modifier = Modifier.width(400.dp),
+                            mode = MathMode.Display,
+                            fontSizePx = 32f,
+                            color = Color.Black,
+                            fontFace = face,
+                            textRunProvider = text,
+                            softWrap = false,
+                            displayEquationTagColor = Color.Red,
+                        )
+                    }
+                }.use { scene ->
+                    val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                    val redInk = { x: Int, y: Int ->
+                        pixels[x, y].let { it.red > 0.6f && it.green < 0.4f && it.blue < 0.4f }
+                    }
+                    val darkInk = { x: Int, y: Int ->
+                        pixels[x, y].let { it.red < 0.4f && it.green < 0.4f && it.blue < 0.4f }
+                    }
+                    val tagBandRed = (330 until 440).any { x -> (0 until pixels.height).any { y -> redInk(x, y) } }
+                    val tagBandDark = (330 until 440).any { x -> (0 until pixels.height).any { y -> darkInk(x, y) } }
+                    val bodyBandDark = (0 until 300).any { x -> (0 until pixels.height).any { y -> darkInk(x, y) } }
+                    val bodyBandRed = (0 until 300).any { x -> (0 until pixels.height).any { y -> redInk(x, y) } }
+                    assertTrue(tagBandRed, "the equation tag must paint in the tag color")
+                    assertTrue(!tagBandDark, "no formula-colored ink may remain in the tag band")
+                    assertTrue(bodyBandDark, "the body must keep the formula color")
+                    assertTrue(!bodyBandRed, "the tag color must not leak into the body")
+                }
+            }
+        }
+    }
+
+    @Test
     fun overfullDisplayEquationMovesItsTagBelowBeforeComposeReplay() {
         var observed: MathLayoutResult? = null
         SkiaMathFontFace(LeteSansMath.load()).use { face ->

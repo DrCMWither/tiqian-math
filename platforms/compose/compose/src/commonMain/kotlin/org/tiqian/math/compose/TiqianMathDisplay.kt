@@ -104,6 +104,8 @@ internal fun TaggedDisplayTiqianMath(
     result: MathLayoutResult,
     requestedLineHeightPx: Float?,
     color: Color,
+    /** Equation tags are navigation labels, not formula content; unspecified inherits [color]. */
+    tagColor: Color,
     face: MathComposeFontFace,
     textRunProvider: MathTextRunProvider?,
     scrollState: ScrollState,
@@ -133,6 +135,9 @@ internal fun TaggedDisplayTiqianMath(
         firstBaseline = whole.firstBaseline,
     )
     val bodyPlan = rawBodyPlan.insetHorizontally(horizontalInsetPx)
+    // The tag is a navigation label and may carry its own secondary color; pinned clauses are
+    // formula content and always keep the formula color, so the two anchor layers paint apart.
+    val overlayWidth = replay.viewportWidthPx + horizontalInsetPx * 2f
     val tagPlan = RenderPlan(
         boxes = replay.tags.map { tag ->
             PositionedBox(
@@ -140,19 +145,29 @@ internal fun TaggedDisplayTiqianMath(
                 x = horizontalInsetPx + tag.logicalX,
                 baselineFromTop = whole.firstBaseline + tag.baselineY,
             )
-        } + replay.pinnedClauses.map { clause ->
-            // PinnedClauseLikeTag: the clause anchors to the viewport with the tag while the
-            // body scrolls beneath it.
-            PositionedBox(
-                box = clause.box,
-                x = horizontalInsetPx + clause.logicalX,
-                baselineFromTop = whole.firstBaseline + clause.baselineY,
-            )
         },
-        width = replay.viewportWidthPx + horizontalInsetPx * 2f,
+        width = overlayWidth,
         height = whole.height,
         firstBaseline = whole.firstBaseline,
     )
+    val pinnedClausePlan = if (replay.pinnedClauses.isEmpty()) {
+        null
+    } else {
+        RenderPlan(
+            boxes = replay.pinnedClauses.map { clause ->
+                // PinnedClauseLikeTag: the clause anchors to the viewport with the tag while the
+                // body scrolls beneath it.
+                PositionedBox(
+                    box = clause.box,
+                    x = horizontalInsetPx + clause.logicalX,
+                    baselineFromTop = whole.firstBaseline + clause.baselineY,
+                )
+            },
+            width = overlayWidth,
+            height = whole.height,
+            firstBaseline = whole.firstBaseline,
+        )
+    }
     // NoScrollForSubpixelExcess: see ScrollableDisplayTiqianMath.
     val bodyFits = rawVisualLeft >= -PhantomScrollTolerancePx &&
         rawVisualRight <= replay.viewportWidthPx + PhantomScrollTolerancePx
@@ -161,29 +176,32 @@ internal fun TaggedDisplayTiqianMath(
     } else {
         bodyPlan
     }
+    val resolvedTagColor = if (tagColor == Color.Unspecified) color else tagColor
     Layout(
         modifier = modifier,
         content = {
             Box(Modifier.horizontalScroll(scrollState)) {
                 FixedTiqianMathPlan(boundedBodyPlan, Modifier, color, face, textRunProvider)
             }
-            FixedTiqianMathPlan(tagPlan, Modifier, color, face, textRunProvider)
+            FixedTiqianMathPlan(tagPlan, Modifier, resolvedTagColor, face, textRunProvider)
+            if (pinnedClausePlan != null) {
+                FixedTiqianMathPlan(pinnedClausePlan, Modifier, color, face, textRunProvider)
+            }
         },
     ) { measurables, constraints ->
-        val width = ceil(replay.viewportWidthPx + horizontalInsetPx * 2f)
+        val width = ceil(overlayWidth)
             .toInt().coerceIn(constraints.minWidth, constraints.maxWidth)
         val height = ceil(whole.height).toInt().coerceIn(constraints.minHeight, constraints.maxHeight)
-        val bodyWidth = ceil(replay.viewportWidthPx + horizontalInsetPx * 2f)
-            .toInt().coerceIn(0, width)
+        val bodyWidth = ceil(overlayWidth).toInt().coerceIn(0, width)
         val body = measurables[0].measure(Constraints.fixed(bodyWidth, height))
-        val tag = measurables[1].measure(Constraints.fixed(width, height))
+        val overlays = measurables.drop(1).map { it.measure(Constraints.fixed(width, height)) }
         layout(
             width,
             height,
             alignmentLines = mapOf(FirstBaseline to whole.firstBaseline.toInt()),
         ) {
             body.place(0, 0)
-            tag.place(0, 0)
+            overlays.forEach { it.place(0, 0) }
         }
     }
 }
