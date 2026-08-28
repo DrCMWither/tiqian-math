@@ -23,10 +23,14 @@ import org.tiqian.math.layout.MathLayoutPass.Companion.CANCEL_TALL_WIDTH_FACTORS
 import org.tiqian.math.layout.MathLayoutPass.Companion.CANCEL_WIDE_SLOPES
 import org.tiqian.math.layout.MathLayoutPass.Companion.CENTIMETERS_PER_INCH
 import org.tiqian.math.layout.MathLayoutPass.Companion.CSS_PIXELS_PER_INCH
+import org.tiqian.math.layout.MathLayoutPass.Companion.DEFAULT_CANCEL_LINE_EXTENSION_PT
+import org.tiqian.math.layout.MathLayoutPass.Companion.DEFAULT_CANCEL_MINIMUM_TOTAL_HEIGHT_PT
+import org.tiqian.math.layout.MathLayoutPass.Companion.DEFAULT_CANCEL_MINIMUM_WIDTH_PT
+import org.tiqian.math.layout.MathLayoutPass.Companion.DEFAULT_CANCEL_TALL_MINIMUM_HEIGHT_PT
+import org.tiqian.math.layout.MathLayoutPass.Companion.DEFAULT_CANCEL_WIDE_MINIMUM_WIDTH_PT
 import org.tiqian.math.layout.MathLayoutPass.Companion.MILLIMETERS_PER_INCH
 import org.tiqian.math.layout.MathLayoutPass.Companion.NEGATED_RELATION_SCALARS
 import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_MU_PER_EM
-import org.tiqian.math.layout.MathLayoutPass.Companion.TEX_POINT_TO_PX
 import org.tiqian.math.layout.MathLayoutPass.AccentAttachmentEvidence
 import org.tiqian.math.layout.MathLayoutPass.CancelStrokeGeometry
 import org.tiqian.math.layout.MathLayoutPass.LaidNode
@@ -399,12 +403,21 @@ internal fun MathLayoutPass.layoutCancel(
         "slope" to "${geometry.slopeX}:${geometry.slopeY}",
         "lineHorizontalExtentPx" to (geometry.endX - geometry.startX),
         "lineVerticalExtentPx" to (geometry.startY - geometry.endY),
-        "lineThicknessPx" to cancelLineThicknessPx,
+        "cancelLineThicknessPx" to cancelLineThicknessPx,
+        "cancelPicturePointPx" to cancelPicturePointPx,
+        "cancelMinimumWidthPx" to (DEFAULT_CANCEL_MINIMUM_WIDTH_PT * cancelPicturePointPx),
+        "cancelMinimumTotalHeightPx" to (DEFAULT_CANCEL_MINIMUM_TOTAL_HEIGHT_PT * cancelPicturePointPx),
+        "cancelWideMinimumWidthPx" to (DEFAULT_CANCEL_WIDE_MINIMUM_WIDTH_PT * cancelPicturePointPx),
+        "cancelTallMinimumHeightPx" to (DEFAULT_CANCEL_TALL_MINIMUM_HEIGHT_PT * cancelPicturePointPx),
+        "cancelLineExtensionPx" to (DEFAULT_CANCEL_LINE_EXTENSION_PT * cancelPicturePointPx),
+        "classificationWidthPx" to geometry.classificationWidth,
+        "classificationTotalHeightPx" to geometry.classificationHeight,
         "logicalWidthPx" to box.width,
         "logicalAscentPx" to box.ascent,
         "logicalDescentPx" to box.descent,
         "horizontalRoomPolicy" to "CancelPackageDefaultOverlapKeepsArgumentAdvance",
-        "geometryPolicy" to "CancelSty2.2QuantizedPictureSlopeAndTwoPointExtension",
+        "absoluteDimensionPolicy" to "MathLayoutOptionsResolvedPixels",
+        "geometryPolicy" to "CancelSty2.2QuantizedPictureSlopeWithResolvedAbsoluteDimensions",
     )
     return LaidNode(
         node,
@@ -418,25 +431,31 @@ internal fun MathLayoutPass.layoutCancel(
 
 private fun MathLayoutPass.cancelStrokeGeometry(width: Float, ascent: Float, descent: Float): CancelStrokeGeometry {
     val totalHeight = ascent + descent
-    val twoPoint = 2f * TEX_POINT_TO_PX
+    val minimumWidth = DEFAULT_CANCEL_MINIMUM_WIDTH_PT * cancelPicturePointPx
+    val minimumTotalHeight = DEFAULT_CANCEL_MINIMUM_TOTAL_HEIGHT_PT * cancelPicturePointPx
+    val wideMinimumWidth = DEFAULT_CANCEL_WIDE_MINIMUM_WIDTH_PT * cancelPicturePointPx
+    val tallMinimumHeight = DEFAULT_CANCEL_TALL_MINIMUM_HEIGHT_PT * cancelPicturePointPx
+    val lineExtension = DEFAULT_CANCEL_LINE_EXTENSION_PT * cancelPicturePointPx
+    val classificationWidth = max(width, minimumWidth)
+    val classificationHeight = max(totalHeight, minimumTotalHeight)
     val centerX = width / 2f
     val centerY = (descent - ascent) / 2f
     val shapeClass: String
     val slopeX: Int
     val slopeY: Int
     val horizontalExtent: Float
-    if (totalHeight < width) {
+    if (classificationHeight < classificationWidth) {
         shapeClass = "Wide"
-        val preExtensionWidth = max(width, 2f * totalHeight)
-        val slopeCase = floor(totalHeight * 5f / preExtensionWidth).toInt().coerceIn(0, 4)
+        val preExtensionWidth = max(classificationWidth, wideMinimumWidth)
+        val slopeCase = floor(classificationHeight * 5f / preExtensionWidth).toInt().coerceIn(0, 4)
         val slope = CANCEL_WIDE_SLOPES[slopeCase]
         slopeX = slope.first
         slopeY = slope.second
-        horizontalExtent = preExtensionWidth + twoPoint
+        horizontalExtent = preExtensionWidth + lineExtension
     } else {
         shapeClass = "Tall"
-        val extendedHeight = max(totalHeight, 8f * TEX_POINT_TO_PX) + twoPoint
-        val slopeCase = floor(width * 5f / extendedHeight).toInt().coerceIn(0, 4)
+        val extendedHeight = max(classificationHeight, tallMinimumHeight) + lineExtension
+        val slopeCase = floor(classificationWidth * 5f / extendedHeight).toInt().coerceIn(0, 4)
         val slope = CANCEL_TALL_SLOPES[slopeCase]
         slopeX = slope.first
         slopeY = slope.second
@@ -452,6 +471,8 @@ private fun MathLayoutPass.cancelStrokeGeometry(width: Float, ascent: Float, des
         slopeX = slopeX,
         slopeY = slopeY,
         shapeClass = shapeClass,
+        classificationWidth = classificationWidth,
+        classificationHeight = classificationHeight,
     )
 }
 

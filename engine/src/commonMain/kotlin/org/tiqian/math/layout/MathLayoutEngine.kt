@@ -55,6 +55,8 @@ data class MathLayoutOptions(
     val displayWidthPx: Float? = null,
     /** Whether a completed display equation may break at the engine's legal math breakpoints. */
     val softWrapDisplay: Boolean = false,
+    /** Pixel length of cancel.sty's 1pt picture unit; null is 96/72.27. */
+    val cancelPicturePointPx: Float? = null,
 ) {
     init {
         require(fontSizePx > 0f) { "math font size must be positive" }
@@ -85,6 +87,9 @@ data class MathLayoutOptions(
         }
         require(displayWidthPx == null || displayWidthPx > 0f) {
             "display width must be positive"
+        }
+        require(cancelPicturePointPx == null || cancelPicturePointPx.isFinite() && cancelPicturePointPx > 0f) {
+            "cancel picture point size must be finite and positive"
         }
     }
 }
@@ -148,6 +153,7 @@ internal class MathLayoutPass(
     internal var fboxSeparationPx: Float = DEFAULT_FBOX_SEPARATION_PT * TEX_POINT_TO_PX
     internal var fboxRuleThicknessPx: Float = DEFAULT_FBOX_RULE_THICKNESS_PT * TEX_POINT_TO_PX
     internal var arrayRuleThicknessPx: Float = DEFAULT_ARRAY_RULE_THICKNESS_PT * TEX_POINT_TO_PX
+    internal var cancelPicturePointPx: Float = TEX_POINT_TO_PX
     internal var cancelLineThicknessPx: Float = DEFAULT_CANCEL_LINE_THICKNESS_PT * TEX_POINT_TO_PX
     internal var formulaMode: MathMode = MathMode.Inline
     internal var displayWidthPx: Float? = null
@@ -279,6 +285,7 @@ internal class MathLayoutPass(
         fboxRuleThicknessPx = options.fboxRuleThicknessPx ?: DEFAULT_FBOX_RULE_THICKNESS_PT * TEX_POINT_TO_PX
         arrayRuleThicknessPx = options.arrayRuleThicknessPx ?: DEFAULT_ARRAY_RULE_THICKNESS_PT * TEX_POINT_TO_PX
         cancelLineThicknessPx = options.cancelLineThicknessPx ?: DEFAULT_CANCEL_LINE_THICKNESS_PT * TEX_POINT_TO_PX
+        cancelPicturePointPx = options.cancelPicturePointPx ?: TEX_POINT_TO_PX
         diagnostics += parsed.diagnostics
         val initialStyle = options.initialStyle ?: MathStyle.initial(options.mode)
         val breakableRoot = unwrapWholeFormulaGroups(parsed.root)
@@ -924,6 +931,8 @@ internal class MathLayoutPass(
         val slopeX: Int,
         val slopeY: Int,
         val shapeClass: String,
+        val classificationWidth: Float,
+        val classificationHeight: Float,
     )
 
     internal data class OperatorLimitsSemantics(
@@ -965,6 +974,11 @@ internal class MathLayoutPass(
         const val DEFAULT_FBOX_RULE_THICKNESS_PT = 0.4f
         const val DEFAULT_ARRAY_RULE_THICKNESS_PT = 0.4f
         const val DEFAULT_CANCEL_LINE_THICKNESS_PT = 0.4f
+        const val DEFAULT_CANCEL_MINIMUM_WIDTH_PT = 2f
+        const val DEFAULT_CANCEL_MINIMUM_TOTAL_HEIGHT_PT = 6f
+        const val DEFAULT_CANCEL_WIDE_MINIMUM_WIDTH_PT = 8f
+        const val DEFAULT_CANCEL_TALL_MINIMUM_HEIGHT_PT = 8f
+        const val DEFAULT_CANCEL_LINE_EXTENSION_PT = 2f
         const val BIG_POINT_TO_PX = CSS_PIXELS_PER_INCH / BIG_POINTS_PER_INCH
 
         val CANCEL_WIDE_SLOPES = listOf(6 to 1, 4 to 1, 2 to 1, 4 to 3, 1 to 1)

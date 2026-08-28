@@ -1,6 +1,7 @@
 package org.tiqian.math.font.skia
 
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -329,14 +330,38 @@ class TectonicRemainingCommandsOracleTest {
     }
 
     @Test
-    fun cancelUsesThePackageSlopeTableAndKeepsTheArgumentAdvance() = withFaces { oracle, engine ->
+    fun cancelUsesThePackageDimensionFloorsSlopeTableAndKeepsTheArgumentAdvance() = withFaces { oracle, engine ->
         val bare = engine.layout("x+1", options())
         val cancel = engine.layout("\\cancel{x+1}", options())
         assertNear(bare.box.width, cancel.box.width, "${oracle.label} cancel logical advance")
         val rule = cancel.box.rules.single { it.paintRole == MathRulePaintRole.Cancellation }
         val line = assertNotNull(rule.lineSegment)
         assertNear(DEFAULT_RULE_PX, line.thickness, "${oracle.label} cancel thinlines")
-        assertEquals("Wide", cancel.decisions.single { it.name == "LatexCancelStroke" }.details["shapeClass"])
+        val decision = cancel.decisions.single { it.name == "LatexCancelStroke" }
+        assertEquals("Wide", decision.details["shapeClass"])
+        val classificationWidth = max(
+            decision.details.getValue("contentWidthPx").toFloat(),
+            2f * TEX_PT_TO_PX,
+        )
+        val classificationHeight = max(
+            decision.details.getValue("contentTotalHeightPx").toFloat(),
+            6f * TEX_PT_TO_PX,
+        )
+        assertNear(
+            classificationWidth,
+            decision.details.getValue("classificationWidthPx").toFloat(),
+            "${oracle.label} cancel classification width",
+        )
+        assertNear(
+            classificationHeight,
+            decision.details.getValue("classificationTotalHeightPx").toFloat(),
+            "${oracle.label} cancel classification height",
+        )
+        assertNear(
+            max(classificationWidth, 8f * TEX_PT_TO_PX) + 2f * TEX_PT_TO_PX,
+            decision.details.getValue("lineHorizontalExtentPx").toFloat(),
+            "${oracle.label} cancel wide picture extent",
+        )
         assertTrue(
             line.startX < 0f && line.endX > bare.box.width,
             "${oracle.label} line=${line.startX},${line.startY} -> ${line.endX},${line.endY} width=${bare.box.width}",
@@ -344,6 +369,173 @@ class TectonicRemainingCommandsOracleTest {
         assertTrue(line.startY > line.endY, "${oracle.label} line=$line")
         assertTrue(cancel.box.ascent >= -rule.top && cancel.box.descent >= rule.bottom, oracle.label)
         assertTrue(cancel.diagnostics.isEmpty(), "${oracle.label}: ${cancel.diagnostics}")
+    }
+
+    @Test
+    fun cancelUsesResolvedTeXPointForEveryPackagePictureDimension() = withFaces { oracle, engine ->
+        val densityOneOptions = options().copy(
+            fontSizePx = 4f,
+            cancelPicturePointPx = TEX_PT_TO_PX,
+        )
+        val densityOneBare = engine.layout("1", densityOneOptions)
+        val densityOne = engine.layout(
+            "\\cancel{1}",
+            densityOneOptions,
+        )
+        val scaledPoint = engine.layout(
+            "\\cancel{1}",
+            options().copy(
+                fontSizePx = 4f,
+                cancelPicturePointPx = 10f * TEX_PT_TO_PX,
+            ),
+        )
+        val wideFloorOptions = options().copy(
+            fontSizePx = 2f,
+            cancelPicturePointPx = TEX_PT_TO_PX,
+        )
+        val minimumHeightBare = engine.layout("1111", wideFloorOptions)
+        val minimumHeight = engine.layout("\\cancel{1111}", wideFloorOptions)
+        val wideFloorBare = engine.layout("111111111", wideFloorOptions)
+        val wideFloor = engine.layout("\\cancel{111111111}", wideFloorOptions)
+        fun MathLayoutResult.strokeDecision() = decisions.single { it.name == "LatexCancelStroke" }
+        fun MathLayoutResult.strokeLine() = assertNotNull(
+            box.rules.single { it.paintRole == MathRulePaintRole.Cancellation }.lineSegment,
+        )
+
+        val oneXDecision = densityOne.strokeDecision()
+        val tenXDecision = scaledPoint.strokeDecision()
+        mapOf(
+            "cancelMinimumWidthPx" to 2f,
+            "cancelMinimumTotalHeightPx" to 6f,
+            "cancelWideMinimumWidthPx" to 8f,
+            "cancelTallMinimumHeightPx" to 8f,
+            "cancelLineExtensionPx" to 2f,
+        ).forEach { (field, multiple) ->
+            assertNear(
+                multiple * TEX_PT_TO_PX,
+                oneXDecision.details.getValue(field).toFloat(),
+                "${oracle.label} $field density one",
+            )
+            assertNear(
+                oneXDecision.details.getValue(field).toFloat() * 10f,
+                tenXDecision.details.getValue(field).toFloat(),
+                "${oracle.label} $field scaled TeX point",
+            )
+        }
+        assertTrue(
+            scaledPoint.strokeLine().startY - scaledPoint.strokeLine().endY >
+                densityOne.strokeLine().startY - densityOne.strokeLine().endY,
+            "${oracle.label} resolved TeX point must change placed endpoints",
+        )
+
+        // cancel.sty first clamps the picture classification box to 2pt x 6pt. This fixture is
+        // smaller in both dimensions, so the independent package equation selects the tall 1:4
+        // line with an 8pt + 2pt vertical extent and a 2.5pt horizontal extent. Assert the actual
+        // replayable line and completed box, rather than reading those values back from a decision.
+        val tinyClean = densityOneBare.box.texCleanBoxMetrics
+        assertTrue(densityOneBare.box.width < 2f * TEX_PT_TO_PX, oracle.label)
+        assertTrue(tinyClean.height < 6f * TEX_PT_TO_PX, oracle.label)
+        val tinyHorizontalExtent = 2.5f * TEX_PT_TO_PX
+        val tinyVerticalExtent = 10f * TEX_PT_TO_PX
+        val tinyCenterX = densityOneBare.box.width / 2f
+        val tinyCenterY = (tinyClean.descent - tinyClean.ascent) / 2f
+        val tinyLine = densityOne.strokeLine()
+        assertNear(tinyCenterX - tinyHorizontalExtent / 2f, tinyLine.startX, "${oracle.label} tiny start x")
+        assertNear(tinyCenterY + tinyVerticalExtent / 2f, tinyLine.startY, "${oracle.label} tiny start y")
+        assertNear(tinyCenterX + tinyHorizontalExtent / 2f, tinyLine.endX, "${oracle.label} tiny end x")
+        assertNear(tinyCenterY - tinyVerticalExtent / 2f, tinyLine.endY, "${oracle.label} tiny end y")
+        assertNear(densityOneBare.box.width, densityOne.box.width, "${oracle.label} tiny logical width")
+        assertNear(
+            max(densityOneBare.box.ascent, -tinyLine.endY + tinyLine.thickness / 2f),
+            densityOne.box.ascent,
+            "${oracle.label} tiny completed ascent",
+        )
+        assertNear(
+            max(densityOneBare.box.descent, tinyLine.startY + tinyLine.thickness / 2f),
+            densityOne.box.descent,
+            "${oracle.label} tiny completed descent",
+        )
+
+        // Isolate the 6pt total-height floor: the unmodified content is wider than its ink height,
+        // but narrower than 6pt. cancel.sty therefore reclassifies it as Tall; deleting only the
+        // 6pt clamp would switch this same source to Wide and change both slope and endpoints.
+        val minimumHeightClean = minimumHeightBare.box.texCleanBoxMetrics
+        val minimumHeightWidth = max(minimumHeightBare.box.width, 2f * TEX_PT_TO_PX)
+        assertTrue(minimumHeightClean.height < minimumHeightWidth, oracle.label)
+        assertTrue(minimumHeightWidth < 6f * TEX_PT_TO_PX, oracle.label)
+        val minimumHeightExtended = 10f * TEX_PT_TO_PX
+        val minimumHeightSlopeCase = kotlin.math.floor(
+            minimumHeightWidth * 5f / minimumHeightExtended,
+        ).toInt().coerceIn(0, 4)
+        val minimumHeightSlope = listOf(1 to 6, 1 to 4, 1 to 2, 3 to 4, 1 to 1)[minimumHeightSlopeCase]
+        val minimumHeightFactor = listOf(0.16f, 0.25f, 0.5f, 0.75f, 1f)[minimumHeightSlopeCase]
+        val minimumHeightHorizontalExtent = minimumHeightFactor * minimumHeightExtended
+        val minimumHeightVerticalExtent =
+            minimumHeightHorizontalExtent * minimumHeightSlope.second / minimumHeightSlope.first
+        val minimumHeightCenterX = minimumHeightBare.box.width / 2f
+        val minimumHeightCenterY = (minimumHeightClean.descent - minimumHeightClean.ascent) / 2f
+        val minimumHeightLine = minimumHeight.strokeLine()
+        assertNear(
+            minimumHeightCenterX - minimumHeightHorizontalExtent / 2f,
+            minimumHeightLine.startX,
+            "${oracle.label} 6pt floor start x",
+        )
+        assertNear(
+            minimumHeightCenterY + minimumHeightVerticalExtent / 2f,
+            minimumHeightLine.startY,
+            "${oracle.label} 6pt floor start y",
+        )
+        assertNear(
+            minimumHeightCenterX + minimumHeightHorizontalExtent / 2f,
+            minimumHeightLine.endX,
+            "${oracle.label} 6pt floor end x",
+        )
+        assertNear(
+            minimumHeightCenterY - minimumHeightVerticalExtent / 2f,
+            minimumHeightLine.endY,
+            "${oracle.label} 6pt floor end y",
+        )
+
+        val wideDecision = wideFloor.strokeDecision()
+        assertEquals("Wide", wideDecision.details["shapeClass"], oracle.label)
+        assertTrue(
+            wideDecision.details.getValue("classificationWidthPx").toFloat() < 8f * TEX_PT_TO_PX,
+            "${oracle.label} fixture must exercise cancel.sty's 8pt wide floor",
+        )
+        assertNear(
+            10f * TEX_PT_TO_PX,
+            wideDecision.details.getValue("lineHorizontalExtentPx").toFloat(),
+            "${oracle.label} 8pt wide floor plus 2pt extension",
+        )
+        val wideClean = wideFloorBare.box.texCleanBoxMetrics
+        val wideClassificationWidth = max(wideFloorBare.box.width, 2f * TEX_PT_TO_PX)
+        val wideClassificationHeight = max(wideClean.height, 6f * TEX_PT_TO_PX)
+        assertTrue(wideClassificationWidth < 8f * TEX_PT_TO_PX, oracle.label)
+        assertTrue(wideClassificationHeight < wideClassificationWidth, oracle.label)
+        val wideHorizontalExtent = 10f * TEX_PT_TO_PX
+        val wideSlopeCase = kotlin.math.floor(
+            wideClassificationHeight * 5f / (8f * TEX_PT_TO_PX),
+        ).toInt().coerceIn(0, 4)
+        val wideSlope = listOf(6 to 1, 4 to 1, 2 to 1, 4 to 3, 1 to 1)[wideSlopeCase]
+        val wideVerticalExtent = wideHorizontalExtent * wideSlope.second / wideSlope.first
+        val wideCenterX = wideFloorBare.box.width / 2f
+        val wideCenterY = (wideClean.descent - wideClean.ascent) / 2f
+        val wideLine = wideFloor.strokeLine()
+        assertNear(wideCenterX - wideHorizontalExtent / 2f, wideLine.startX, "${oracle.label} wide start x")
+        assertNear(wideCenterY + wideVerticalExtent / 2f, wideLine.startY, "${oracle.label} wide start y")
+        assertNear(wideCenterX + wideHorizontalExtent / 2f, wideLine.endX, "${oracle.label} wide end x")
+        assertNear(wideCenterY - wideVerticalExtent / 2f, wideLine.endY, "${oracle.label} wide end y")
+        assertNear(wideFloorBare.box.width, wideFloor.box.width, "${oracle.label} wide logical width")
+        assertNear(
+            max(wideFloorBare.box.ascent, -wideLine.endY + wideLine.thickness / 2f),
+            wideFloor.box.ascent,
+            "${oracle.label} wide completed ascent",
+        )
+        assertNear(
+            max(wideFloorBare.box.descent, wideLine.startY + wideLine.thickness / 2f),
+            wideFloor.box.descent,
+            "${oracle.label} wide completed descent",
+        )
     }
 
     @Test
@@ -400,6 +592,7 @@ class TectonicRemainingCommandsOracleTest {
         delimiterShortfallPx = 5f * TEX_PT_TO_PX,
         arrayColumnSeparationPx = 5f * TEX_PT_TO_PX,
         arrayRuleThicknessPx = DEFAULT_RULE_PX,
+        cancelPicturePointPx = TEX_PT_TO_PX,
         cancelLineThicknessPx = DEFAULT_RULE_PX,
     )
 
