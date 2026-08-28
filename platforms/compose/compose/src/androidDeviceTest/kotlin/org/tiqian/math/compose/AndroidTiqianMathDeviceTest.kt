@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlin.test.assertNotNull
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -178,6 +179,66 @@ class AndroidTiqianMathDeviceTest {
     }
 
     @Test
+    fun latexAbsoluteDimensionsUsePhysicalComposeDensity() {
+        var result: MathLayoutResult? = null
+        var expectedFontSizePx = -1f
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(3f, 2f)) {
+                expectedFontSizePx = with(LocalDensity.current) { 16.sp.toPx() }
+                TiqianMath(
+                    source = "\\boxed{\\cancel{x+1}}+\\begin{array}{c}a\\\\\\hline b\\end{array}",
+                    style = TextStyle(fontSize = 16.sp, color = Color.Black),
+                    modifier = Modifier.testTag(CancelFormulaTag),
+                    onMathLayout = { result = it },
+                )
+            }
+        }
+        compose.waitForIdle()
+
+        val layout = assertNotNull(result)
+        val line = assertNotNull(
+            layout.box.rules.single { it.paintRole == MathRulePaintRole.Cancellation }.lineSegment,
+        )
+        assertEquals(0.4f * 96f / 72.27f * 3f, line.thickness, 0.001f)
+        assertEquals(expectedFontSizePx, layout.box.glyphs.first().fontSizePx, 0.001f)
+        val cancelDecision = layout.decisions.single { it.name == "LatexCancelStroke" }
+        assertEquals(
+            line.thickness,
+            cancelDecision.details.getValue("cancelLineThicknessPx").toFloat(),
+            0.001f,
+        )
+        assertEquals(
+            96f / 72.27f * 3f,
+            cancelDecision.details.getValue("cancelPicturePointPx").toFloat(),
+            0.001f,
+        )
+        mapOf(
+            "cancelMinimumWidthPx" to 2f,
+            "cancelMinimumTotalHeightPx" to 6f,
+            "cancelWideMinimumWidthPx" to 8f,
+            "cancelTallMinimumHeightPx" to 8f,
+            "cancelLineExtensionPx" to 2f,
+        ).forEach { (field, points) ->
+            assertEquals(
+                points * 96f / 72.27f * 3f,
+                cancelDecision.details.getValue(field).toFloat(),
+                0.001f,
+                field,
+            )
+        }
+        val boxedDecision = layout.decisions.single { it.name == "AmsmathBoxedNoad" }
+        assertEquals(3f * 96f / 72.27f * 3f, boxedDecision.details.getValue("fboxSeparationPx").toFloat(), 0.001f)
+        assertEquals(0.4f * 96f / 72.27f * 3f, boxedDecision.details.getValue("fboxRuleThicknessPx").toFloat(), 0.001f)
+        assertEquals(
+            0.4f * 96f / 72.27f * 3f,
+            layout.decisions.single { it.name == "TeXMathTable" }
+                .details.getValue("arrayRuleThicknessPx").toFloat(),
+            0.001f,
+        )
+        compose.onNodeWithTag(CancelFormulaTag).assertIsDisplayed()
+    }
+
+    @Test
     fun normalProductionEntryPresentsVisibleDiagnosticForUnsupportedSyntax() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         AndroidMathFontFace.loadLete(context).use { face ->
@@ -256,6 +317,7 @@ class AndroidTiqianMathDeviceTest {
 
 private const val DefaultHostTextFormulaTag = "android-default-host-text-formula"
 private const val FormulaTag = "android-tiqian-math"
+private const val CancelFormulaTag = "android-cancel-density"
 private const val WeightedFormulaTag = "android-weighted-tiqian-math"
 private const val ColorFormulaTag = "android-colored-tiqian-math"
 

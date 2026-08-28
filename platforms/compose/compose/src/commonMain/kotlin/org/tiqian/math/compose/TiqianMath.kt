@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
@@ -63,6 +64,12 @@ fun rememberMathFontFace(fontBytes: ByteArray): MathComposeFontFace =
 fun rememberMathFontFamily(spec: MathFontFamilySpec): MathComposeFontFace =
     rememberPlatformMathFontFamily(spec)
 
+/** Creates a replayable formula preparer from already-loaded resources. */
+fun createTiqianMathFormulaPreparer(
+    fontFace: MathComposeFontFace,
+    textRunProvider: MathTextRunProvider? = null,
+): TiqianMathFormulaPreparer = TiqianMathFormulaPreparer(fontFace, textRunProvider)
+
 /** Stable measured presentation shared by an embedding paragraph and the math canvas. */
 class TiqianMathFormula internal constructor(
     internal val resolved: ResolvedFormulaCapability,
@@ -100,85 +107,6 @@ class TiqianMathFormula internal constructor(
         return TiqianMathPresentationMetrics(plan.width, plan.height, plan.firstBaseline)
     }
 }
-
-/**
- * Prepares replayable formulas outside composition.
- *
- * One instance owns the capability engines derived from one already-loaded math face and host-text
- * provider. Formula preparation is serialized so an instance may be shared by a UI path and one
- * background pre-layout worker; the returned [TiqianMathFormula] can be handed to
- * [TiqianMathFormulaCanvas] without parsing or measuring again.
- */
-class TiqianMathFormulaPreparer internal constructor(
-    private val familyFace: MathComposeFontFace,
-    private val textRunProvider: MathTextRunProvider?,
-) {
-    private val faces = mutableMapOf<MathFontWeight, MathComposeFontFace>()
-    private val engines = mutableMapOf<MathFontWeight, MathFormulaCapabilityEngine>()
-
-    @Synchronized
-    fun prepare(
-        source: String,
-        mode: MathMode = MathMode.Inline,
-        fontSizePx: Float,
-        fontWeight: Int = MathFontWeight.Regular.cssWeight,
-        requestedLineHeightPx: Float? = null,
-        nullDelimiterSpacePx: Float? = null,
-        scriptSpacePx: Float? = null,
-        delimiterFactor: Int = 901,
-        delimiterShortfallPx: Float? = null,
-        color: Color = Color.Black,
-        textLocale: String? = null,
-        displayWidthPx: Float? = null,
-        softWrapDisplay: Boolean = false,
-        authorColorAdapter: MathAuthorColorAdapter? = null,
-        /** Effective page color behind the formula; required for author color adaptation. */
-        authorColorBackdrop: Color = Color.Unspecified,
-    ): TiqianMathFormula {
-        require(fontSizePx.isFinite() && fontSizePx > 0f) { "fontSizePx must be finite and positive" }
-        val requestedWeight = MathFontWeight.nearest(fontWeight)
-        val face = faces.getOrPut(requestedWeight) {
-            familyFace.selectWeight(requestedWeight) as? MathComposeFontFace
-                ?: error("Selected math weight is not Compose-replayable")
-        }
-        val engine = engines.getOrPut(requestedWeight) {
-            platformFormulaCapabilityEngine(face, textRunProvider)
-        }
-        val capability = tiqianMathTraceSection("TiqianMath.evaluate") {
-            engine.evaluate(
-                source,
-                MathLayoutOptions(
-                    mode = mode,
-                    fontSizePx = fontSizePx,
-                    nullDelimiterSpacePx = nullDelimiterSpacePx,
-                    scriptSpacePx = scriptSpacePx,
-                    delimiterFactor = delimiterFactor,
-                    delimiterShortfallPx = delimiterShortfallPx,
-                    textLocale = textLocale,
-                    displayWidthPx = displayWidthPx,
-                    softWrapDisplay = softWrapDisplay,
-                ),
-            )
-        }
-        return TiqianMathFormula(
-            ResolvedFormulaCapability(
-                face = face,
-                textRunProvider = textRunProvider,
-                capability = capability.withAdaptedAuthorColors(authorColorAdapter, authorColorBackdrop, color),
-                requestedLineHeightPx = requestedLineHeightPx,
-                resolvedFontSizePx = fontSizePx,
-                color = color,
-                displayWidthPx = displayWidthPx,
-            ),
-        )
-    }
-}
-
-/** Creates a replayable formula preparer from already-loaded resources. */
-fun createTiqianMathFormulaPreparer(
-    fontFace: MathComposeFontFace,
-    textRunProvider: MathTextRunProvider? = null,
-): TiqianMathFormulaPreparer = TiqianMathFormulaPreparer(fontFace, textRunProvider)
 
 data class TiqianMathPresentationMetrics(
     val widthPx: Float,
@@ -570,7 +498,7 @@ private fun TiqianMathError(
 }
 
 /** AuthorColorAdaptation entry: rewrites Ready evidence once; measurement geometry is untouched. */
-private fun MathFormulaCapabilityResult.withAdaptedAuthorColors(
+internal fun MathFormulaCapabilityResult.withAdaptedAuthorColors(
     adapter: MathAuthorColorAdapter?,
     backdrop: Color,
     formulaColor: Color,
@@ -604,8 +532,36 @@ internal data class ResolvedFormulaCapability(
 private const val InlineInkLeadingEm = 0.05f
 private const val CssPixelsPerInch = 96f
 private const val TeXPointsPerInch = 72.27f
-private const val LatexFboxSeparationAtDensityOne = 3f * CssPixelsPerInch / TeXPointsPerInch
-private const val LatexFboxRuleAtDensityOne = 0.4f * CssPixelsPerInch / TeXPointsPerInch
+private const val TeXPointAtDensityOne = CssPixelsPerInch / TeXPointsPerInch
+
+internal data class ResolvedLatexAbsoluteDimensions(
+    val cancelPicturePointPx: Float,
+    val fboxSeparationPx: Float,
+    val fboxRuleThicknessPx: Float,
+    val arrayRuleThicknessPx: Float,
+    val cancelLineThicknessPx: Float,
+)
+
+internal fun Density.resolveLatexAbsoluteDimensions(): ResolvedLatexAbsoluteDimensions {
+    val pointPx = TeXPointAtDensityOne.dp.toPx()
+    return ResolvedLatexAbsoluteDimensions(
+        cancelPicturePointPx = pointPx,
+        fboxSeparationPx = 3f * pointPx,
+        fboxRuleThicknessPx = 0.4f * pointPx,
+        arrayRuleThicknessPx = 0.4f * pointPx,
+        cancelLineThicknessPx = 0.4f * pointPx,
+    )
+}
+
+internal fun MathLayoutOptions.withLatexAbsoluteDimensions(
+    dimensions: ResolvedLatexAbsoluteDimensions,
+) = copy(
+    fboxSeparationPx = dimensions.fboxSeparationPx,
+    fboxRuleThicknessPx = dimensions.fboxRuleThicknessPx,
+    arrayRuleThicknessPx = dimensions.arrayRuleThicknessPx,
+    cancelLineThicknessPx = dimensions.cancelLineThicknessPx,
+    cancelPicturePointPx = dimensions.cancelPicturePointPx,
+)
 
 @Composable
 private fun rememberResolvedFormulaCapability(
@@ -636,10 +592,9 @@ private fun rememberResolvedFormulaCapability(
     } else {
         null
     }
-    // MathLayoutOptions uses physical pixels. Convert LaTeX's absolute fbox dimensions into the
-    // same density-scaled coordinate system as the surrounding Compose TextStyle.
-    val defaultFboxSeparationPx = with(density) { LatexFboxSeparationAtDensityOne.dp.toPx() }
-    val defaultFboxRuleThicknessPx = with(density) { LatexFboxRuleAtDensityOne.dp.toPx() }
+    // Resolve fbox, array-rule, and cancel lengths once at the Compose boundary. Layout and replay
+    // thereafter operate only in physical pixels, independently of TextStyle fontScale.
+    val absoluteDimensions = density.resolveLatexAbsoluteDimensions()
     val composeTextRunProvider = rememberComposeMathTextRunProvider(style, density)
     val resolvedTextRunProvider = textRunProvider ?: composeTextRunProvider
     val resolvedColor = when {
@@ -666,8 +621,7 @@ private fun rememberResolvedFormulaCapability(
         scriptSpacePx,
         delimiterFactor,
         delimiterShortfallPx,
-        defaultFboxSeparationPx,
-        defaultFboxRuleThicknessPx,
+        absoluteDimensions,
         textLocale,
         displayWidthPx,
         softWrapDisplay,
@@ -683,12 +637,10 @@ private fun rememberResolvedFormulaCapability(
                     scriptSpacePx = scriptSpacePx,
                     delimiterFactor = delimiterFactor,
                     delimiterShortfallPx = delimiterShortfallPx,
-                    fboxSeparationPx = defaultFboxSeparationPx,
-                    fboxRuleThicknessPx = defaultFboxRuleThicknessPx,
                     textLocale = textLocale,
                     displayWidthPx = displayWidthPx,
                     softWrapDisplay = softWrapDisplay,
-                ),
+                ).withLatexAbsoluteDimensions(absoluteDimensions),
             )
         }
     }

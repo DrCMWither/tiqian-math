@@ -69,6 +69,7 @@ class TiqianMathRenderTest {
                 source = "a+b=c",
                 mode = MathMode.Inline,
                 fontSizePx = 24f,
+                density = Density(1f),
             )
             val layout = assertNotNull(formula.layoutResult)
             assertEquals("a+b=c", layout.source)
@@ -86,6 +87,7 @@ class TiqianMathRenderTest {
                     source = source,
                     mode = MathMode.Inline,
                     fontSizePx = 24f,
+                    density = Density(1f),
                 ).layoutResult,
             )
 
@@ -95,6 +97,118 @@ class TiqianMathRenderTest {
             assertEquals(
                 SourceRange(source.indexOf(operator), source.indexOf(operator) + operator.length),
                 operatorFragment.sourceRange,
+            )
+        }
+    }
+
+    @Test
+    fun formulaPreparerUsesCallerDensityForLatexAbsoluteDimensions() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            val preparer = createTiqianMathFormulaPreparer(face)
+            val source = "\\boxed{\\cancel{x+1}}+\\begin{array}{c}a\\\\\\hline b\\end{array}"
+            val oneX = assertNotNull(
+                preparer.prepare(
+                    source = source,
+                    fontSizePx = 48f,
+                    density = Density(1f),
+                ).layoutResult,
+            )
+            val threeX = assertNotNull(
+                preparer.prepare(
+                    source = source,
+                    fontSizePx = 48f,
+                    density = Density(3f),
+                ).layoutResult,
+            )
+            var directThreeX: MathLayoutResult? = null
+            ImageComposeScene(width = 640, height = 300, density = Density(3f)) {
+                TiqianMath(
+                    source = source,
+                    fontSizePx = 48f,
+                    fontFace = face,
+                    onMathLayout = { directThreeX = it },
+                )
+            }.use { it.render() }
+            val direct = assertNotNull(directThreeX)
+            fun MathLayoutResult.cancelThickness() = box.rules.single {
+                it.paintRole == org.tiqian.math.core.MathRulePaintRole.Cancellation
+            }.lineSegment?.thickness
+
+            val oneXThickness = assertNotNull(oneX.cancelThickness())
+            assertEquals(0.4f * 96f / 72.27f, oneXThickness, 0.001f)
+            assertEquals(oneXThickness * 3f, assertNotNull(threeX.cancelThickness()), 0.001f)
+            listOf(
+                "AmsmathBoxedNoad" to listOf("fboxSeparationPx", "fboxRuleThicknessPx"),
+                "LatexCancelStroke" to listOf(
+                    "cancelLineThicknessPx",
+                    "cancelPicturePointPx",
+                    "cancelMinimumWidthPx",
+                    "cancelMinimumTotalHeightPx",
+                    "cancelWideMinimumWidthPx",
+                    "cancelTallMinimumHeightPx",
+                    "cancelLineExtensionPx",
+                ),
+                "TeXMathTable" to listOf("arrayRuleThicknessPx"),
+            ).forEach { (decisionName, fields) ->
+                val oneXDecision = oneX.decisions.single { it.name == decisionName }
+                val threeXDecision = threeX.decisions.single { it.name == decisionName }
+                fields.forEach { field ->
+                    assertEquals(
+                        oneXDecision.details.getValue(field).toFloat() * 3f,
+                        threeXDecision.details.getValue(field).toFloat(),
+                        0.001f,
+                        "$decisionName.$field",
+                    )
+                }
+            }
+            assertEquals(
+                oneX.box.glyphs.map { it.fontSizePx },
+                threeX.box.glyphs.map { it.fontSizePx },
+                "density changes the absolute cancel stroke, not an already-resolved font size",
+            )
+            val absoluteDecisionNames = setOf("AmsmathBoxedNoad", "LatexCancelStroke", "TeXMathTable")
+            assertEquals(
+                threeX.decisions.filter { it.name in absoluteDecisionNames },
+                direct.decisions.filter { it.name in absoluteDecisionNames },
+                "direct Compose and background preparation must resolve identical absolute dimensions",
+            )
+            assertEquals(threeX.box.rules, direct.box.rules, "layout and replay geometry must remain identical")
+        }
+    }
+
+    @Test
+    fun formulaCanvasRasterizesTheDensityResolvedCancelThickness() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            val preparer = createTiqianMathFormulaPreparer(face)
+            fun strokeCoverage(densityValue: Float): Float {
+                val formula = preparer.prepare(
+                    source = "\\cancel{{\\color{white}x+1}}",
+                    fontSizePx = 48f,
+                    density = Density(densityValue),
+                )
+                assertNotNull(formula.layoutResult)
+                return ImageComposeScene(width = 220, height = 120, density = Density(1f)) {
+                    Box(Modifier.fillMaxSize().background(Color.White)) {
+                        TiqianMathFormulaCanvas(formula)
+                    }
+                }.use { scene ->
+                    val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+                    var coverage = 0f
+                    for (y in 0 until pixels.height) {
+                        for (x in 0 until pixels.width) {
+                            coverage += 1f - pixels[x, y].red
+                        }
+                    }
+                    coverage
+                }
+            }
+
+            val oneXCoverage = strokeCoverage(1f)
+            val threeXCoverage = strokeCoverage(3f)
+            assertTrue(oneXCoverage > 0f, "density-one cancellation stroke must remain visible")
+            assertTrue(
+                threeXCoverage > oneXCoverage * 2.5f,
+                "3x replay must rasterize a materially thicker stroke: 1x=$oneXCoverage 3x=$threeXCoverage",
             )
         }
     }

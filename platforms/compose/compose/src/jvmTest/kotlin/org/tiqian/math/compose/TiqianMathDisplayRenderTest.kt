@@ -486,13 +486,174 @@ class TiqianMathDisplayRenderTest {
 
     @Test
     fun composeDensityScalesLatexFboxAbsoluteDimensionsIntoPhysicalPixels() {
-        fun boxedDecisionAt(densityValue: Float): org.tiqian.math.core.MathLayoutDecision {
+        fun layoutAt(source: String, densityValue: Float): MathLayoutResult {
             var observed: MathLayoutResult? = null
             SkiaMathFontFace(LeteSansMath.load()).use { face ->
                 ImageComposeScene(width = 320, height = 180, density = Density(densityValue)) {
                     Box(Modifier.fillMaxSize().background(Color.White)) {
                         TiqianMath(
-                            source = "\\boxed{x}",
+                            source = source,
+                            mode = MathMode.Display,
+                            fontSizePx = 32f,
+                            fontFace = face,
+                            softWrap = false,
+                            onMathLayout = { observed = it },
+                        )
+                    }
+                }.use { it.render() }
+            }
+            return assertNotNull(observed)
+        }
+
+        val oneX = layoutAt("\\boxed{x}", 1f)
+        val threeX = layoutAt("\\boxed{x}", 3f)
+        val oneXBare = layoutAt("x", 1f)
+        val threeXBare = layoutAt("x", 3f)
+        val oneXDecision = oneX.decisions.single { it.name == "AmsmathBoxedNoad" }
+        val threeXDecision = threeX.decisions.single { it.name == "AmsmathBoxedNoad" }
+        val oneXRule = oneXDecision.details.getValue("fboxRuleThicknessPx").toFloat()
+        val oneXSeparation = oneXDecision.details.getValue("fboxSeparationPx").toFloat()
+        assertEquals(oneXRule * 3f, threeXDecision.details.getValue("fboxRuleThicknessPx").toFloat(), 0.001f)
+        assertEquals(oneXSeparation * 3f, threeXDecision.details.getValue("fboxSeparationPx").toFloat(), 0.001f)
+        assertEquals(0.4f * 96f / 72.27f, oneXRule, 0.001f)
+        assertEquals(3f * 96f / 72.27f, oneXSeparation, 0.001f)
+        assertEquals(oneX.box.glyphs.single().advance, threeX.box.glyphs.single().advance, 0.001f)
+        listOf(
+            Triple(oneX to oneXBare, oneXRule, oneXSeparation),
+            Triple(threeX to threeXBare, oneXRule * 3f, oneXSeparation * 3f),
+        ).forEach { (layouts, expectedRule, expectedSeparation) ->
+            val (result, bare) = layouts
+            assertEquals(4, result.box.rules.size)
+            result.box.rules.forEach { rule ->
+                assertEquals(
+                    expectedRule,
+                    minOf(rule.right - rule.left, rule.bottom - rule.top),
+                    0.001f,
+                )
+            }
+            val glyph = result.box.glyphs.single()
+            val bareGlyph = bare.box.glyphs.single()
+            val inset = expectedRule + expectedSeparation
+            assertEquals(
+                inset,
+                glyph.x - bareGlyph.x,
+                0.001f,
+                "fboxsep + fboxrule must translate the content",
+            )
+            assertEquals(
+                bare.box.width + 2f * inset,
+                result.box.width,
+                0.001f,
+                "the completed fbox width must consume both horizontal insets",
+            )
+        }
+    }
+
+    @Test
+    fun composeDensityScalesLatexAbsoluteDimensionsButFontScaleDoesNot() {
+        fun cancellationAt(densityValue: Float, fontScale: Float): MathLayoutResult {
+            var observed: MathLayoutResult? = null
+            SkiaMathFontFace(LeteSansMath.load()).use { face ->
+                ImageComposeScene(width = 480, height = 240, density = Density(densityValue, fontScale)) {
+                    Box(Modifier.fillMaxSize().background(Color.White)) {
+                        TiqianMath(
+                            source = "\\boxed{\\cancel{x+1}}+\\begin{array}{c}a\\\\\\hline b\\end{array}",
+                            mode = MathMode.Display,
+                            style = androidx.compose.ui.text.TextStyle(fontSize = 16.sp),
+                            fontFace = face,
+                            softWrap = false,
+                            onMathLayout = { observed = it },
+                        )
+                    }
+                }.use { it.render() }
+            }
+            return assertNotNull(observed)
+        }
+
+        val oneX = cancellationAt(1f, 1f)
+        val threeX = cancellationAt(3f, 1f)
+        val threeXDoubleFontScale = cancellationAt(3f, 2f)
+        val oneXLine = oneX.box.rules.single {
+            it.paintRole == org.tiqian.math.core.MathRulePaintRole.Cancellation
+        }.lineSegment
+        val threeXLine = threeX.box.rules.single {
+            it.paintRole == org.tiqian.math.core.MathRulePaintRole.Cancellation
+        }.lineSegment
+        val oneXThickness = assertNotNull(oneXLine).thickness
+        val threeXThickness = assertNotNull(threeXLine).thickness
+        val oneXDecision = oneX.decisions.single { it.name == "LatexCancelStroke" }
+        val threeXDecision = threeX.decisions.single { it.name == "LatexCancelStroke" }
+        val threeXDoubleFontScaleDecision = threeXDoubleFontScale.decisions.single {
+            it.name == "LatexCancelStroke"
+        }
+        val threeXDoubleFontScaleThickness = assertNotNull(
+            threeXDoubleFontScale.box.rules.single {
+                it.paintRole == org.tiqian.math.core.MathRulePaintRole.Cancellation
+            }.lineSegment,
+        ).thickness
+
+        assertEquals(0.4f * 96f / 72.27f, oneXThickness, 0.001f)
+        assertEquals(oneXThickness * 3f, threeXThickness, 0.001f)
+        assertEquals(threeXThickness, threeXDoubleFontScaleThickness, 0.001f)
+        listOf(
+            "cancelPicturePointPx",
+            "cancelMinimumWidthPx",
+            "cancelMinimumTotalHeightPx",
+            "cancelWideMinimumWidthPx",
+            "cancelTallMinimumHeightPx",
+            "cancelLineExtensionPx",
+        ).forEach { field ->
+            val oneXValue = oneXDecision.details.getValue(field).toFloat()
+            val threeXValue = threeXDecision.details.getValue(field).toFloat()
+            assertEquals(oneXValue * 3f, threeXValue, 0.001f, field)
+            assertEquals(
+                threeXValue,
+                threeXDoubleFontScaleDecision.details.getValue(field).toFloat(),
+                0.001f,
+                "$field is independent of fontScale",
+            )
+        }
+        listOf(
+            "AmsmathBoxedNoad" to listOf("fboxSeparationPx", "fboxRuleThicknessPx"),
+            "TeXMathTable" to listOf("arrayRuleThicknessPx"),
+        ).forEach { (decisionName, fields) ->
+            val oneXAbsoluteDecision = oneX.decisions.single { it.name == decisionName }
+            val threeXAbsoluteDecision = threeX.decisions.single { it.name == decisionName }
+            val threeXDoubleFontScaleAbsoluteDecision = threeXDoubleFontScale.decisions.single {
+                it.name == decisionName
+            }
+            fields.forEach { field ->
+                val oneXValue = oneXAbsoluteDecision.details.getValue(field).toFloat()
+                val threeXValue = threeXAbsoluteDecision.details.getValue(field).toFloat()
+                assertEquals(oneXValue * 3f, threeXValue, 0.001f, "$decisionName.$field")
+                assertEquals(
+                    threeXValue,
+                    threeXDoubleFontScaleAbsoluteDecision.details.getValue(field).toFloat(),
+                    0.001f,
+                    "$decisionName.$field is independent of fontScale",
+                )
+            }
+        }
+        assertTrue(
+            threeXDoubleFontScale.box.glyphs.first().fontSizePx > threeX.box.glyphs.first().fontSizePx,
+            "fontScale must still enlarge the formula glyphs independently of the absolute cancel stroke",
+        )
+        assertEquals(
+            threeXThickness,
+            threeXDecision.details.getValue("cancelLineThicknessPx").toFloat(),
+            0.001f,
+        )
+    }
+
+    @Test
+    fun composeDensityScalesLatexArrayRuleIntoPhysicalPixels() {
+        fun arrayAt(densityValue: Float): MathLayoutResult {
+            var observed: MathLayoutResult? = null
+            SkiaMathFontFace(LeteSansMath.load()).use { face ->
+                ImageComposeScene(width = 480, height = 240, density = Density(densityValue)) {
+                    Box(Modifier.fillMaxSize().background(Color.White)) {
+                        TiqianMath(
+                            source = "\\begin{array}{c}a\\\\\\hline b\\end{array}",
                             mode = MathMode.Display,
                             fontSizePx = 32f * densityValue,
                             fontFace = face,
@@ -502,17 +663,26 @@ class TiqianMathDisplayRenderTest {
                     }
                 }.use { it.render() }
             }
-            return assertNotNull(observed).decisions.single { it.name == "AmsmathBoxedNoad" }
+            return assertNotNull(observed)
         }
 
-        val oneX = boxedDecisionAt(1f)
-        val threeX = boxedDecisionAt(3f)
-        val oneXRule = oneX.details.getValue("fboxRuleThicknessPx").toFloat()
-        val oneXSeparation = oneX.details.getValue("fboxSeparationPx").toFloat()
-        assertEquals(oneXRule * 3f, threeX.details.getValue("fboxRuleThicknessPx").toFloat(), 0.001f)
-        assertEquals(oneXSeparation * 3f, threeX.details.getValue("fboxSeparationPx").toFloat(), 0.001f)
-        assertEquals(0.4f * 96f / 72.27f, oneXRule, 0.001f)
-        assertEquals(3f * 96f / 72.27f, oneXSeparation, 0.001f)
+        val oneX = arrayAt(1f)
+        val threeX = arrayAt(3f)
+        val oneXRule = oneX.decisions.single { it.name == "LaTeXArrayHorizontalRule" }
+        val threeXRule = threeX.decisions.single { it.name == "LaTeXArrayHorizontalRule" }
+        val oneXThickness = oneXRule.details.getValue("thicknessPx").toFloat()
+        val threeXThickness = threeXRule.details.getValue("thicknessPx").toFloat()
+
+        assertEquals(0.4f * 96f / 72.27f, oneXThickness, 0.001f)
+        assertEquals(oneXThickness * 3f, threeXThickness, 0.001f)
+        assertEquals(oneXThickness, oneX.box.rules.single().bottom - oneX.box.rules.single().top, 0.001f)
+        assertEquals(threeXThickness, threeX.box.rules.single().bottom - threeX.box.rules.single().top, 0.001f)
+        assertEquals(
+            threeXThickness,
+            threeX.decisions.single { it.name == "TeXMathTable" }
+                .details.getValue("arrayRuleThicknessPx").toFloat(),
+            0.001f,
+        )
     }
 
     @Test
