@@ -1,0 +1,16 @@
+\begin{align}\huge{不仅可以变大，还可以居中} \end{align}
+\begin{align}\Huge{\bbox[#fc5,12px]{我还可以调背景颜色居中变大}} \end{align}
+\begin{align}\bbox[#cf5,7px]{满屏乱飞} \end{align}
+\begin{align}\small{\color{deepskyblue}{变小，调色}} \end{align}
+\begin{align}\Large{\mathbf{\cancel{加粗划掉一回}}} \end{align}
+\Large{\mathbf{\cancel{\cancel{加粗划掉两回}}}}
+\begin{align}\Large{\mathbf{\cancel{\cancel{\cancel{加粗划掉三回}}}}} \end{align}
+满屏乱唱：(  
+\boxed{\begin{align} &\large{\color{orange}{爱和恨}}\huge{\color{green}{天各一方}},\\  &\small{我们}\Large{\color{red}{遍体鳞伤}},\\  &\Huge{\color{purple}{梦}}却\huge{\color{deepskyblue}{安然无恙}}\\  &\bbox[#EAF,20px]{\cancel{\cancel{\cancel{\cancel{\cancel{\cancel{\cancel{\cancel{\cancel{\cancel{\Huge{\color{yellow}{不思量,自难忘}}}}}}}}}}}}}\\  \end{align} }\\   
+可以使用 \; \mathrm{\LaTeX} \;公式的方式将 \huge { 回答的字体变大，\bold {还可以变粗}。}  
+只需在\; \mathrm {\LaTeX} \;的表达式中使用  \backslash  \mathrm{huge}\{要变大的文本\}，
+ 即可 \huge{ 将回答的字体变大。} 
+在\; \mathrm {\LaTeX} \;的表达式中使用  \backslash  \mathrm{mathbf}\{要变粗的文本\}， 即可 \mathbf{ 将回答的字体变粗。} 
+\mathbf{{but\;this\;only\;applies\;to\;latin\;letters.}}
+\begin{align}\Huge{\bbox[#fc5,12px]{\mathrm {\bold{\textsf{We  make  wonders!}}}}} \end{align}
+{}
