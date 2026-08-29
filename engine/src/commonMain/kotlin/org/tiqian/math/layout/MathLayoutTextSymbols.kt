@@ -483,3 +483,87 @@ private fun MathLayoutPass.textClusterSourceRange(
         .coerceIn(start, segment.range.endExclusive)
     return SourceRange(start, end)
 }
+
+/**
+ * TexLogoComposition: `\TeX` / `\LaTeX` compose upright Operators-family letters with the
+ * latex.ltx kerns — TeX: `T \kern-.1667em \lower.5ex E \kern-.125em X`; LaTeX prefixes
+ * `L \kern-.36em` a script-size `A` raised so its top meets T's cap height, then `\kern-.15em`.
+ * The ex lowering uses the font's OS/2 x-height like bbox `ex` units.
+ */
+internal fun MathLayoutPass.layoutTexLogo(
+    node: MathTexLogo,
+    style: MathStyle,
+    alphabetOverride: MathAlphabetOverride?,
+): LaidNode {
+    val em = fontSize(style)
+    fun letter(ch: Char, scale: Float): MathBox {
+        val ambient = userSizeScale
+        userSizeScale = ambient * scale
+        return try {
+            val symbol = MathSymbol(
+                sourceText = ch.toString(),
+                identity = MathSymbolIdentity.LatinLetter(ch),
+                atomClass = MathAtomClass.Ordinary,
+                family = MathFamily.Operators,
+                familyBinding = MathFamilyBinding.Fixed,
+                alphabet = MathAlphabet.Roman,
+                range = node.commandRange,
+            )
+            layoutList(MathList(listOf(symbol), node.commandRange), style, alphabetOverride).laid.box
+        } finally {
+            userSizeScale = ambient
+        }
+    }
+
+    val t = letter('T', 1f)
+    val e = letter('E', 1f)
+    val x = letter('X', 1f)
+    val exHeightPx = glyphSource.mathFont.xHeight
+        ?.let { glyphSource.mathFont.scaleDesignUnits(it, em) }
+        ?: (CM_EX_HEIGHT_EM * em)
+
+    val placed = mutableListOf<MathBox>()
+    var pen = 0f
+    if (node.kind == MathTexLogoKind.Latex) {
+        val l = letter('L', 1f)
+        val a = letter('A', 0.7f)
+        placed += l.translated(pen, 0f)
+        pen += l.width - 0.36f * em
+        val aRaise = -(t.ascent - a.ascent)
+        placed += a.translated(pen, aRaise)
+        pen += a.width - 0.15f * em
+    }
+    placed += t.translated(pen, 0f)
+    pen += t.width - 0.1667f * em
+    placed += e.translated(pen, 0.5f * exHeightPx)
+    pen += e.width - 0.125f * em
+    placed += x.translated(pen, 0f)
+    pen += x.width
+
+    val box = geometryExtents(
+        width = pen,
+        glyphs = placed.flatMap { it.glyphs },
+        rules = placed.flatMap { it.rules },
+        range = node.range,
+        constructionPaintGroups = placed.flatMap { it.constructionPaintGroups },
+        hostTextRuns = placed.flatMap { it.hostTextRuns },
+    )
+    decision(
+        "TexLogoComposition",
+        node.range,
+        "kind" to node.kind.sourceName,
+        "kernPolicy" to "LatexLtxKernAndRaiseRatios",
+        "exSource" to if (glyphSource.mathFont.xHeight != null) "FontOs2XHeight" else "FallbackComputerModernExRatio",
+    )
+    return LaidNode(
+        node = node,
+        box = box,
+        atomClass = MathAtomClass.Ordinary,
+        italicCorrectionPx = 0f,
+        style = style,
+        scriptBaseKind = ScriptBaseKind.CompoundBox,
+    )
+}
+
+/** Computer Modern's ex height (fontdimen5) as an em ratio, the classic fallback. */
+private const val CM_EX_HEIGHT_EM = 0.4306f

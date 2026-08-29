@@ -162,6 +162,12 @@ internal class MathLayoutPass(
     internal var taggedDisplayBodyLastBaselineY: Float = 0f
 
     /**
+     * LatexSizeDeclaration: absolute em multiplier active for the subtree being laid; every size
+     * (glyphs, glue, rules, host text) resolves through [fontSize], so the whole subtree scales.
+     */
+    internal var userSizeScale: Float = 1f
+
+    /**
      * Clause lines lifted out of a scrolled body, waiting for the tagged completion that anchors
      * them. Producers may only run while [taggedDisplayReplayExpected] is set by the completion
      * that will drain the list — a produced-but-undrained clause would silently vanish from
@@ -364,6 +370,8 @@ internal class MathLayoutPass(
         is MathExtensibleArrow -> layoutExtensibleArrow(node, style, alphabetOverride)
         is MathNegation -> layoutNegation(node, style, alphabetOverride)
         is MathCancel -> layoutCancel(node, style, alphabetOverride)
+        is MathRuleBox -> layoutRuleBox(node, style)
+        is MathLap -> layoutLap(node, style, alphabetOverride)
         is MathExplicitSpace -> layoutExplicitSpace(node, style)
         is MathTable -> layoutTable(node, style, alphabetOverride)
         is MathDisplayEnvironment -> layoutDisplayEnvironment(node, alphabetOverride)
@@ -398,6 +406,15 @@ internal class MathLayoutPass(
             ScriptBaseKind.CompoundBox,
         )
         is MathStyleDeclaration -> LaidNode(
+            node,
+            emptyBox(node.range),
+            MathAtomClass.Ordinary,
+            0f,
+            style,
+            ScriptBaseKind.CompoundBox,
+        )
+        is MathTexLogo -> layoutTexLogo(node, style, alphabetOverride)
+        is MathSizeDeclaration -> LaidNode(
             node,
             emptyBox(node.range),
             MathAtomClass.Ordinary,
@@ -530,8 +547,14 @@ internal class MathLayoutPass(
         box.width + italicCorrectionPx.coerceAtLeast(0f)
 
     internal fun PendingHorizontalItem.layoutIndividually(): HorizontalItem {
-        val laid = layoutNode(node, style, alphabetOverride).let { result ->
-            if (paintColor == null) result else result.copy(box = result.box.withInheritedPaintColor(paintColor))
+        val ambientSizeScale = userSizeScale
+        if (sizeScale != null) userSizeScale = sizeScale
+        val laid = try {
+            layoutNode(node, style, alphabetOverride).let { result ->
+                if (paintColor == null) result else result.copy(box = result.box.withInheritedPaintColor(paintColor))
+            }
+        } finally {
+            userSizeScale = ambientSizeScale
         }
         return HorizontalItem(
             node = node,
@@ -540,10 +563,11 @@ internal class MathLayoutPass(
             atomClass = MathAtomClass.Ordinary,
             participatesInNoadSpacing = node !is MathExplicitSpace,
             leadingKernPx = laid.horizontalKernPx,
+            sizeScale = sizeScale,
         )
     }
 
-    internal fun fontSize(style: MathStyle): Float = when (style.level) {
+    internal fun fontSize(style: MathStyle): Float = userSizeScale * when (style.level) {
         MathStyleLevel.Display, MathStyleLevel.Text -> baseFontSizePx
         MathStyleLevel.Script -> baseFontSizePx * constants.scriptPercentScaleDown / 100f
         MathStyleLevel.ScriptScript -> baseFontSizePx * constants.scriptScriptPercentScaleDown / 100f
@@ -903,6 +927,8 @@ internal class MathLayoutPass(
         val trailingItalicCorrectionPx: Float = 0f,
         /** False for explicit glue/kern nodes, which never become TeX noads or alter Bin repair. */
         val participatesInNoadSpacing: Boolean = true,
+        /** The size declaration active over this atom; the pair glue before it uses this scale. */
+        val sizeScale: Float? = null,
     )
 
     internal data class PendingHorizontalItem(
@@ -910,6 +936,8 @@ internal class MathLayoutPass(
         val style: MathStyle,
         val alphabetOverride: MathAlphabetOverride?,
         val paintColor: MathPaintColor?,
+        /** Absolute size override from a LaTeX size declaration; null inherits the ambient size. */
+        val sizeScale: Float? = null,
     )
 
     internal data class HorizontalLayout(

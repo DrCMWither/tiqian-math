@@ -166,6 +166,7 @@ object MathFormulaCapabilityClassifier {
 
         DiagnosticCode.TrailingEscape,
         DiagnosticCode.InvalidParameterMarker,
+        DiagnosticCode.InvalidRuleDimension,
         DiagnosticCode.MissingMacroArgument,
         DiagnosticCode.MacroExpansionDepthExceeded,
         DiagnosticCode.MacroExpansionBudgetExceeded,

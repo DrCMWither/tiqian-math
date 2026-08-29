@@ -121,23 +121,27 @@ private fun ParserState.parseBboxDimension(text: String, range: SourceRange): Ma
     return MathBboxDimension(value, unit, text, range)
 }
 
-private fun ParserState.parseBboxColor(text: String, range: SourceRange): MathBboxColor? {
-    val color = when {
-        shortHexColorPattern.matches(text) -> {
-            val digits = text.drop(1)
-            MathPaintColor(
-                digits[0].digitToInt(16) * 17,
-                digits[1].digitToInt(16) * 17,
-                digits[2].digitToInt(16) * 17,
-            )
-        }
-        longHexColorPattern.matches(text) -> MathPaintColor(
-            text.substring(1, 3).toInt(16),
-            text.substring(3, 5).toInt(16),
-            text.substring(5, 7).toInt(16),
+/** xcolor base names, the dvips RoyalBlue alias, CSS/SVG keywords, and 3/6-digit hex triplets. */
+internal fun resolvePaintColorText(text: String): MathPaintColor? = when {
+    shortHexColorPattern.matches(text) -> {
+        val digits = text.drop(1)
+        MathPaintColor(
+            digits[0].digitToInt(16) * 17,
+            digits[1].digitToInt(16) * 17,
+            digits[2].digitToInt(16) * 17,
         )
-        else -> namedPaintColors[text.lowercase()]
-    } ?: return null
+    }
+    longHexColorPattern.matches(text) -> MathPaintColor(
+        text.substring(1, 3).toInt(16),
+        text.substring(3, 5).toInt(16),
+        text.substring(5, 7).toInt(16),
+    )
+    else -> namedPaintColors[text.lowercase()]
+        ?: ParserState.cssSvgPaintColors[text.lowercase()]
+}
+
+private fun ParserState.parseBboxColor(text: String, range: SourceRange): MathBboxColor? {
+    val color = resolvePaintColorText(text) ?: return null
     return MathBboxColor(text, color, range)
 }
 
@@ -320,11 +324,11 @@ internal fun ParserState.parseRequiredArgument(command: MathToken, role: String)
 internal fun ParserState.parseBboxRequiredArgument(command: MathToken): MathNode {
     skipIgnored()
     val displayContainerDepth = structureDepth + if (peek().kind == MathTokenKind.OpenGroup) 1 else 0
-    bboxDisplayContainerDepths += displayContainerDepth
+    boxDisplayContainerDepths += displayContainerDepth
     return try {
         parseRequiredArgument(command, "bbox math field")
     } finally {
-        bboxDisplayContainerDepths.removeAt(bboxDisplayContainerDepths.lastIndex)
+        boxDisplayContainerDepths.removeAt(boxDisplayContainerDepths.lastIndex)
     }
 }
 
@@ -503,4 +507,64 @@ internal fun ParserState.parseRadicalRadicand(command: MathToken): MathNode {
     } else {
         parsePrimary() ?: MathErrorNode("", next.range)
     }
+}
+
+/** One braced `\rule` dimension argument; negative values allowed only for the raise. */
+internal fun ParserState.parseRuleDimensionArgument(
+    command: MathToken,
+    role: String,
+    allowNegative: Boolean,
+): MathBboxDimension? {
+    val argument = parseTextArgument(command, role)
+    val text = argument.segments.joinToString("") { it.text }.trim()
+    val negative = allowNegative && text.startsWith("-")
+    val magnitudeText = if (negative) text.drop(1).trim() else text
+    val match = bboxDimensionPattern.matchEntire(magnitudeText)
+    val value = match?.groupValues?.get(1)?.toFloatOrNull()
+    val unit = match?.groupValues?.get(2)?.lowercase()?.let(bboxDimensionUnits::get)
+    if (match == null || value == null || unit == null || !value.isFinite()) {
+        diagnostics += MathDiagnostic(
+            DiagnosticCode.InvalidRuleDimension,
+            "Command \\${command.text} requires a TeX dimension for its $role",
+            argument.contentRange,
+        )
+        return null
+    }
+    return MathBboxDimension(if (negative) -value else value, unit, text, argument.contentRange)
+}
+
+/** Optional `[raise]` bracket group before \rule's braced arguments. */
+internal fun ParserState.parseOptionalRuleRaise(command: MathToken): MathBboxDimension? {
+    skipIgnored()
+    val opening = peek()
+    if (opening.kind != MathTokenKind.Symbol || opening.text != "[") return null
+    advance()
+    val contentStart = opening.range.endExclusive
+    var closing: MathToken? = null
+    while (peek().kind != MathTokenKind.End) {
+        val token = peek()
+        if (token.kind == MathTokenKind.Symbol && token.text == "]") {
+            closing = advance()
+            break
+        }
+        if (token.kind == MathTokenKind.OpenGroup) break
+        advance()
+    }
+    val contentEnd = closing?.range?.start ?: peek().range.start
+    val contentRange = SourceRange(contentStart, contentEnd.coerceAtLeast(contentStart))
+    val text = sourceSlice(contentRange).trim()
+    val negative = text.startsWith("-")
+    val magnitudeText = if (negative) text.drop(1).trim() else text
+    val match = bboxDimensionPattern.matchEntire(magnitudeText)
+    val value = match?.groupValues?.get(1)?.toFloatOrNull()
+    val unit = match?.groupValues?.get(2)?.lowercase()?.let(bboxDimensionUnits::get)
+    if (match == null || value == null || unit == null || !value.isFinite()) {
+        diagnostics += MathDiagnostic(
+            DiagnosticCode.InvalidRuleDimension,
+            "Command \\${command.text} has an invalid optional raise dimension",
+            contentRange,
+        )
+        return null
+    }
+    return MathBboxDimension(if (negative) -value else value, unit, text, contentRange)
 }

@@ -300,6 +300,7 @@ internal object TeXMathSymbolTable {
         put("Longrightarrow", named(MathNamedSymbol.LongDoubleRightArrow, MathAtomClass.Relation, MathFamily.Symbols))
         put("Longleftrightarrow", named(MathNamedSymbol.LongDoubleLeftRightArrow, MathAtomClass.Relation, MathFamily.Symbols))
         put("vert", named(MathNamedSymbol.VerticalBar, MathAtomClass.Ordinary, MathFamily.Symbols))
+        put("backslash", named(MathNamedSymbol.Backslash, MathAtomClass.Ordinary, MathFamily.Symbols))
         put("lVert", named(MathNamedSymbol.DoubleVerticalBar, MathAtomClass.Opening, MathFamily.Symbols))
         put("rVert", named(MathNamedSymbol.DoubleVerticalBar, MathAtomClass.Closing, MathFamily.Symbols))
         put("lceil", named(MathNamedSymbol.LeftCeiling, MathAtomClass.Opening, MathFamily.Symbols))

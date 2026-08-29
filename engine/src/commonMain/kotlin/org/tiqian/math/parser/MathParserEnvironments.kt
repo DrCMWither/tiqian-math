@@ -15,7 +15,7 @@ internal fun ParserState.parseEnvironment(beginCommand: MathToken): MathNode {
     val displayEnvironment = displayEnvironments[parsedName.name]
     if (
         displayEnvironment != null && structureDepth > 0 &&
-        structureDepth !in bboxDisplayContainerDepths
+        structureDepth !in boxDisplayContainerDepths
     ) {
         diagnostics += MathDiagnostic(
             DiagnosticCode.MisplacedDisplayEnvironment,

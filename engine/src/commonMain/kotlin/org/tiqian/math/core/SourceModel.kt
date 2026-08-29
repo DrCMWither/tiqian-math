@@ -31,6 +31,7 @@ enum class DiagnosticSeverity {
 enum class DiagnosticCode {
     TrailingEscape,
     InvalidParameterMarker,
+    InvalidRuleDimension,
     MissingMacroArgument,
     MacroExpansionDepthExceeded,
     MacroExpansionBudgetExceeded,

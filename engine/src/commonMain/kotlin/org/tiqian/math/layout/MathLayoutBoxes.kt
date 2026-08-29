@@ -777,6 +777,80 @@ internal fun MathLayoutPass.layoutBbox(
     )
 }
 
+internal fun MathLayoutPass.layoutRuleBox(node: MathRuleBox, style: MathStyle): LaidNode {
+    val em = fontSize(style)
+    val width = resolveBboxDimension(node.width, em).coerceAtLeast(0f)
+    val height = resolveBboxDimension(node.height, em).coerceAtLeast(0f)
+    val raise = node.raise?.let { resolveBboxDimension(it, em) } ?: 0f
+    val top = -(raise + height)
+    val bottom = -raise
+    val rule = MathRulePlacement(
+        left = 0f,
+        top = top,
+        right = width,
+        bottom = bottom,
+        sourceRange = node.range,
+    )
+    val ascent = (-top).coerceAtLeast(0f)
+    val descent = bottom.coerceAtLeast(0f)
+    val box = MathBox(
+        width = width,
+        ascent = ascent,
+        descent = descent,
+        inkBounds = MathRect(0f, top, width, bottom),
+        glyphs = emptyList(),
+        rules = listOf(rule),
+        range = node.range,
+        texCleanBoxMetrics = MathTeXCleanBoxMetrics(
+            ascent = ascent,
+            descent = descent,
+            policy = MathTeXCleanBoxPolicy.CompletedLayoutBox,
+            evidence = setOf(MathTeXCleanBoxEvidence.RuleGeometry),
+        ),
+    )
+    decision(
+        "LatexRuleBox",
+        node.range,
+        "widthPx" to width,
+        "heightPx" to height,
+        "raisePx" to raise,
+        "dimensionPolicy" to "MathJaxBboxDimension",
+    )
+    return LaidNode(
+        node = node,
+        box = box,
+        atomClass = MathAtomClass.Ordinary,
+        italicCorrectionPx = 0f,
+        style = style,
+        scriptBaseKind = ScriptBaseKind.CompoundBox,
+    )
+}
+
+internal fun MathLayoutPass.layoutLap(
+    node: MathLap,
+    style: MathStyle,
+    alphabetOverride: MathAlphabetOverride?,
+): LaidNode {
+    val content = layoutNode(node.body, style, alphabetOverride).completedTeXMathField().box
+    val shifted = if (node.kind == MathLapKind.Left) content.translated(-content.width, 0f) else content
+    val box = shifted.copy(width = 0f, range = node.range)
+    decision(
+        "LatexLapBox",
+        node.range,
+        "kind" to node.kind,
+        "contentWidthPx" to content.width,
+        "widthPolicy" to "ZeroLogicalWidthKeepsInkOverhang",
+    )
+    return LaidNode(
+        node = node,
+        box = box,
+        atomClass = MathAtomClass.Ordinary,
+        italicCorrectionPx = 0f,
+        style = style,
+        scriptBaseKind = ScriptBaseKind.CompoundBox,
+    )
+}
+
 private fun MathLayoutPass.resolveBboxDimension(dimension: MathBboxDimension, emSizePx: Float): Float {
     val pixels = when (dimension.unit) {
         MathBboxDimensionUnit.Point -> dimension.value * CSS_PIXELS_PER_INCH / 72f

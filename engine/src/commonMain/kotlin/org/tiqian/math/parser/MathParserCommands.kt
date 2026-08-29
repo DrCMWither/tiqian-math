@@ -148,6 +148,26 @@ internal fun ParserState.parseControlWord(token: MathToken): MathNode {
         val body = parseRequiredArgument(token, "cancellation body")
         return MathCancel(body, token.range, token.range.cover(body.range))
     }
+    if (token.text == "rule") {
+        val raise = parseOptionalRuleRaise(token)
+        val width = parseRuleDimensionArgument(token, "width", allowNegative = false)
+        val height = parseRuleDimensionArgument(token, "height", allowNegative = false)
+        if (width == null || height == null) {
+            val range = token.range.cover((height ?: width ?: raise)?.range ?: token.range)
+            return MathErrorNode(sourceSlice(range), range)
+        }
+        val range = token.range.cover(height.range)
+        return MathRuleBox(width, height, raise, token.range, range)
+    }
+    if (token.text == "rlap" || token.text == "llap") {
+        val body = parseRequiredArgument(token, "lap content")
+        return MathLap(
+            kind = if (token.text == "rlap") MathLapKind.Right else MathLapKind.Left,
+            body = body,
+            commandRange = token.range,
+            range = token.range.cover(body.range),
+        )
+    }
     if (token.text == "hline") {
         diagnostics += MathDiagnostic(
             DiagnosticCode.MisplacedHorizontalRule,
@@ -156,10 +176,25 @@ internal fun ParserState.parseControlWord(token: MathToken): MathNode {
         )
         return MathErrorNode(sourceSlice(token.range), token.range)
     }
+    if (token.text == "TeX" || token.text == "LaTeX") {
+        return MathTexLogo(
+            kind = if (token.text == "TeX") MathTexLogoKind.Tex else MathTexLogoKind.Latex,
+            commandRange = token.range,
+            range = token.range,
+        )
+    }
+    ParserState.latexSizeScales[token.text]?.let { scale ->
+        return MathSizeDeclaration(
+            sourceName = token.text,
+            scale = scale,
+            commandRange = token.range,
+            range = token.range,
+        )
+    }
     if (token.text == "color") {
         val argument = parseTextArgument(token, "color name")
         val sourceName = argument.segments.joinToString("") { it.text }.trim()
-        val color = namedPaintColors[sourceName.lowercase()]
+        val color = resolvePaintColorText(sourceName)
         val range = token.range.cover(argument.totalRange)
         if (color == null) {
             diagnostics += MathDiagnostic(
@@ -181,10 +216,13 @@ internal fun ParserState.parseControlWord(token: MathToken): MathNode {
         skipIgnored()
         val rowDepth = structureDepth + if (peek().kind == MathTokenKind.OpenGroup) 1 else 0
         rowSeparatorContainerDepths += rowDepth
+        // A boxed field hosts display environments through the shared depth whitelist.
+        boxDisplayContainerDepths += rowDepth
         val parsedBody = try {
             parseRequiredArgument(token, "boxed math field")
         } finally {
             rowSeparatorContainerDepths.removeAt(rowSeparatorContainerDepths.lastIndex)
+            boxDisplayContainerDepths.removeAt(boxDisplayContainerDepths.lastIndex)
         }
         val group = parsedBody as? MathGroup
         val directChildren = group?.body?.children.orEmpty()

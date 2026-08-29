@@ -88,7 +88,17 @@ internal fun MathLayoutPass.layoutList(
             // blank half, so the Punctuation pair glue is not stacked on top of it.
             (raw[checkNotNull(leftIndex)].node as? MathText)?.isCjkClauseSeparator == true ->
                 MathGlueAdjustment.Zero
-            else -> atomGlue(leftClass, rightClass, item.laid.style, item.node.range)
+            // Pair glue lives in the size context of its right atom, matching MathJax's
+            // scaled-mstyle spacing and TeX's mu-follows-current-font model.
+            else -> {
+                val ambientSizeScale = userSizeScale
+                if (item.sizeScale != null) userSizeScale = item.sizeScale
+                try {
+                    atomGlue(leftClass, rightClass, item.laid.style, item.node.range)
+                } finally {
+                    userSizeScale = ambientSizeScale
+                }
+            }
         }
         item.copy(glueBefore = glue, atomClass = rightClass)
     }
@@ -162,6 +172,7 @@ private fun MathLayoutPass.flattenPendingListChildren(
     var currentStyle = initialStyle
     var currentAlphabetOverride = alphabetOverride
     var currentPaintColor: MathPaintColor? = null
+    var currentSizeScale: Float? = null
     return buildList {
         list.children.forEach { child ->
             if (child is MathStyleDeclaration) {
@@ -196,6 +207,17 @@ private fun MathLayoutPass.flattenPendingListChildren(
                     "scopePolicy" to "TeXDeclarationUntilCurrentMathListGroupEnd",
                     "versionPolicy" to "UnicodeMathBoldVersionCompatibilityForLegacyBf",
                 )
+            } else if (child is MathSizeDeclaration) {
+                currentSizeScale = child.scale
+                decision(
+                    "LatexSizeDeclaration",
+                    child.range,
+                    "sourceName" to child.sourceName,
+                    "scale" to child.scale,
+                    "listRange" to "${list.range.start}..${list.range.endExclusive}",
+                    "scopePolicy" to "TeXDeclarationUntilCurrentMathListGroupEnd",
+                    "scalePolicy" to "AbsoluteLatexTenPointClassRatios",
+                )
             } else if (child is MathColorDeclaration) {
                 currentPaintColor = child.color
                 decision(
@@ -207,10 +229,18 @@ private fun MathLayoutPass.flattenPendingListChildren(
                     "resolvedArgb" to child.color.argb.toUInt().toString(16).padStart(8, '0'),
                     "listRange" to "${list.range.start}..${list.range.endExclusive}",
                     "scopePolicy" to "TeXDeclarationUntilCurrentMathListGroupEnd",
-                    "resolutionPolicy" to "XColorBaseNamesPlusCaseInsensitiveDvipsRoyalBlueCompatibility",
+                    "resolutionPolicy" to "XColorBaseNamesHtmlHexTripletsAndCssSvgKeywords",
                 )
             } else {
-                addAll(flattenPendingHorizontal(child, currentStyle, currentAlphabetOverride, currentPaintColor))
+                addAll(
+                    flattenPendingHorizontal(
+                        child,
+                        currentStyle,
+                        currentAlphabetOverride,
+                        currentPaintColor,
+                        currentSizeScale,
+                    ),
+                )
             }
         }
     }
@@ -221,6 +251,7 @@ private fun MathLayoutPass.flattenPendingHorizontal(
     style: MathStyle,
     alphabetOverride: MathAlphabetOverride?,
     paintColor: MathPaintColor?,
+    sizeScale: Float?,
 ): List<PendingHorizontalItem> = when (node) {
     is MathAlphabetScope -> {
         val override = MathAlphabetOverride(node.family, node.alphabet)
@@ -233,15 +264,15 @@ private fun MathLayoutPass.flattenPendingHorizontal(
         )
         when (val body = node.body) {
             is MathGroup -> flattenPendingListChildren(body.body, style, override).map {
-                it.copy(paintColor = it.paintColor ?: paintColor)
+                it.copy(paintColor = it.paintColor ?: paintColor, sizeScale = it.sizeScale ?: sizeScale)
             }
             is MathList -> flattenPendingListChildren(body, style, override).map {
-                it.copy(paintColor = it.paintColor ?: paintColor)
+                it.copy(paintColor = it.paintColor ?: paintColor, sizeScale = it.sizeScale ?: sizeScale)
             }
-            else -> listOf(PendingHorizontalItem(body, style, override, paintColor))
+            else -> listOf(PendingHorizontalItem(body, style, override, paintColor, sizeScale))
         }
     }
-    else -> listOf(PendingHorizontalItem(node, style, alphabetOverride, paintColor))
+    else -> listOf(PendingHorizontalItem(node, style, alphabetOverride, paintColor, sizeScale))
 }
 
 private fun MathLayoutPass.layoutPendingItems(pending: List<PendingHorizontalItem>): List<HorizontalItem> {
@@ -261,7 +292,8 @@ private fun MathLayoutPass.layoutPendingItems(pending: List<PendingHorizontalIte
             if (
                 symbol.atomClass != MathAtomClass.Ordinary ||
                 candidate.style != first.style ||
-                candidate.paintColor != first.paintColor
+                candidate.paintColor != first.paintColor ||
+                candidate.sizeScale != first.sizeScale
             ) break
             val candidateRequest = symbolRequest(symbol, candidate.style, candidate.alphabetOverride)
             if (candidateRequest.family != request.family || candidateRequest.alphabet != request.alphabet) break

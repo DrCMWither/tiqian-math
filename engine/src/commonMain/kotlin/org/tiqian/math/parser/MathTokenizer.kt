@@ -37,11 +37,18 @@ class MathTokenizer {
         var index = 0
         var awaitingBboxOptions = false
         var insideBboxOptions = false
+        // HtmlHexColorArgument: xcolor-in-MathJax color arguments carry `#RGB`/`#RRGGBB`, so the
+        // single group right after \color relaxes TeX's macro-parameter reading of `#`.
+        var awaitingColorArgument = false
+        var insideColorArgument = false
         while (index < source.length) {
             val start = index
             val char = source[index]
             if (awaitingBboxOptions && !char.isWhitespace() && char != '[' && char != '%') {
                 awaitingBboxOptions = false
+            }
+            if (awaitingColorArgument && !char.isWhitespace() && char != '{' && char != '%') {
+                awaitingColorArgument = false
             }
             when {
                 char == '\\' -> {
@@ -64,6 +71,7 @@ class MathTokenizer {
                             SourceRange(start, index),
                         )
                         awaitingBboxOptions = name == "bbox"
+                        awaitingColorArgument = name in ParserState.hexColorArgumentCommands
                     } else {
                         index = source.nextCodePointIndex(index)
                         tokens += MathToken(
@@ -78,10 +86,13 @@ class MathTokenizer {
                     // unterminated bbox option list. Do not leak its relaxed '#' rule
                     // into the following math field or later source.
                     insideBboxOptions = false
+                    insideColorArgument = awaitingColorArgument
+                    awaitingColorArgument = false
                     index++
                     tokens += MathToken(MathTokenKind.OpenGroup, "{", SourceRange(start, index))
                 }
                 char == '}' -> {
+                    insideColorArgument = false
                     index++
                     tokens += MathToken(MathTokenKind.CloseGroup, "}", SourceRange(start, index))
                 }
@@ -93,7 +104,7 @@ class MathTokenizer {
                     index++
                     tokens += MathToken(MathTokenKind.Subscript, "_", SourceRange(start, index))
                 }
-                char == '#' && insideBboxOptions -> {
+                char == '#' && (insideBboxOptions || insideColorArgument) -> {
                     index++
                     tokens += MathToken(MathTokenKind.Symbol, "#", SourceRange(start, index))
                 }
