@@ -484,8 +484,20 @@ private fun TiqianMathError(
 ) {
     val label = failure.reasons.joinToString { it.category.name }
     val horizontalInset = with(LocalDensity.current) { horizontalInsetPx.toDp() }
+    // OverlongErrorSourceElided: the diagnostic presentation is not source-faithful prose; a
+    // pathological multi-10K-char source would otherwise stall the host text stack right after
+    // the capability system declined it.
+    val presentedSource = failure.source.ifEmpty { "∅" }.let { source ->
+        if (source.length <= ErrorSourcePresentationLimit) {
+            source
+        } else {
+            val cut = ErrorSourcePresentationLimit -
+                if (source[ErrorSourcePresentationLimit - 1].isHighSurrogate()) 1 else 0
+            source.take(cut) + "… [+${source.length - cut} chars]"
+        }
+    }
     BasicText(
-        text = failure.source.ifEmpty { "∅" },
+        text = presentedSource,
         modifier = modifier
             .padding(horizontal = horizontalInset)
             .semantics {
@@ -530,6 +542,7 @@ internal data class ResolvedFormulaCapability(
  * math font's full line box on every formula-bearing line.
  */
 private const val InlineInkLeadingEm = 0.05f
+private const val ErrorSourcePresentationLimit = 2000
 private const val CssPixelsPerInch = 96f
 private const val TeXPointsPerInch = 72.27f
 private const val TeXPointAtDensityOne = CssPixelsPerInch / TeXPointsPerInch
