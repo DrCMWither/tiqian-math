@@ -17,7 +17,7 @@
 默认数学字体为 [Lete Sans Math](https://github.com/abccsss/LeteSansMath)，也可以使用其他数学字体并配置字重与 fallback。我们也预设了衬线数学字体
 [STIX Two Math](https://github.com/stipub/stixfonts)，可以作为独立模块按需引入。
 
-当前仍处于早期开发阶段，支持 Compose Desktop 和 Android 23 及以上版本。
+当前仍处于早期开发阶段，支持 Compose Desktop 和 Android 6.0 (API 23) 及以上版本。
 
 ## 使用
 
