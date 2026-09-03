@@ -2,21 +2,11 @@ package org.tiqian.math.layout
 
 import org.tiqian.math.core.*
 import org.tiqian.math.font.opentype.MathConstructionKind
-import org.tiqian.math.font.opentype.MathDeviceAdjustment
 import org.tiqian.math.font.opentype.MathGlyphComponent
-import org.tiqian.math.font.opentype.MathHorizontalConstructionRequest
-import org.tiqian.math.font.opentype.MathKernCorner
 import org.tiqian.math.font.opentype.MathVerticalConstruction
 import org.tiqian.math.font.opentype.MathVerticalConstructionRequest
 import org.tiqian.math.font.opentype.MathVerticalAssemblyPolicy
-import org.tiqian.math.font.opentype.OpenTypeMathConstants
 import org.tiqian.math.font.opentype.OpenTypeMathException
-import org.tiqian.math.font.opentype.OpenTypeMathFont
-import org.tiqian.math.parser.MacroExpansionLimits
-import org.tiqian.math.parser.MathFormulaParser
-import org.tiqian.math.parser.MathMacroDefinition
-import org.tiqian.math.parser.MathParser
-import kotlin.math.floor
 import kotlin.math.max
 import org.tiqian.math.layout.MathLayoutPass.Companion.GEOMETRY_EPSILON_PX
 import org.tiqian.math.layout.MathLayoutPass.LaidNode
@@ -288,7 +278,12 @@ internal fun MathLayoutPass.layoutOperator(
     }
     val size = fontSize(style)
     val resolved = glyphSource.resolveOperator(
-        MathOperatorGlyphRequest(node.identity, style, node.commandRange),
+        MathOperatorGlyphRequest(
+            identity = node.identity,
+            style = style,
+            sourceRange = node.commandRange,
+            resourceLimits = limitsForNextConstruction(),
+        ),
         size,
     )
     val operatorFaceId = resolved.run.glyphs.firstOrNull()?.faceId ?: glyphSource.faceId
@@ -476,26 +471,37 @@ internal fun MathLayoutPass.selectVerticalConstruction(
     range: SourceRange,
     assemblyPolicy: MathVerticalAssemblyPolicy = MathVerticalAssemblyPolicy.MathMLCoreUniformOverlap,
 ): MathVerticalConstruction? {
+    val resolvedTargetHeight = validatedResolvedDimension(
+        sourceText = "verticalConstructionTargetPx",
+        resolvedPx = targetHeight,
+        range = range,
+    ) ?: return null
     val faceId = normalRun.glyphs.singleOrNull()?.faceId ?: glyphSource.faceId
     val mathFont = mathFontForFace(faceId)
-    return mathFont.verticalConstruction(
-        MathVerticalConstructionRequest(
-            baseGlyphId = baseGlyphId,
-            targetSizePx = targetHeight,
-            fontSizePx = size,
-            normalGlyphHeightPx = normalRun.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f,
-            normalGlyphAdvanceWidthPx = normalRun.width,
-            assemblyPolicy = assemblyPolicy,
-        ),
-        glyphVerticalExtentPx = { glyphId ->
-            measureGlyphOutlineForFace(faceId, glyphId, size, style, range)
-                .glyphs.singleOrNull()?.inkBounds?.height
-                ?: measureGlyphForFace(faceId, glyphId, size, style, range)
-                    .let { it.ascent + it.descent }
-        },
-    ) { glyphId ->
-        measureGlyphForFace(faceId, glyphId, size, style, range).width
-    }
+    return try {
+        mathFont.verticalConstruction(
+            request = MathVerticalConstructionRequest(
+                baseGlyphId = baseGlyphId,
+                targetSizePx = resolvedTargetHeight,
+                fontSizePx = size,
+                normalGlyphHeightPx = normalRun.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f,
+                normalGlyphAdvanceWidthPx = normalRun.width,
+                assemblyPolicy = assemblyPolicy,
+                resourceLimits = limitsForNextConstruction(),
+            ),
+            glyphVerticalExtentPx = { glyphId ->
+                measureGlyphOutlineForFace(faceId, glyphId, size, style, range)
+                    .glyphs.singleOrNull()?.inkBounds?.height
+                    ?: measureGlyphForFace(faceId, glyphId, size, style, range)
+                        .let { it.ascent + it.descent }
+            },
+        ) { glyphId ->
+            measureGlyphForFace(faceId, glyphId, size, style, range).width
+        }
+    } catch (failure: OpenTypeMathException) {
+        recordConstructionFailure(failure, range)
+        null
+    }?.takeIf { consumeConstructionExtenders(it, range) }
 }
 
 private fun MathLayoutPass.operatorConstructionBox(

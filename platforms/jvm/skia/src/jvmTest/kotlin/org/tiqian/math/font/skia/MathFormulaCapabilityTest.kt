@@ -69,9 +69,9 @@ class MathFormulaCapabilityTest {
             val options = MathLayoutOptions(fontSizePx = 32f)
             val lowLevel = MathLayoutEngine(face).layout(source, options)
             var parseCalls = 0
-            val countingParser = MathFormulaParser {
+            val countingParser = MathFormulaParser { sourceText, resourceLimits ->
                 parseCalls += 1
-                MathParser().parse(it)
+                MathParser().parse(sourceText, resourceLimits)
             }
             val productionEngine = MathFormulaCapabilityEngine(
                 pipeline = MathLayoutEngine(face, countingParser),
@@ -81,7 +81,7 @@ class MathFormulaCapabilityTest {
                 productionEngine.evaluate(source, options),
             )
 
-            assertEquals(1, parseCalls, "prepared formula is consumed without reparsing")
+            assertEquals(1, parseCalls, "prepared formula is consumed without reparsing,is that a dog?")
             assertEquals(lowLevel, ready.layoutResult)
             assertTrue(ready.layoutResult.box.glyphs.isNotEmpty())
             assertTrue(face.constructionOutlineCacheStats().entries > 0, "ready closes construction replay")
@@ -223,9 +223,9 @@ class MathFormulaCapabilityTest {
     fun parserFailureSkipsRenderPreflightAndStrictThrowsTheSameDecision() {
         val rejectingFace = RejectingMathFontFace()
         var parseCalls = 0
-        val parser = MathFormulaParser {
+        val parser = MathFormulaParser { sourceText, resourceLimits ->
             parseCalls += 1
-            MathParser().parse(it)
+            MathParser().parse(sourceText, resourceLimits)
         }
         var preflightCalls = 0
         val engine = MathFormulaCapabilityEngine(

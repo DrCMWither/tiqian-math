@@ -203,6 +203,9 @@ class MathFormulaCorpusScanner(
         DiagnosticCode.MissingMathConstruction,
         DiagnosticCode.MathVariantTooShort,
         DiagnosticCode.UnsupportedMathAlphabet,
+        DiagnosticCode.BreakpointCountLimitExceeded,
+        DiagnosticCode.ExtenderCountLimitExceeded,
+        DiagnosticCode.InvalidResolvedDimension,
         -> MathFormulaFailureStage.LayoutFont
 
         else -> MathFormulaFailureStage.TokenizerMacroParser
