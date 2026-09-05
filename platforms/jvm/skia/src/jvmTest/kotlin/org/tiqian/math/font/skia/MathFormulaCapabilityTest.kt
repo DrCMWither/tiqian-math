@@ -9,6 +9,8 @@ import org.tiqian.math.core.MathConstructionShapeKind
 import org.tiqian.math.core.MathDiagnostic
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathHostTextRunId
+import org.tiqian.math.core.MathParseResult
+import org.tiqian.math.core.MathResourceLimits
 import org.tiqian.math.core.MathRect
 import org.tiqian.math.core.MathStyle
 import org.tiqian.math.core.SourceRange
@@ -69,9 +71,11 @@ class MathFormulaCapabilityTest {
             val options = MathLayoutOptions(fontSizePx = 32f)
             val lowLevel = MathLayoutEngine(face).layout(source, options)
             var parseCalls = 0
-            val countingParser = MathFormulaParser { sourceText, resourceLimits ->
-                parseCalls += 1
-                MathParser().parse(sourceText, resourceLimits)
+            val countingParser = object : MathFormulaParser {
+                override fun parse(source: String, resourceLimits: MathResourceLimits): MathParseResult {
+                    parseCalls += 1
+                    return MathParser().parse(source, resourceLimits)
+                }
             }
             val productionEngine = MathFormulaCapabilityEngine(
                 pipeline = MathLayoutEngine(face, countingParser),
@@ -223,9 +227,11 @@ class MathFormulaCapabilityTest {
     fun parserFailureSkipsRenderPreflightAndStrictThrowsTheSameDecision() {
         val rejectingFace = RejectingMathFontFace()
         var parseCalls = 0
-        val parser = MathFormulaParser { sourceText, resourceLimits ->
-            parseCalls += 1
-            MathParser().parse(sourceText, resourceLimits)
+        val parser = object : MathFormulaParser {
+            override fun parse(source: String, resourceLimits: MathResourceLimits): MathParseResult {
+                parseCalls += 1
+                return MathParser().parse(source, resourceLimits)
+            }
         }
         var preflightCalls = 0
         val engine = MathFormulaCapabilityEngine(

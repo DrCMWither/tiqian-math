@@ -119,8 +119,8 @@ class MathOperatorNoadTest {
                 assertEquals("LargeSymbols", op.details["family"], "$label/${result.source}")
                 assertNear(
                     op.float("axisY"),
-                    op.float("inkCenterAfter"),
-                    "$label/${result.source} operator ink center follows the math axis",
+                    op.float("outlineCenterAfter"),
+                    "$label/${result.source} operator outline center follows the math axis",
                 )
             }
 

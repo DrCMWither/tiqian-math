@@ -296,8 +296,10 @@ internal fun MathLayoutPass.layoutOperator(
         )
     }
 
+    // Keep the shaped run's paint bounds. Only native outline geometry participates in make_op.
+    val normalGeometryRun = operatorOutlineRun(resolved.run, size, style, node.commandRange)
     val display = style.level == MathStyleLevel.Display && node.identity.growsInDisplayStyle
-    val normalGlyphExtent = resolved.run.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f
+    val normalGlyphExtent = normalGeometryRun.glyphs.maxOfOrNull { it.inkBounds.height } ?: 0f
     // XeTeX make_op uses the larger of DisplayOperatorMinHeight and 5/4 of the
     // normal native glyph's exact height+depth as the variant-selection target.
     val displayOperatorMinHeight = if (display) {
@@ -311,7 +313,7 @@ internal fun MathLayoutPass.layoutOperator(
         resolved.constructionBaseGlyphId?.let {
             selectVerticalConstruction(
                 baseGlyphId = it,
-                normalRun = resolved.run,
+                normalRun = normalGeometryRun,
                 targetHeight = targetHeight,
                 size = size,
                 style = style,
@@ -331,7 +333,29 @@ internal fun MathLayoutPass.layoutOperator(
     }
     val axisY = -operatorMathFont.scaleDesignUnits(operatorMathFont.constants.axisHeight, size)
     val inkCenterBefore = (rawBox.inkBounds.top + rawBox.inkBounds.bottom) / 2f
-    val centerShift = axisY - inkCenterBefore
+    // Use signed glyph bounds: MathBox extents include the baseline even for a glyph wholly
+    // above it. Construction placements already carry outline bounds and their part offsets.
+    val geometryTop = if (construction != null) {
+        rawBox.glyphs.minOfOrNull { it.inkBounds.top } ?: 0f
+    } else {
+        normalGeometryRun.glyphs.minOfOrNull { it.inkBounds.top + it.baselineOffsetPx } ?: 0f
+    }
+    val geometryBottom = if (construction != null) {
+        rawBox.glyphs.maxOfOrNull { it.inkBounds.bottom } ?: 0f
+    } else {
+        normalGeometryRun.glyphs.maxOfOrNull { it.inkBounds.bottom + it.baselineOffsetPx } ?: 0f
+    }
+    val hasOutlineGeometry = if (construction != null) {
+        construction.components.all { component ->
+            measureGlyphOutlineForFace(operatorFaceId, component.glyphId, size, style, node.commandRange)
+                .boundsSource == MathGlyphBoundsSource.Outline
+        }
+    } else {
+        normalGeometryRun.boundsSource == MathGlyphBoundsSource.Outline
+    }
+    // Backends without outlines retain their existing box-based fallback.
+    val outlineCenterBefore = if (hasOutlineGeometry) (geometryTop + geometryBottom) / 2f else inkCenterBefore
+    val centerShift = axisY - outlineCenterBefore
     val centeredPlacements = rawBox.glyphs.map { placement ->
         placement.copy(
             baselineY = placement.baselineY + centerShift,
@@ -341,7 +365,7 @@ internal fun MathLayoutPass.layoutOperator(
     val box = geometryExtents(rawBox.width, centeredPlacements, rawBox.rules, node.range)
     val achievedAdvance = construction?.let {
         operatorMathFont.scaleDesignUnits(it.advanceMeasurement, size)
-    } ?: rawBox.inkBounds.height
+    } ?: if (hasOutlineGeometry) geometryBottom - geometryTop else rawBox.inkBounds.height
     // XeTeX exhausts the variant ladder and keeps the last available glyph when the
     // suggested target is not reached. Unlike radicals and delimiters, this is a complete
     // operator selection, not a missing rendering capability.
@@ -408,6 +432,10 @@ internal fun MathLayoutPass.layoutOperator(
         "exhaustedVariantLadder" to exhaustedVariantLadder,
         "axisY" to axisY,
         "inkCenterBefore" to inkCenterBefore,
+        "outlineCenterBefore" to outlineCenterBefore,
+        "outlineCenterAfter" to (outlineCenterBefore + centerShift),
+        "normalGlyphBoundsSource" to normalGeometryRun.boundsSource,
+        "operatorCenterBoundsSource" to if (hasOutlineGeometry) MathGlyphBoundsSource.Outline else MathGlyphBoundsSource.FontReported,
         "centerShiftPx" to centerShift,
         "inkCenterAfter" to (box.inkBounds.top + box.inkBounds.bottom) / 2f,
         "italicCorrectionPx" to italicCorrection,
@@ -432,6 +460,34 @@ internal fun MathLayoutPass.layoutOperator(
         } else {
             ScriptBaseKind.Character
         },
+    )
+}
+
+/** Refine only geometry, retaining shaping, paint bounds and fallback behavior in the original run. */
+private fun MathLayoutPass.operatorOutlineRun(
+    run: MeasuredMathRun,
+    size: Float,
+    style: MathStyle,
+    range: SourceRange,
+): MeasuredMathRun {
+    if (run.glyphs.isEmpty() || run.boundsSource == MathGlyphBoundsSource.Outline) return run
+    var boundsSource = MathGlyphBoundsSource.Outline
+    val glyphs = run.glyphs.map { glyph ->
+        val measured = measureGlyphOutlineForFace(glyph.faceId, glyph.glyphId, size, style, range)
+        val outline = measured.glyphs.singleOrNull()
+        if (measured.boundsSource == MathGlyphBoundsSource.Outline && outline != null) {
+            glyph.copy(inkBounds = outline.inkBounds)
+        } else {
+            boundsSource = MathGlyphBoundsSource.FontReported
+            glyph
+        }
+    }
+    if (boundsSource != MathGlyphBoundsSource.Outline) return run
+    return run.copy(
+        glyphs = glyphs,
+        ascent = glyphs.maxOf { (-(it.inkBounds.top + it.baselineOffsetPx)).coerceAtLeast(0f) },
+        descent = glyphs.maxOf { (it.inkBounds.bottom + it.baselineOffsetPx).coerceAtLeast(0f) },
+        boundsSource = boundsSource,
     )
 }
 

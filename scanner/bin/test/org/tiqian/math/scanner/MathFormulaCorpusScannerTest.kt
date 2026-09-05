@@ -15,7 +15,7 @@ class MathFormulaCorpusScannerTest {
     @Test
     fun cliProducesTheReviewedStableMachineReport() {
         val input = resourcePath("formulas.txt")
-        val expected = resourcePath("expected-report.json").readText().replace("\r\n", "\n")
+        val expected = resourcePath("expected-report.json").readText()
         val outputA = Files.createTempFile("math-compose-scan-a", ".json")
         val outputB = Files.createTempFile("math-compose-scan-b", ".json")
         try {
@@ -47,7 +47,7 @@ class MathFormulaCorpusScannerTest {
     @Test
     fun cliScansZhihuFormulaIndexWithTheSameStableReportForBothMathFonts() {
         val input = resourcePath("zhihu-formulas.json")
-        val expected = resourcePath("expected-zhihu-report.json").readText().replace("\r\n", "\n")
+        val expected = resourcePath("expected-zhihu-report.json").readText()
         val outputA = Files.createTempFile("math-compose-zhihu-scan-a", ".json")
         val outputB = Files.createTempFile("math-compose-zhihu-scan-b", ".json")
         try {
