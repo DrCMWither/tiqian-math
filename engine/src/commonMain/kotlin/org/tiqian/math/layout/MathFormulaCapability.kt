@@ -93,8 +93,8 @@ class MathFormulaCapabilityEngine(
     ): MathLayoutResult = when (val result = evaluate(source, options)) {
         is MathFormulaCapabilityResult.Ready -> result.layoutResult
         is MathFormulaCapabilityResult.FallbackRequired -> throw MathFormulaStrictException(result)
-        is MathFormulaCapabilityResult.MathFormulaFallbackReason -> TODO()
-        is MathFormulaCapabilityResult.MathFormulaCapabilityEngine -> TODO()
+        // is MathFormulaCapabilityResult.MathFormulaFallbackReason -> TODO()
+        // is MathFormulaCapabilityResult.MathFormulaCapabilityEngine -> TODO()
     }
 }
 

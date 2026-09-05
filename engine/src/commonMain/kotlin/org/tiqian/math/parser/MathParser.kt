@@ -2,7 +2,7 @@ package org.tiqian.math.parser
 
 import org.tiqian.math.core.*
 
-fun interface MathFormulaParser {
+interface MathFormulaParser {
     fun parse(
         source: String,
         resourceLimits: MathResourceLimits = MathResourceLimits.Default,

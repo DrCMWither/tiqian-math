@@ -82,7 +82,7 @@ data class MeasuredOutlineConstructionRun(
         is MathConstructionOutlineEvidence.Available -> MathConstructionOutlineCapability.Replayable
         is MathConstructionOutlineEvidence.Unavailable ->
             MathConstructionOutlineCapability.Unavailable(evidence.reason)
-        is MathConstructionOutlineEvidence.MathConstructionTopStroke -> TODO()
+        // is MathConstructionOutlineEvidence.MathConstructionTopStroke -> TODO()
     },
 )
 

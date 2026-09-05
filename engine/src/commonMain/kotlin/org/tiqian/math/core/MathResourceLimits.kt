@@ -7,19 +7,19 @@ package org.tiqian.math.core
  */
 data class MathResourceLimits(
     /** UTF-16 code units in one formula source. */
-    val maximumSourceLength: Int = 65_536,
+    val maximumSourceLength: Int = 65536,
     /** Non-End tokens in either the raw or expanded stream. */
-    val maximumTokenCount: Int = 20_000,
+    val maximumTokenCount: Int = 20000,
     /** Nodes retained by the final AST, including its root [MathList]. */
-    val maximumNodeCount: Int = 20_000,
+    val maximumNodeCount: Int = 20000,
     /** Active parser frames or final AST levels, whichever reaches the limit first. */
     val maximumRecursionDepth: Int = 128,
     /** Legal internal breaks in any one line-breaking list; terminal boundaries are excluded. */
-    val maximumBreakpointCount: Int = 1_024,
+    val maximumBreakpointCount: Int = 1024,
     /** Extenders materialized by one layout attempt, including font candidates and probes. */
-    val maximumExtenderCount: Int = 4_096,
+    val maximumExtenderCount: Int = 4096,
     /** Maximum absolute physical length accepted after resolving a TeX unit to layout pixels. */
-    val maximumResolvedDimensionPx: Float = 65_536f,
+    val maximumResolvedDimensionPx: Float = 65536f,
 ) {
     init {
         require(maximumSourceLength in 1..ABSOLUTE_MAXIMUM_SOURCE_LENGTH) {
