@@ -1,15 +1,49 @@
 package org.tiqian.math.font.skia
 
 import org.tiqian.math.core.DiagnosticCode
+import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathResourceLimits
 import org.tiqian.math.font.opentype.LeteSansMath
 import org.tiqian.math.layout.MathLayoutEngine
 import org.tiqian.math.layout.MathLayoutOptions
+import org.tiqian.math.layout.breakIntoLines
+import org.tiqian.math.layout.breakResponsiveDisplayLines
+import kotlin.test.assertEquals
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class MathResourceLimitsLayoutTest {
+    @Test
+    fun breakpointPreflightMatchesEachModesActualInternalBoundaries() {
+        SkiaMathFontFace(LeteSansMath.load()).use { face ->
+            // source, inline boundary count, display boundary count
+            val cases = listOf(Triple("=a", 1, 0), Triple("a=", 0, 1), Triple("a,=b", 2, 1))
+            for ((source, inlineCount, displayCount) in cases) {
+                for (mode in MathMode.entries) {
+                    val count = if (mode == MathMode.Inline) inlineCount else displayCount
+                    for (limit in 0..2) {
+                        val engine = MathLayoutEngine(
+                            face,
+                            resourceLimits = MathResourceLimits.Default.copy(maximumBreakpointCount = limit),
+                        )
+                        val result = engine.layout(source, MathLayoutOptions(mode = mode))
+                        val broken = if (mode == MathMode.Inline) result.breakIntoLines(100f)
+                            else result.breakResponsiveDisplayLines(100f)
+                        val expectedRejection = count > limit
+                        val label = "$source/$mode/limit=$limit"
+                        assertEquals(expectedRejection, result.diagnostics.any {
+                            it.code == DiagnosticCode.BreakpointCountLimitExceeded
+                        }, "preflight: $label")
+                        assertEquals(expectedRejection, broken.diagnostics.any {
+                            it.code == DiagnosticCode.BreakpointCountLimitExceeded
+                        }, "breaker: $label")
+                    }
+                }
+            }
+        }
+    }
+
     @Test
     fun reparsesPreparedFormulaWhenEnginePolicyChanges() {
         SkiaMathFontFace(LeteSansMath.load()).use { face ->
