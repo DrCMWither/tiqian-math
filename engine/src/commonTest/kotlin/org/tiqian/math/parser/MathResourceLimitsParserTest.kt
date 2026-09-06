@@ -178,6 +178,41 @@ class MathResourceLimitsParserTest {
     }
 
     @Test
+    fun widenedFormulaTokenBudgetDoesNotRequireLegacyMacroConfiguration() {
+        val count = MathResourceLimits.Default.maximumTokenCount + 1
+        val source = "x".repeat(count)
+        val limits = MathResourceLimits.Default.copy(
+            maximumTokenCount = count,
+            maximumNodeCount = count + 1,
+        )
+        val accepted = MathParser().parse(source, limits)
+        assertTrue(accepted.diagnostics.isEmpty(), accepted.diagnostics.toString())
+        assertEquals(count, accepted.root.children.size)
+        assertResourceRejection(MathParser().parse(source), DiagnosticCode.TokenCountLimitExceeded)
+
+        val explicitHostLimit = MathParser(expansionLimits = MacroExpansionLimits(maximumOutputTokens = 10))
+        assertResourceRejection(explicitHostLimit.parse(source, limits), DiagnosticCode.MacroExpansionBudgetExceeded)
+    }
+
+    @Test
+    fun recursionRejectionPreservesEarlierSyntaxDiagnosticsAndRanges() {
+        // The first case fails while parsing; the second fails in final AST validation.
+        listOf("}{{x}}" to 2, "}x" to 1).forEach { (source, maximumDepth) ->
+            val result = MathParser().parse(
+                source,
+                MathResourceLimits.Default.copy(maximumRecursionDepth = maximumDepth),
+            )
+            assertEquals(
+                listOf(DiagnosticCode.UnexpectedClosingGroup, DiagnosticCode.RecursionDepthLimitExceeded),
+                result.diagnostics.map { it.code },
+                source,
+            )
+            assertEquals(SourceRange(0, 1), result.diagnostics.first().range)
+            assertTrue(result.root.children.isEmpty(), "rejection must not expose a partial AST")
+        }
+    }
+
+    @Test
     fun everyResourceDiagnosticHasTheResourceLimitCapabilityCategory() {
         val resourceCodes = listOf(
             DiagnosticCode.SourceLengthLimitExceeded,

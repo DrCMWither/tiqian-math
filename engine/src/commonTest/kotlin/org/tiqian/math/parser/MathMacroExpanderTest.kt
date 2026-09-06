@@ -151,5 +151,47 @@ class MathMacroExpanderTest {
         assertEquals(MathTokenKind.End, widened.tokens.last().kind)
     }
 
+    @Test
+    fun formulaBudgetAloneCanRaiseExpandedOutputPastTheLegacyDefault() {
+        val count = MathResourceLimits.Default.maximumTokenCount + 1
+        val expander = MathMacroExpander(listOf(MathMacroDefinition("many", 0, "x".repeat(count))))
+        val limits = MathResourceLimits.Default.copy(maximumTokenCount = count)
+        val accepted = expander.expand(tokens("\\many"), limits)
+        assertTrue(accepted.diagnostics.isEmpty(), accepted.diagnostics.toString())
+        assertEquals(count + 1, accepted.tokens.size) // Includes End.
+        assertEquals(MathTokenKind.End, accepted.tokens.last().kind)
+
+        val rejected = expander.expand(tokens("\\many"), limits.copy(maximumTokenCount = count - 1))
+        assertEquals(listOf(DiagnosticCode.TokenCountLimitExceeded), rejected.diagnostics.map { it.code })
+        assertEquals(count, rejected.tokens.size)
+    }
+
+    @Test
+    fun formulaDepthAloneCanRaiseExpansionPastTheLegacyDefault() {
+        val names = (1..40).map { "m" + "a".repeat(it) }
+        val definitions = names.mapIndexed { index, name ->
+            MathMacroDefinition(name, 0, names.getOrNull(index + 1)?.let { "\\$it" } ?: "x")
+        }
+        val input = tokens("\\${names.first()}")
+        val expander = MathMacroExpander(definitions)
+        val limits = MathResourceLimits.Default.copy(maximumRecursionDepth = 40)
+        val accepted = expander.expand(input, limits)
+        assertTrue(accepted.diagnostics.isEmpty(), accepted.diagnostics.toString())
+        assertEquals(listOf("x", ""), accepted.tokens.map { it.text })
+        assertTrue(expander.expand(input).diagnostics.isEmpty(), "formula defaults allow depth 40")
+
+        val rejected = expander.expand(input, limits.copy(maximumRecursionDepth = 39))
+        assertEquals(listOf(DiagnosticCode.MacroExpansionDepthExceeded), rejected.diagnostics.map { it.code })
+
+        val hostBounded = MathMacroExpander(definitions, MacroExpansionLimits(maximumDepth = 32))
+        assertEquals(
+            listOf(DiagnosticCode.MacroExpansionDepthExceeded),
+            hostBounded.expand(input, limits).diagnostics.map { it.code },
+        )
+        val parsed = MathParser(macros = definitions).parse("\\${names.first()}", limits)
+        assertTrue(parsed.diagnostics.isEmpty(), parsed.diagnostics.toString())
+        assertEquals(1, parsed.root.children.size)
+    }
+
     private fun tokens(source: String): List<MathToken> = MathTokenizer().tokenize(source).tokens
 }

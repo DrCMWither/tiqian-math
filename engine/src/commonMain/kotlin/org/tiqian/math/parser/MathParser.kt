@@ -11,7 +11,7 @@ interface MathFormulaParser {
 
 class MathParser(
     macros: List<MathMacroDefinition> = emptyList(),
-    expansionLimits: MacroExpansionLimits = MacroExpansionLimits(),
+    expansionLimits: MacroExpansionLimits? = null,
 ) : MathFormulaParser {
     private val tokenizer = MathTokenizer()
     private val macroExpander = MathMacroExpander(macros, expansionLimits)
@@ -29,11 +29,12 @@ class MathParser(
                 diagnostic,
             )
         }
+        val diagnostics = (tokenized.diagnostics + expanded.diagnostics).toMutableList()
         return try {
             val result = ParserState(
                 source = source,
                 tokens = expanded.tokens,
-                diagnostics = (tokenized.diagnostics + expanded.diagnostics).toMutableList(),
+                diagnostics = diagnostics,
                 resourceLimits = resourceLimits,
             ).parse()
             inspectMathAstResources(result.root, resourceLimits)?.let { diagnostic ->
@@ -42,7 +43,7 @@ class MathParser(
         } catch (failure: ParserResourceLimitSignal) {
             rejectedParseResult(
                 source,
-                tokenized.diagnostics + expanded.diagnostics,
+                diagnostics,
                 failure.diagnostic,
             )
         }

@@ -83,7 +83,7 @@ fun MathLayoutResult.breakIntoLines(
     maxWidthPx: Float,
     adjustmentMode: MathLineAdjustmentMode = MathLineAdjustmentMode.Fit,
 ): MathBrokenLayout {
-    val breakpointCount = fragments.internalBreakpointCount { it.breakAfter != null }
+    val breakpointCount = mathBreakpointCount(fragments, MathLineBreakPolicy.InlineTrailingOperators)
     if (breakpointCount <= resourceLimits.maximumBreakpointCount) {
         return breakMathFragments(fragments, lineMetrics, maxWidthPx, adjustmentMode)
     }
@@ -129,6 +129,17 @@ fun MathLayoutResult.breakResponsiveDisplayLines(
     displayRowJotPx = DISPLAY_ROW_JOT_EM * fontSizePx,
     resourceLimits = resourceLimits,
 ).layout
+
+/** Uses the same legal boundaries as the requested breaker, including boundary coalescing. */
+internal fun mathBreakpointCount(
+    fragments: List<MathInlineFragment>,
+    policy: MathLineBreakPolicy,
+): Int = when (policy) {
+    MathLineBreakPolicy.InlineTrailingOperators -> fragments.internalBreakpointCount { it.breakAfter != null }
+    MathLineBreakPolicy.ResponsiveDisplayLeadingOperators -> responsiveBoundaries(fragments).responsiveBreakpointCount()
+}
+
+private fun List<ResponsiveBoundary>.responsiveBreakpointCount(): Int = internalBreakpointCount { it.kind != null }
 
 /** Counts legal internal boundaries while excluding a terminal marker in the last slot. */
 internal inline fun <T> List<T>.internalBreakpointCount(isBreakpoint: (T) -> Boolean): Int {
@@ -431,7 +442,7 @@ internal fun resolveResponsiveDisplayBreak(
     }
 
     val boundaries = responsiveBoundaries(fragments)
-    val breakpointCount = boundaries.internalBreakpointCount { it.kind != null }
+    val breakpointCount = boundaries.responsiveBreakpointCount()
     if (breakpointCount > resourceLimits.maximumBreakpointCount) {
         val diagnostic = mathResourceLimitDiagnostic(
             code = DiagnosticCode.BreakpointCountLimitExceeded,

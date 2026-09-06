@@ -10,6 +10,7 @@ import org.tiqian.math.core.MathFormulaLineMetrics
 import org.tiqian.math.core.MathGlueAdjustment
 import org.tiqian.math.core.MathInlineFragment
 import org.tiqian.math.core.MathLayoutResult
+import org.tiqian.math.core.MathLineBreakPolicy
 import org.tiqian.math.core.MathMode
 import org.tiqian.math.core.MathRect
 import org.tiqian.math.core.MathResourceLimits
@@ -19,6 +20,31 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class MathResourceLimitsBreakTest {
+    @Test
+    fun breakpointCountingUsesLeadingDisplayOperatorsAndCoalescesBoundaries() {
+        val leading = listOf(fragment(0, MathAtomClass.Relation, true), fragment(1, MathAtomClass.Ordinary))
+        val trailing = listOf(fragment(0, MathAtomClass.Ordinary), fragment(1, MathAtomClass.Relation, true))
+        val punctuation = fragment(1, MathAtomClass.Punctuation, true).let {
+            it.copy(breakAfter = it.breakAfter!!.copy(kind = MathBreakKind.PunctuationTrailing))
+        }
+        val adjacent = listOf(
+            fragment(0, MathAtomClass.Ordinary), punctuation,
+            fragment(2, MathAtomClass.Relation, true), fragment(3, MathAtomClass.Ordinary),
+        )
+        val cases = listOf(Triple(leading, 1, 0), Triple(trailing, 0, 1), Triple(adjacent, 2, 1))
+        for ((fragments, inlineCount, displayCount) in cases) {
+            assertEquals(inlineCount, mathBreakpointCount(fragments, MathLineBreakPolicy.InlineTrailingOperators))
+            assertEquals(displayCount, mathBreakpointCount(fragments, MathLineBreakPolicy.ResponsiveDisplayLeadingOperators))
+            val result = layoutResult(fragments, MathResourceLimits.Default.copy(maximumBreakpointCount = 0))
+            assertEquals(inlineCount > 0, result.breakIntoLines(25f).diagnostics.any {
+                it.code == DiagnosticCode.BreakpointCountLimitExceeded
+            })
+            assertEquals(displayCount > 0, result.breakResponsiveDisplayLines(25f).diagnostics.any {
+                it.code == DiagnosticCode.BreakpointCountLimitExceeded
+            })
+        }
+    }
+
     @Test
     fun terminalBreakDoesNotConsumeInlineBreakpointBudget() {
         val fragments = listOf(

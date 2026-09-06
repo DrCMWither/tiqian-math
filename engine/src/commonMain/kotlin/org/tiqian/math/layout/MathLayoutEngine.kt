@@ -202,9 +202,10 @@ internal class MathLayoutPass(
     internal var taggedDisplayReplayExpected: Boolean = false
 
     /**
-     * ordinary explanation or replay side effects. decisions, diagnostics, construction
-     * paint-group ids, and the tagged-displayfields. Probe results may be inspected but
-     * never reused as real layout output.
+     * Runs a measurement-only layout and rolls back ordinary explanation/replay side effects.
+     * Resource consumption is intentionally monotonic across probes: candidate work was really
+     * materialized, so it consumes the formula-wide safety budget and any resulting resource
+     * diagnostic survives the rollback.
      */
     internal fun <T> probeLayout(block: () -> T): T {
         val decisionMark = decisions.size
@@ -444,9 +445,13 @@ internal class MathLayoutPass(
         val horizontal = layoutList(breakableRoot, initialStyle)
         val fragments = inlineFragments(horizontal)
         val breaks = fragments.mapNotNull { it.breakAfter }
-        // Keep terminal opportunities in the public result, but do not charge a boundary after
-        // the final fragment against the internal line-splitting budget.
-        val internalBreakpointCount = fragments.internalBreakpointCount { it.breakAfter != null }
+        // Preflight the mode's actual breaker: display operators lead the next line,
+        // while inline operators trail the preceding line.
+        val breakPolicy = when (options.mode) {
+            MathMode.Inline -> MathLineBreakPolicy.InlineTrailingOperators
+            MathMode.Display -> MathLineBreakPolicy.ResponsiveDisplayLeadingOperators
+        }
+        val internalBreakpointCount = mathBreakpointCount(fragments, breakPolicy)
         if (internalBreakpointCount > resourceLimits.maximumBreakpointCount) {
             diagnostics += mathResourceLimitDiagnostic(
                 code = DiagnosticCode.BreakpointCountLimitExceeded,

@@ -45,7 +45,7 @@ data class MacroExpansionResult(
  */
 class MathMacroExpander(
     definitions: List<MathMacroDefinition> = emptyList(),
-    private val limits: MacroExpansionLimits = MacroExpansionLimits(),
+    private val limits: MacroExpansionLimits? = null,
 ) {
     private val tokenizer = MathTokenizer()
     private val definitionsByName = definitions.associateBy { it.name }
@@ -59,12 +59,18 @@ class MathMacroExpander(
         input: List<MathToken>,
         resourceLimits: MathResourceLimits = MathResourceLimits.Default,
     ): MacroExpansionResult {
-        val effectiveMaximum = minOf(limits.maximumOutputTokens, resourceLimits.maximumTokenCount)
+        val effectiveMaximum = minOf(
+            limits?.maximumOutputTokens ?: resourceLimits.maximumTokenCount,
+            resourceLimits.maximumTokenCount,
+        )
         return expand(
             input = input,
             maximumOutputTokens = effectiveMaximum,
-            maximumDepth = minOf(limits.maximumDepth, resourceLimits.maximumRecursionDepth),
-            outputDiagnosticCode = if (resourceLimits.maximumTokenCount < limits.maximumOutputTokens) {
+            maximumDepth = minOf(
+                limits?.maximumDepth ?: resourceLimits.maximumRecursionDepth,
+                resourceLimits.maximumRecursionDepth,
+            ),
+            outputDiagnosticCode = if (limits == null || resourceLimits.maximumTokenCount < limits.maximumOutputTokens) {
                 DiagnosticCode.TokenCountLimitExceeded
             } else {
                 DiagnosticCode.MacroExpansionBudgetExceeded
